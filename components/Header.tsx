@@ -53,6 +53,7 @@ export default function Header({ isOpen, setIsOpen }: HeaderProps) {
 
   const pages: { name: string; path: string; icon: IconName }[] = [
     { name: 'Dashboard', path: '/dashboard', icon: 'chart' },
+    { name: 'PC Dashboard', path: '/pc-dashboard', icon: 'chart' },
     { name: 'Score', path: '/score', icon: 'trophy' },
     { name: 'Attendance', path: '/attendance', icon: 'clock' },
     { name: 'Delegations', path: '/delegation', icon: 'clipboard' },

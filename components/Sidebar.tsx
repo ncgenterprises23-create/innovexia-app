@@ -23,6 +23,7 @@ export default function Sidebar({ isOpen, setIsOpen }: SidebarProps) {
 
   const menuItems: MenuItem[] = [
     { label: 'Dashboard', icon: 'chart', href: '/dashboard', roles: ['Admin', 'Manager', 'Employee'] },
+    { label: 'PC Dashboard', icon: 'chart', href: '/pc-dashboard', roles: ['Admin', 'Manager', 'Employee'] },
     { label: 'Score', icon: 'trophy', href: '/score', roles: ['Admin', 'Manager'] },
     { label: 'Attendance', icon: 'clock', href: '/attendance', roles: ['Admin', 'Manager', 'Employee'] },
     {
