@@ -8,7 +8,7 @@ interface TaskDetailModalProps {
     onClose: () => void;
     title: string;
     tasks: any[]; // Using any[] for flexibility, can be typed strictly if needed
-    type: 'delegation' | 'checklist' | 'o2d' | 'crm' | 'complain' | 'purchase' | 'factory' | 'jobwork' | 'rmdefect' | 'collection';
+    type: 'delegation' | 'checklist' | 'o2d' | 'crm' | 'complain' | 'purchase' | 'factory' | 'jobwork' | 'rmdefect' | 'collection' | 'payable';
 }
 
 export default function TaskDetailModal({ isOpen, onClose, title, tasks, type }: TaskDetailModalProps) {
@@ -105,8 +105,8 @@ export default function TaskDetailModal({ isOpen, onClose, title, tasks, type }:
 
                                         const title = type === 'delegation'
                                             ? (task.description || task.delegation_name || task.task_title || 'Untitled Delegation')
-                                            : type === 'checklist'
-                                                ? (task.question || task.title || 'Untitled Checklist')
+                                            : (type === 'collection' || type === 'payable')
+                                                ? `${task.party_name || 'Item'} - ${task.step_name}`
                                                 : `${task.material_name || task.party_name || task.client_name || task.vendor_name || 'Item'} - Step ${task.step_number}: ${task.step_name}`;
 
                                         const dueDate = isFms ? task.planned_date : task.due_date;

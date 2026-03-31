@@ -68,6 +68,7 @@ interface UserScore {
     jobWorkStats: CategoryStats;
     rmDefectStats: CategoryStats;
     collectionStats: CategoryStats;
+    payableStats: CategoryStats;
     trendData: ChartDataPoint[];
 }
 
@@ -142,11 +143,14 @@ export default function ScorePage() {
     const [allCollectionData, setAllCollectionData] = useState<any[]>([]);
     const [collectionDoer, setCollectionDoer] = useState<string>('');
 
+    const [allPayableData, setAllPayableData] = useState<any[]>([]);
+    const [payableDoer, setPayableDoer] = useState<string>('');
+
     const [modalConfig, setModalConfig] = useState<{
         isOpen: boolean;
         title: string;
         tasks: any[];
-        type: 'delegation' | 'checklist' | 'o2d' | 'crm' | 'complain' | 'purchase' | 'factory' | 'jobwork' | 'rmdefect' | 'collection';
+        type: 'delegation' | 'checklist' | 'o2d' | 'crm' | 'complain' | 'purchase' | 'factory' | 'jobwork' | 'rmdefect' | 'collection' | 'payable';
     }>({
         isOpen: false,
         title: '',
@@ -168,7 +172,8 @@ export default function ScorePage() {
                 factRes, factCfgRes,
                 jwRes, jwCfgRes,
                 rmdRes, rmdCfgRes,
-                collRes, collDoerRes
+                collRes, collDoerRes,
+                payRes, payDoerRes
             ] = await Promise.all([
                 fetch('/api/users', { headers }),
                 fetch('/api/delegations', { headers }),
@@ -188,7 +193,9 @@ export default function ScorePage() {
                 fetch('/api/rm-defects', { headers }),
                 fetch('/api/rm-defects-config', { headers }),
                 fetch('/api/collection', { headers }),
-                fetch('/api/collection/doer', { headers })
+                fetch('/api/collection/doer', { headers }),
+                fetch('/api/payable', { headers }),
+                fetch('/api/payable/doer', { headers })
             ]);
 
             const [
@@ -199,7 +206,8 @@ export default function ScorePage() {
                 factData, factCfgData,
                 jwData, jwCfgData,
                 rmdData, rmdCfgData,
-                collData, collDoerData
+                collData, collDoerData,
+                payData, payDoerData
             ] = await Promise.all([
                 usersRes.json(), delRes.json(), checkRes.json(), o2dRes.json(), o2dCfgRes.json(),
                 crmRes.json(), crmCfgRes.json(),
@@ -208,7 +216,8 @@ export default function ScorePage() {
                 factRes.json(), factCfgRes.json(),
                 jwRes.json(), jwCfgRes.json(),
                 rmdRes.json(), rmdCfgRes.json(),
-                collRes.json(), collDoerRes.json()
+                collRes.json(), collDoerRes.json(),
+                payRes.json(), payDoerRes.json()
             ]);
 
             setUsers(usersData.users || []);
@@ -237,6 +246,9 @@ export default function ScorePage() {
 
             setAllCollectionData(collData.data || []);
             setCollectionDoer(collDoerData.doer || '');
+
+            setAllPayableData(payData.data || []);
+            setPayableDoer(payDoerData.doer || '');
             setLoading(false);
         } catch (error) {
             console.error('Error fetching score data:', error);
@@ -284,7 +296,8 @@ export default function ScorePage() {
                 allFactoryReqData, factoryReqConfig,
                 allJobWorkData, jobWorkConfig,
                 allRMDefectData, rmDefectConfig,
-                allCollectionData, collectionDoer
+                allCollectionData, collectionDoer,
+                allPayableData, payableDoer
             );
         }
     }, [
@@ -297,6 +310,7 @@ export default function ScorePage() {
         allJobWorkData, jobWorkConfig,
         allRMDefectData, rmDefectConfig,
         allCollectionData, collectionDoer,
+        allPayableData, payableDoer,
         dateRange, searchQuery
     ]);
 
@@ -400,7 +414,8 @@ export default function ScorePage() {
         factList: any[], factCfg: StepConfig[],
         jwList: any[], jwCfg: StepConfig[],
         rmdList: any[], rmdCfg: StepConfig[],
-        collList: any[], collectDoer: string
+        collList: any[], collectDoer: string,
+        payList: any[], payDoer: string
     ) => {
         const filteredUsers = usersList.filter(user => user.username.toLowerCase().includes(searchQuery.toLowerCase()));
 
@@ -488,14 +503,14 @@ export default function ScorePage() {
                     return tB - tA; // Newest first
                 });
                 const initialDueDate = record['1 Day Before Due Date'];
-                const latestEntry = followups[0];
 
-                // 1. COUNT COMPLETED TASKS (Rows with BOTH Timestamp and Target)
+                // 1. COUNT ALL COMPLETED AND PENDING TASKS FROM "FOLLOW UP" SHEET
                 followups.forEach((fu: any) => {
                     const actualDate = (fu.timestamp === 'Legacy' || !fu.timestamp) ? null : fu.timestamp;
                     const plannedDate = fu.target_due_date || null;
                     
                     if (actualDate && plannedDate) {
+                        // COMPLETED TASK (Both Timestamp and Target exist)
                         const parsedPlanned = parseSheetDate(plannedDate);
                         if (parsedPlanned && (isDateInRange(parsedPlanned) || isDateInRange(actualDate))) {
                             const status = new Date(actualDate).getTime() <= new Date(parsedPlanned).getTime() ? 'On Time' : 'Delayed';
@@ -509,36 +524,128 @@ export default function ScorePage() {
                                 doer_name: doerName
                             });
                         }
+                    } else {
+                        // PENDING TASK (The "rest of rows" from Collection Follow Up)
+                        const pDateRaw = fu.target_due_date || fu.next_followup || null;
+                        const parsedPending = parseSheetDate(pDateRaw);
+                        if (parsedPending && pDateRaw) {
+                            const pDate = new Date(parsedPending);
+                            if (pDate.getTime() <= rangeTo.getTime()) {
+                                const isOverdue = pDate.getTime() < new Date().getTime();
+                                items.push({
+                                    id: record.Id,
+                                    party_name: record.Name,
+                                    step_name: 'Follow-up Row (Pending)',
+                                    planned_date: parsedPending,
+                                    actual_date: null,
+                                    status: isOverdue ? 'Delayed' : 'Pending',
+                                    doer_name: doerName
+                                });
+                            }
+                        }
                     }
                 });
 
-                // 2. COUNT PENDING TASK (Exactly one for the current/next milestone)
-                // Use history priority: If history exists, pull from history. Otherwise, pull from main sheet.
-                const pendingMilestoneDateSource = followups.length > 0 
-                    ? (followups[0].next_followup || initialDueDate) 
-                    : initialDueDate;
-                
-                const parsedPendingMilestone = parseSheetDate(pendingMilestoneDateSource);
-                
-                // Rule: If history exists but latest doesn't have target, it's always Pending.
-                // Rule: If no history, it's always Pending.
-                // Rule: If history exists and latest has target, it's still Pending for the NEXT cycle (next_followup).
-                let isPendingState = true; 
+                // 2. COUNT PENDING TASK from "Party Collection" (Only if ID not available in follow up sheet)
+                if (followups.length === 0 && initialDueDate) {
+                    const parsedPendingMilestone = parseSheetDate(initialDueDate);
+                    if (parsedPendingMilestone) {
+                        const pDate = new Date(parsedPendingMilestone);
+                        // Include if planned on or before range end (Backlog inclusion)
+                        if (pDate.getTime() <= rangeTo.getTime()) {
+                            const isOverdue = pDate.getTime() < new Date().getTime();
+                            items.push({
+                                id: record.Id,
+                                party_name: record.Name,
+                                step_name: 'Initial Milestone (Pending)',
+                                planned_date: parsedPendingMilestone,
+                                actual_date: null,
+                                status: isOverdue ? 'Delayed' : 'Pending',
+                                doer_name: doerName
+                            });
+                        }
+                    }
+                }
+            });
 
-                if (isPendingState && parsedPendingMilestone) {
-                    const pDate = new Date(parsedPendingMilestone);
-                    // Include if planned on or before range end (Backlog inclusion)
-                    if (pDate.getTime() <= rangeTo.getTime()) {
-                        const isOverdue = pDate.getTime() < new Date().getTime();
-                        items.push({
-                            id: record.Id,
-                            party_name: record.Name,
-                            step_name: 'Future Milestone (Pending)',
-                            planned_date: parsedPendingMilestone,
-                            actual_date: null,
-                            status: isOverdue ? 'Delayed' : 'Pending',
-                            doer_name: doerName
-                        });
+            const completed = items.filter(it => it.actual_date);
+            const onTime = items.filter(it => it.status === 'On Time');
+
+            return { total: items.length, completed: completed.length, onTime: onTime.length, items };
+        };
+
+        const processPayableData = (user: UserData, payableList: any[], doerName: string) => {
+            const items: any[] = [];
+            if (!doerName || user.username.trim().toLowerCase() !== doerName.trim().toLowerCase()) {
+                return { total: 0, completed: 0, onTime: 0, items: [] };
+            }
+
+            const rangeTo = dateRange.to ? new Date(dateRange.to) : new Date();
+            rangeTo.setHours(23, 59, 59, 999);
+
+            payableList.forEach(record => {
+                const followups = (record['Follow Up'] || []).sort((a: any, b: any) => {
+                    const tA = (a.timestamp === 'Legacy' || !a.timestamp) ? 0 : new Date(a.timestamp).getTime();
+                    const tB = (b.timestamp === 'Legacy' || !b.timestamp) ? 0 : new Date(b.timestamp).getTime();
+                    return tB - tA;
+                });
+                const initialDueDate = record['1 Day Before Due Date'];
+
+                followups.forEach((fu: any) => {
+                    const actualDate = (fu.timestamp === 'Legacy' || !fu.timestamp) ? null : fu.timestamp;
+                    const plannedDate = fu.target_due_date || null;
+                    
+                    if (actualDate && plannedDate) {
+                        const parsedPlanned = parseSheetDate(plannedDate);
+                        if (parsedPlanned && (isDateInRange(parsedPlanned) || isDateInRange(actualDate))) {
+                            const status = new Date(actualDate).getTime() <= new Date(parsedPlanned).getTime() ? 'On Time' : 'Delayed';
+                            items.push({
+                                id: record.Id,
+                                party_name: record.Name,
+                                step_name: 'Payable Follow-up (Completed Cycle)',
+                                planned_date: parsedPlanned,
+                                actual_date: actualDate,
+                                status: status,
+                                doer_name: doerName
+                            });
+                        }
+                    } else {
+                        const pDateRaw = fu.target_due_date || fu.next_followup || null;
+                        const parsedPending = parseSheetDate(pDateRaw);
+                        if (parsedPending && pDateRaw) {
+                            const pDate = new Date(parsedPending);
+                            if (pDate.getTime() <= rangeTo.getTime()) {
+                                const isOverdue = pDate.getTime() < new Date().getTime();
+                                items.push({
+                                    id: record.Id,
+                                    party_name: record.Name,
+                                    step_name: 'Follow-up Row (Pending)',
+                                    planned_date: parsedPending,
+                                    actual_date: null,
+                                    status: isOverdue ? 'Delayed' : 'Pending',
+                                    doer_name: doerName
+                                });
+                            }
+                        }
+                    }
+                });
+
+                if (followups.length === 0 && initialDueDate) {
+                    const parsedPendingMilestone = parseSheetDate(initialDueDate);
+                    if (parsedPendingMilestone) {
+                        const pDate = new Date(parsedPendingMilestone);
+                        if (pDate.getTime() <= rangeTo.getTime()) {
+                            const isOverdue = pDate.getTime() < new Date().getTime();
+                            items.push({
+                                id: record.Id,
+                                party_name: record.Name,
+                                step_name: 'Initial Milestone (Pending)',
+                                planned_date: parsedPendingMilestone,
+                                actual_date: null,
+                                status: isOverdue ? 'Delayed' : 'Pending',
+                                doer_name: doerName
+                            });
+                        }
                     }
                 }
             });
@@ -576,18 +683,19 @@ export default function ScorePage() {
             const jobWorkStats = processFmsData(user, jwList, jwCfg, 11);
             const rmDefectStats = processFmsData(user, rmdList, rmdCfg, 11);
             const collectionStats = processCollectionData(user, collList, collectDoer);
+            const payableStats = processPayableData(user, payList, payDoer);
 
             const totalTasks = userDelegations.length + userChecklists.length +
                 o2dStats.total + crmStats.total + complainStats.total +
-                purchaseStats.total + factoryStats.total + jobWorkStats.total + rmDefectStats.total + collectionStats.total;
+                purchaseStats.total + factoryStats.total + jobWorkStats.total + rmDefectStats.total + collectionStats.total + payableStats.total;
 
             const completedTasks = completedDelegations.length + completedChecklists.length +
                 o2dStats.completed + crmStats.completed + complainStats.completed +
-                purchaseStats.completed + factoryStats.completed + jobWorkStats.completed + rmDefectStats.completed + collectionStats.completed;
+                purchaseStats.completed + factoryStats.completed + jobWorkStats.completed + rmDefectStats.completed + collectionStats.completed + payableStats.completed;
 
             const onTimeTotal = onTimeDelegations.length + onTimeChecklists.length +
                 o2dStats.onTime + crmStats.onTime + complainStats.onTime +
-                purchaseStats.onTime + factoryStats.onTime + jobWorkStats.onTime + rmDefectStats.onTime + collectionStats.onTime;
+                purchaseStats.onTime + factoryStats.onTime + jobWorkStats.onTime + rmDefectStats.onTime + collectionStats.onTime + payableStats.onTime;
 
             // Trend calculation
             const periods = getChartPeriods(filterType, dateRange);
@@ -609,9 +717,10 @@ export default function ScorePage() {
                 const pJW = jobWorkStats.items.filter(o => isTaskInRange(o.planned_date || '', o.actual_date || '', 'Completed', p.from, p.to));
                 const pRMD = rmDefectStats.items.filter(o => isTaskInRange(o.planned_date || '', o.actual_date || '', 'Completed', p.from, p.to));
                 const pColl = collectionStats.items.filter(o => isTaskInRange(o.planned_date || '', o.actual_date || '', 'Completed', p.from, p.to));
+                const pPay = payableStats.items.filter(o => isTaskInRange(o.planned_date || '', o.actual_date || '', 'Completed', p.from, p.to));
 
-                const pFmsTotal = pO2D.length + pCRM.length + pCompl.length + pPurch.length + pFact.length + pJW.length + pRMD.length + pColl.length;
-                const pFmsOnTime = [pO2D, pCRM, pCompl, pPurch, pFact, pJW, pRMD, pColl].reduce((acc, list) => acc + list.filter(it => it.status === 'On Time').length, 0);
+                const pFmsTotal = pO2D.length + pCRM.length + pCompl.length + pPurch.length + pFact.length + pJW.length + pRMD.length + pColl.length + pPay.length;
+                const pFmsOnTime = [pO2D, pCRM, pCompl, pPurch, pFact, pJW, pRMD, pColl, pPay].reduce((acc, list) => acc + list.filter(it => it.status === 'On Time').length, 0);
 
                 const pTotal = pDelTotal + pCheckTotal + pFmsTotal;
                 const pCompleted = (pDels.filter(d => d.status.toLowerCase() === 'completed').length +
@@ -658,6 +767,7 @@ export default function ScorePage() {
                 jobWorkStats,
                 rmDefectStats,
                 collectionStats,
+                payableStats,
                 trendData
             };
         });
@@ -786,7 +896,7 @@ export default function ScorePage() {
         });
     };
 
-    const handleOpenModal = (type: 'delegation' | 'checklist' | 'o2d' | 'crm' | 'complain' | 'purchase' | 'factory' | 'jobwork' | 'rmdefect' | 'collection', tasks: any[], userName: string) => {
+    const handleOpenModal = (type: 'delegation' | 'checklist' | 'o2d' | 'crm' | 'complain' | 'purchase' | 'factory' | 'jobwork' | 'rmdefect' | 'collection' | 'payable', tasks: any[], userName: string) => {
         const typeLabels: Record<string, string> = {
             delegation: 'Delegations',
             checklist: 'Checklists',
@@ -797,7 +907,8 @@ export default function ScorePage() {
             factory: 'Factory Requirements',
             jobwork: 'Job Work',
             rmdefect: 'RM Defects',
-            collection: 'Collections'
+            collection: 'Collections',
+            payable: 'Amount Payable'
         };
         setModalConfig({
             isOpen: true,
@@ -1140,6 +1251,17 @@ export default function ScorePage() {
                                                                                 <ScoreRow formulaLabel="On Time / Completed" completed={score.collectionStats.onTime} total={score.collectionStats.completed} percentage={score.collectionStats.completed > 0 ? Math.round((score.collectionStats.onTime / score.collectionStats.completed) * 100) : 0} />
                                                                             </div>
                                                                         </section>
+
+                                                                        <section className="cursor-pointer group/sec hover:bg-gray-50 dark:hover:bg-gray-700/30 p-1.5 -mx-1.5 rounded-xl transition-colors" onClick={() => handleOpenModal('payable', score.payableStats.items, score.user.username)}>
+                                                                            <h4 className="text-[9px] font-bold text-gray-900 dark:text-white uppercase tracking-widest mb-1.5 flex items-center gap-1.5">
+                                                                                <span className="w-1.5 h-1.5 rounded-full bg-indigo-600"></span>
+                                                                                Amount Payable
+                                                                            </h4>
+                                                                            <div className="space-y-0.5">
+                                                                                <ScoreRow formulaLabel="Completed / Total" completed={score.payableStats.completed} total={score.payableStats.total} percentage={score.payableStats.total > 0 ? Math.round((score.payableStats.completed / score.payableStats.total) * 100) : 0} />
+                                                                                <ScoreRow formulaLabel="On Time / Completed" completed={score.payableStats.onTime} total={score.payableStats.completed} percentage={score.payableStats.completed > 0 ? Math.round((score.payableStats.onTime / score.payableStats.completed) * 100) : 0} />
+                                                                            </div>
+                                                                        </section>
                                                                     </motion.div>
                                                                 )}
                                                             </AnimatePresence>
@@ -1227,6 +1349,8 @@ export default function ScorePage() {
                                                                             <FmsTableBreakdownRow label="Factory Req." stats={score.factoryStats} colorClass="border-l-pink-400" onClick={() => handleOpenModal('factory', score.factoryStats.items, score.user.username)} />
                                                                             <FmsTableBreakdownRow label="Job Work" stats={score.jobWorkStats} colorClass="border-l-teal-400" onClick={() => handleOpenModal('jobwork', score.jobWorkStats.items, score.user.username)} />
                                                                             <FmsTableBreakdownRow label="RM Defect" stats={score.rmDefectStats} colorClass="border-l-gray-400" onClick={() => handleOpenModal('rmdefect', score.rmDefectStats.items, score.user.username)} />
+                                                                            <FmsTableBreakdownRow label="Collections" stats={score.collectionStats} colorClass="border-l-blue-500" onClick={() => handleOpenModal('collection', score.collectionStats.items, score.user.username)} />
+                                                                            <FmsTableBreakdownRow label="Payables" stats={score.payableStats} colorClass="border-l-indigo-600" onClick={() => handleOpenModal('payable', score.payableStats.items, score.user.username)} />
                                                                             <tr className="h-2 bg-transparent"></tr>
                                                                         </>
                                                                     )}

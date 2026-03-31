@@ -1,20 +1,20 @@
 import { NextResponse } from 'next/server';
 import { getGoogleSheetsClient, rowToObject, objectToRow } from '@/lib/sheets';
 
-const COLLECTION_SPREADSHEET_ID = '1aouY4Y9J8haBehMHvmwRFNDhx4ugR2X0Ohrhnre7MXI';
-const MAIN_SHEET_NAME = 'Party Collection';
-const FOLLOWUP_SHEET_NAME = 'Collection Follow Up';
+const PAYABLE_SPREADSHEET_ID = '1z8d3C9GbwcXV4k4VCjLOUojHpLNjquUa8Fis0Wo7zro';
+const MAIN_SHEET_NAME = 'Amount Payable';
+const FOLLOWUP_SHEET_NAME = 'Payable Follow Up';
 
 export async function GET(request: Request) {
     try {
         const { searchParams } = new URL(request.url);
-        const collectionId = searchParams.get('id');
+        const payableId = searchParams.get('id');
         const sheets = await getGoogleSheetsClient();
 
-        if (collectionId) {
+        if (payableId) {
             // Fetch history for a specific ID
             const response = await sheets.spreadsheets.values.get({
-                spreadsheetId: COLLECTION_SPREADSHEET_ID,
+                spreadsheetId: PAYABLE_SPREADSHEET_ID,
                 range: `${FOLLOWUP_SHEET_NAME}!A:Z`,
             });
 
@@ -24,23 +24,23 @@ export async function GET(request: Request) {
             }
 
             const headers = rows[0].map((h: string) => h.trim());
-            const idIndex = headers.indexOf('collection_id');
+            const idIndex = headers.indexOf('Payable_id');
             if (idIndex === -1) return NextResponse.json({ data: [] });
 
             const history = rows.slice(1)
-                .filter(row => (row[idIndex] || '').toString().trim() === collectionId.toString().trim())
+                .filter(row => (row[idIndex] || '').toString().trim() === payableId.toString().trim())
                 .map(row => rowToObject(headers, row));
 
             return NextResponse.json({ data: history });
         } else {
-            // Fetch main collection data
+            // Fetch main payable data
             const [mainResponse, followupResponse] = await Promise.all([
                 sheets.spreadsheets.values.get({
-                    spreadsheetId: COLLECTION_SPREADSHEET_ID,
+                    spreadsheetId: PAYABLE_SPREADSHEET_ID,
                     range: `${MAIN_SHEET_NAME}!A:Z`,
                 }),
                 sheets.spreadsheets.values.get({
-                    spreadsheetId: COLLECTION_SPREADSHEET_ID,
+                    spreadsheetId: PAYABLE_SPREADSHEET_ID,
                     range: `${FOLLOWUP_SHEET_NAME}!A:Z`,
                 }).catch(() => ({ data: { values: [] } })) // Fallback if sheet not found
             ]);
@@ -63,7 +63,7 @@ export async function GET(request: Request) {
                 const obj = rowToObject(mainHeaders, row);
                 const cleanId = (obj.Id || '').toString().trim().replace(/^'/, '');
                 const history = followupData.filter(h => {
-                    const hId = (h.collection_id || '').toString().trim().replace(/^'/, '');
+                    const hId = (h.Payable_id || '').toString().trim().replace(/^'/, '');
                     return hId === cleanId;
                 });
                 obj['Follow Up'] = history;
@@ -73,7 +73,7 @@ export async function GET(request: Request) {
             return NextResponse.json({ data });
         }
     } catch (error: any) {
-        console.error('Error fetching collection data:', error);
+        console.error('Error fetching payable data:', error);
         return NextResponse.json(
             { error: 'Failed to fetch data', details: error.message },
             { status: 500 }
@@ -90,11 +90,11 @@ export async function POST(request: Request) {
 
         const sheets = await getGoogleSheetsClient();
 
-        // 1. Ensure Follow Up sheet exists and has headers
+        // 1. Ensure Payable Follow Up sheet exists and has headers
         let headers: string[] = [];
         try {
             const headerResponse = await sheets.spreadsheets.values.get({
-                spreadsheetId: COLLECTION_SPREADSHEET_ID,
+                spreadsheetId: PAYABLE_SPREADSHEET_ID,
                 range: `${FOLLOWUP_SHEET_NAME}!A1:Z1`,
             });
             headers = headerResponse.data.values?.[0]?.map((h: string) => h.trim()) || [];
@@ -103,12 +103,10 @@ export async function POST(request: Request) {
         }
 
         if (headers.length === 0) {
-            headers = ['id', 'collection_id', 'remark', 'next_followup', 'timestamp', 'target_due_date'];
-        } else if (!headers.includes('target_due_date')) {
-            // Add column if missing
-            headers.push('target_due_date');
+            headers = ['id', 'Payable_id', 'remark', 'next_followup', 'timestamp', 'target_due_date'];
+            // Create the sheet headers
             await sheets.spreadsheets.values.update({
-                spreadsheetId: COLLECTION_SPREADSHEET_ID,
+                spreadsheetId: PAYABLE_SPREADSHEET_ID,
                 range: `${FOLLOWUP_SHEET_NAME}!A1`,
                 valueInputOption: 'RAW',
                 requestBody: {
@@ -121,7 +119,7 @@ export async function POST(request: Request) {
         const timestamp = new Date().toISOString();
         const newEntry = {
             id: Date.now().toString(),
-            collection_id: id,
+            Payable_id: id,
             remark: followUp.remark,
             next_followup: followUp.next_followup || '',
             timestamp: timestamp,
@@ -132,7 +130,7 @@ export async function POST(request: Request) {
 
         // 3. Append to Follow Up sheet
         await sheets.spreadsheets.values.append({
-            spreadsheetId: COLLECTION_SPREADSHEET_ID,
+            spreadsheetId: PAYABLE_SPREADSHEET_ID,
             range: `${FOLLOWUP_SHEET_NAME}!A:Z`,
             valueInputOption: 'USER_ENTERED',
             requestBody: {
@@ -143,15 +141,6 @@ export async function POST(request: Request) {
         return NextResponse.json({ success: true, data: newEntry });
     } catch (error: any) {
         console.error('Error adding follow-up:', error);
-
-        // If sheet not found, it might be the reason.
-        if (error.message?.includes('Range not found') || error.message?.includes('not found')) {
-            return NextResponse.json(
-                { error: 'Follow up sheet not found. Please create a sheet named "Collection Follow Up".' },
-                { status: 404 }
-            );
-        }
-
         return NextResponse.json(
             { error: 'Failed to add follow-up', details: error.message },
             { status: 500 }

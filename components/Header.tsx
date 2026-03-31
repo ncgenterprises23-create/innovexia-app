@@ -64,6 +64,7 @@ export default function Header({ isOpen, setIsOpen }: HeaderProps) {
     { name: 'O2D', path: '/o2d', icon: 'clipboard' },
     { name: 'NBD', path: '/nbd', icon: 'clipboard' },
     { name: 'Collection', path: '/collection', icon: 'clipboard' },
+    { name: 'Payable', path: '/payable', icon: 'clipboard' },
     { name: 'NBD Incoming', path: '/nbd-incoming', icon: 'clipboard' },
     { name: 'CRR', path: '/crr', icon: 'clipboard' },
     { name: 'IMS RM', path: '/ims-rm', icon: 'clipboard' },

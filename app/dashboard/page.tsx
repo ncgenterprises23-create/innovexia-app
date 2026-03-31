@@ -586,13 +586,14 @@ export default function Dashboard() {
             <span className="p-1 bg-violet-600 rounded text-white text-[10px]">⚡</span>
             Quick Actions
           </h2>
-          <div className="grid grid-cols-3 sm:grid-cols-6 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
             {[
               { label: 'Delegation', icon: '📋', color: 'from-blue-500 to-blue-700', link: '/delegation', desc: 'Task Flow' },
               { label: 'Sales CRM', icon: '💼', color: 'from-indigo-500 to-indigo-700', link: '/lead-to-sales', desc: 'Leads' },
               { label: 'NBD Ops', icon: '⚙️', color: 'from-emerald-500 to-teal-700', link: '/nbd', desc: 'Operations' },
               { label: 'Team', icon: '👥', color: 'from-rose-500 to-pink-700', link: '/users', desc: 'Users' },
               { label: 'Collection', icon: '💳', color: 'from-amber-500 to-orange-700', link: '/collection', desc: 'Ledger' },
+              { label: 'Payable', icon: '🏦', color: 'from-red-500 to-rose-700', link: '/payable', desc: 'Payable' },
               { label: 'Orders', icon: '📦', color: 'from-purple-500 to-purple-700', link: '/o2d', desc: 'O2D Log' },
             ].map((action, i) => (
               <motion.a

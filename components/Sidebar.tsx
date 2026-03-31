@@ -40,6 +40,7 @@ export default function Sidebar({ isOpen, setIsOpen }: SidebarProps) {
         { label: 'CRM', icon: 'users', href: '/crm', roles: ['Admin', 'Manager'] },
         { label: 'O2D', icon: 'trending', href: '/o2d', roles: ['Admin', 'Manager'] },
         { label: 'Collection', icon: 'currency-dollar', href: '/collection', roles: ['Admin', 'Manager'] },
+        { label: 'Payable', icon: 'currency-dollar', href: '/payable', roles: ['Admin', 'Manager'] },
         { label: 'Client Complain', icon: 'alert', href: '/client-complain', roles: ['Admin', 'Manager'] },
       ]
     },
