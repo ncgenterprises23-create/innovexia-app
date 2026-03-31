@@ -87,7 +87,6 @@ export async function POST(request: Request) {
         const sheets = await getGoogleSheetsClient();
 
         // 1. Ensure Follow Up sheet exists and has headers
-        // We'll just try to get headers first
         let headers: string[] = [];
         try {
             const headerResponse = await sheets.spreadsheets.values.get({
@@ -96,26 +95,33 @@ export async function POST(request: Request) {
             });
             headers = headerResponse.data.values?.[0]?.map((h: string) => h.trim()) || [];
         } catch (e) {
-            // Sheet might not exist, handle creation logic or just assume it needs initialization
             console.log('Follow up sheet headers fetch failed, may need initialization');
         }
 
         if (headers.length === 0) {
-            headers = ['id', 'collection_id', 'remark', 'next_followup', 'timestamp'];
-            // Since we can't easily create a sheet if it doesn't exist via values.update (it will error if sheet name not found)
-            // We should use batchUpdate to add the sheet if it's missing, but that's complex without spreadsheet metadata.
-            // For now, let's assume the user has created or we can try to initialize it.
-            // A better way is to catch the error specifically for "sheet not found".
+            headers = ['id', 'collection_id', 'remark', 'next_followup', 'timestamp', 'target_due_date'];
+        } else if (!headers.includes('target_due_date')) {
+            // Add column if missing
+            headers.push('target_due_date');
+            await sheets.spreadsheets.values.update({
+                spreadsheetId: COLLECTION_SPREADSHEET_ID,
+                range: `${FOLLOWUP_SHEET_NAME}!A1`,
+                valueInputOption: 'RAW',
+                requestBody: {
+                    values: [headers],
+                },
+            });
         }
 
         // 2. Prepare new entry
         const timestamp = new Date().toISOString();
         const newEntry = {
-            id: Date.now().toString(), // Simple unique ID
+            id: Date.now().toString(),
             collection_id: id,
             remark: followUp.remark,
             next_followup: followUp.next_followup || '',
-            timestamp: timestamp
+            timestamp: timestamp,
+            target_due_date: followUp.target_due_date || ''
         };
 
         const rowData = objectToRow(headers, newEntry);

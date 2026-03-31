@@ -60,6 +60,11 @@ export default function CollectionPage() {
     const [nextFollowUpDate, setNextFollowUpDate] = useState('');
     const [isSubmittingFollowUp, setIsSubmittingFollowUp] = useState(false);
 
+    const [doer, setDoer] = useState('');
+    const [isDoerModalOpen, setIsDoerModalOpen] = useState(false);
+    const [users, setUsers] = useState<any[]>([]);
+    const [isUpdatingDoer, setIsUpdatingDoer] = useState(false);
+
     const fetchData = async () => {
         setLoading(true);
         try {
@@ -75,8 +80,26 @@ export default function CollectionPage() {
         }
     };
 
+    const fetchDoerData = async () => {
+        try {
+            const [doerRes, usersRes] = await Promise.all([
+                fetch('/api/collection/doer'),
+                fetch('/api/users')
+            ]);
+            const [doerData, usersData] = await Promise.all([
+                doerRes.json(),
+                usersRes.json()
+            ]);
+            setDoer(doerData.doer || '');
+            setUsers(usersData.users || []);
+        } catch (error) {
+            console.error('Error fetching doer/users:', error);
+        }
+    };
+
     useEffect(() => {
         fetchData();
+        fetchDoerData();
     }, []);
 
     const formatDisplayDate = (dateStr: string) => {
@@ -339,10 +362,26 @@ export default function CollectionPage() {
     const handleSubmitFollowUp = async () => {
         if (!selectedItem || !followUpRemark) return;
 
+        // Calculate target_due_date for scoring
+        const history = [...selectedItemHistory].sort((a: any, b: any) => {
+            const tA = a.timestamp === 'Legacy' ? 0 : new Date(a.timestamp).getTime();
+            const tB = b.timestamp === 'Legacy' ? 0 : new Date(b.timestamp).getTime();
+            return tB - tA;
+        });
+        const latestWithDate = history.find((h: any) => h.next_followup);
+        const target_due_date = latestWithDate?.next_followup || selectedItem['1 Day Before Due Date'];
+
+        // Adjust nextFollowUpDate to end of day if only date is selected
+        let finalNextFollowUp = nextFollowUpDate;
+        if (finalNextFollowUp && !finalNextFollowUp.includes(' ')) {
+            finalNextFollowUp = `${finalNextFollowUp} 23:59:59`;
+        }
+
         // Optimistic update
         const newEntry = {
             remark: followUpRemark,
-            next_followup: nextFollowUpDate,
+            next_followup: finalNextFollowUp,
+            target_due_date: target_due_date,
             timestamp: new Date().toISOString(),
             isOptimistic: true
         };
@@ -360,7 +399,8 @@ export default function CollectionPage() {
                     id: selectedItem.Id,
                     followUp: {
                         remark: newEntry.remark,
-                        next_followup: newEntry.next_followup
+                        next_followup: newEntry.next_followup,
+                        target_due_date: newEntry.target_due_date
                     }
                 })
             });
@@ -395,6 +435,26 @@ export default function CollectionPage() {
             return Array.isArray(parsed) ? parsed : [parsed];
         } catch {
             return followUpStr ? [{ remark: followUpStr, timestamp: 'Legacy' }] : [];
+        }
+    };
+
+    const handleUpdateDoer = async (selectedDoer: string | number) => {
+        const doerName = String(selectedDoer);
+        setIsUpdatingDoer(true);
+        try {
+            const res = await fetch('/api/collection/doer', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ doer: doerName })
+            });
+            if (res.ok) {
+                setDoer(doerName);
+                setIsDoerModalOpen(false);
+            }
+        } catch (error) {
+            console.error('Error updating doer:', error);
+        } finally {
+            setIsUpdatingDoer(false);
         }
     };
 
@@ -444,6 +504,16 @@ export default function CollectionPage() {
                                 className="w-full pl-9 pr-3 py-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl focus:ring-2 focus:ring-[var(--theme-primary)] outline-none text-xs shadow-sm"
                             />
                         </div>
+
+                        <motion.button
+                            onClick={() => setIsDoerModalOpen(true)}
+                            whileHover={{ scale: 1.02 }}
+                            whileTap={{ scale: 0.98 }}
+                            className="px-3 py-2 bg-indigo-500 text-white rounded-xl font-bold text-xs transition-all flex items-center gap-2 shadow-sm"
+                        >
+                            <User size={16} />
+                            {doer ? `Doer: ${doer}` : 'Select Responsible'}
+                        </motion.button>
 
                         <button
                             onClick={() => setIsFilterModalOpen(true)}
@@ -1025,6 +1095,61 @@ export default function CollectionPage() {
                             <div className="p-6 bg-gray-50 dark:bg-gray-800/80 border-t border-gray-100 dark:border-gray-700 flex gap-2">
                                 <button onClick={resetFilters} className="flex-1 px-4 py-2.5 text-gray-500 font-bold text-[11px] hover:bg-gray-200 dark:hover:bg-gray-700 rounded-xl transition-all uppercase tracking-widest">Reset</button>
                                 <button onClick={() => setIsFilterModalOpen(false)} className="flex-1 px-4 py-2.5 bg-gray-900 text-white dark:bg-[var(--theme-primary)] dark:text-gray-900 font-bold text-[11px] rounded-xl hover:opacity-90 transition-all uppercase tracking-widest shadow-lg">Apply</button>
+                            </div>
+                        </motion.div>
+                    </div>
+                )}
+            </AnimatePresence>
+            {/* Doer Selection Modal */}
+            <AnimatePresence>
+                {isDoerModalOpen && (
+                    <div className="fixed inset-0 z-[10000] flex items-center justify-center p-4">
+                        <motion.div
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                            onClick={() => setIsDoerModalOpen(false)}
+                            className="fixed inset-0 bg-black/60 backdrop-blur-sm"
+                        />
+                        <motion.div
+                            initial={{ scale: 0.9, opacity: 0, y: 20 }}
+                            animate={{ scale: 1, opacity: 1, y: 0 }}
+                            exit={{ scale: 0.9, opacity: 0, y: 20 }}
+                            className="bg-white dark:bg-gray-900 rounded-3xl p-8 w-full max-w-md relative z-[10001] shadow-2xl border border-gray-100 dark:border-gray-800"
+                        >
+                            <div className="flex justify-between items-center mb-6">
+                                <h3 className="text-xl font-black text-gray-900 dark:text-white flex items-center gap-2">
+                                    <User className="text-indigo-500" />
+                                    Assign Responsible
+                                </h3>
+                                <button onClick={() => setIsDoerModalOpen(false)} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-xl transition-colors">
+                                    <X size={20} />
+                                </button>
+                            </div>
+
+                            <div className="space-y-6">
+                                <div className="space-y-2">
+                                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest pl-1">Select Person</label>
+                                    <SearchableDropdown
+                                        options={users.map(u => ({ id: u.username, name: u.username }))}
+                                        value={doer}
+                                        onChange={handleUpdateDoer}
+                                        placeholder="Search user..."
+                                    />
+                                </div>
+
+                                <div className="pt-2">
+                                    <p className="text-[10px] text-gray-500 dark:text-gray-400 italic">
+                                        This person will be marked as the primary responsible party for all collection activities tracked in this module.
+                                    </p>
+                                </div>
+
+                                {isUpdatingDoer && (
+                                    <div className="flex items-center justify-center gap-2 text-indigo-500 font-bold text-xs animate-pulse">
+                                        <Loader2 className="animate-spin" size={14} />
+                                        Updating Responsible Person...
+                                    </div>
+                                )}
                             </div>
                         </motion.div>
                     </div>

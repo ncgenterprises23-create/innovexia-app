@@ -29,7 +29,7 @@ export default function SearchableDropdown({
     const [searchTerm, setSearchTerm] = useState('');
     const dropdownRef = useRef<HTMLDivElement>(null);
 
-    const selectedOption = options.find(opt => opt.id.toString() === value?.toString());
+    const selectedOption = options.find(opt => opt.id?.toString() === value?.toString());
 
     const filteredOptions = options.filter(opt =>
         (opt.name || '').toLowerCase().includes(searchTerm.toLowerCase())

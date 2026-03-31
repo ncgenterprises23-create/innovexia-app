@@ -154,6 +154,12 @@ export const parseDateString = (dateStr: string | number | null | undefined): Da
         return isNaN(date.getTime()) ? null : date;
     }
 
+    // Handle YYYY-MM-DDTHH:mm or ISO strings without timezone
+    if (finalStr.includes('T') && !finalStr.includes('+') && !finalStr.endsWith('Z')) {
+        const date = new Date(finalStr + '+05:30');
+        if (!isNaN(date.getTime())) return date;
+    }
+
     // Fallback to ISO/Regular parsing (but be wary of MM/DD/YYYY ambiguity)
     const date = new Date(finalStr);
     return isNaN(date.getTime()) ? null : date;

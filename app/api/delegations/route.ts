@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDelegations, createDelegation, updateDelegation, deleteDelegation, createMultipleDelegations } from '@/lib/sheets';
-import { formatToSheetDate } from '@/lib/dateUtils';
+import { formatToSheetDate, parseDateString } from '@/lib/dateUtils';
 
 
 export async function GET(request: NextRequest) {
@@ -57,9 +57,9 @@ export async function POST(request: NextRequest) {
     let status = 'pending';
     if (dueDate) {
       const now = new Date();
-      const due = new Date(dueDate);
+      const due = parseDateString(dueDate);
 
-      if (!isNaN(due.getTime())) {
+      if (due && !isNaN(due.getTime())) {
         const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
         const dueDay = new Date(due.getFullYear(), due.getMonth(), due.getDate());
 
@@ -142,21 +142,7 @@ export async function PUT(request: NextRequest) {
     if (dueDate) {
       try {
         const now = new Date();
-        let due: Date | null = null;
-
-        // Parse the date based on format
-        const datetimeMatch = dueDate.match(/(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
-        const ddmmyyyyMatch = dueDate.match(/(\d{2})\/(\d{2})\/(\d{4}) (\d{2}):(\d{2}):(\d{2})/);
-
-        if (datetimeMatch) {
-          const [_, year, month, day, hours, minutes] = datetimeMatch;
-          due = new Date(parseInt(year), parseInt(month) - 1, parseInt(day), parseInt(hours), parseInt(minutes));
-        } else if (ddmmyyyyMatch) {
-          const [_, day, month, year, hours, minutes, seconds] = ddmmyyyyMatch;
-          due = new Date(parseInt(year), parseInt(month) - 1, parseInt(day), parseInt(hours), parseInt(minutes), parseInt(seconds));
-        } else {
-          due = new Date(dueDate);
-        }
+        const due = parseDateString(dueDate);
 
         if (due && !isNaN(due.getTime())) {
           const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
