@@ -39,7 +39,8 @@ import {
   FileText,
   TrendingUp,
   Headset,
-  Layout
+  Layout,
+  Factory
 } from 'lucide-react';
 
 export type IconName =
@@ -81,7 +82,8 @@ export type IconName =
   | 'document'
   | 'trending'
   | 'headset'
-  | 'layout';
+  | 'layout'
+  | 'factory';
 
 interface IconProps {
   name: IconName;
@@ -175,6 +177,8 @@ export default function Icon({ name, className = 'ui-icon', size = 20 }: IconPro
       return <Headset {...iconProps} />;
     case 'layout':
       return <Layout {...iconProps} />;
+    case 'factory':
+      return <Factory {...iconProps} />;
     default:
       return <Info {...iconProps} />;
   }
