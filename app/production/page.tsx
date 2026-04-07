@@ -15,6 +15,7 @@ import {
 import WorkerInformation from './components/WorkerInformation';
 import WorkerAttendance from './components/WorkerAttendance';
 import DailyProduction from './components/DailyProduction';
+import ProductionReport from './components/ProductionReport';
 
 const TABS = [
   { id: 'worker-info', label: 'Worker Information', icon: <Users size={18} /> },
@@ -113,13 +114,7 @@ export default function ProductionPage() {
 
               {activeTab === 'daily-production' && <DailyProduction />}
 
-              {activeTab === 'report' && (
-                <div className="flex flex-col items-center justify-center h-64 bg-white/40 dark:bg-gray-800/40 rounded-3xl border border-dashed border-gray-200 dark:border-gray-700">
-                  <FileText className="text-gray-300 dark:text-gray-600 mb-4" size={48} />
-                  <h3 className="text-xl font-bold text-gray-500">Report Tab</h3>
-                  <p className="text-gray-400">Coming soon in the next phase</p>
-                </div>
-              )}
+               {activeTab === 'report' && <ProductionReport />}
             </motion.div>
           </AnimatePresence>
         </div>

@@ -71,7 +71,9 @@ export default function WorkerAttendance() {
   const [shiftType, setShiftType] = useState('Morning'); // 'Morning', 'Evening', 'Custom'
   const [customTimeIn, setCustomTimeIn] = useState('');
   const [customTimeOut, setCustomTimeOut] = useState('');
-  const [otHours, setOtHours] = useState('0');
+  const [otHours, setOtHours] = useState('0'); // Acts as "Set All"
+  const [workerOTs, setWorkerOTs] = useState<Record<string, string>>({});
+
   const [selectedViewDept, setSelectedViewDept] = useState(DEPARTMENTS[0]); // For the view filter
   
   // Mapping of workerName -> 'Present' | 'Absent'
@@ -118,12 +120,15 @@ export default function WorkerAttendance() {
     setBorrowedWorkers([]);
     setShowBorrowList(false);
     
-    // Default all workers in first dept to Present
+    // Default all workers in first dept to Present and OT 0
     const initialStatus: Record<string, WorkerStatus> = {};
+    const initialOTs: Record<string, string> = {};
     workers.filter(w => w.department === DEPARTMENTS[0]).forEach(w => {
       initialStatus[w.workerName] = 'Present';
+      initialOTs[w.workerName] = '0';
     });
     setWorkerStatuses(initialStatus);
+    setWorkerOTs(initialOTs);
 
     setIsModalOpen(true);
   };
@@ -136,10 +141,13 @@ export default function WorkerAttendance() {
     setSelectedDeptLog(dept);
     setBorrowedWorkers([]);
     const newStatus: Record<string, WorkerStatus> = {};
+    const newOTs: Record<string, string> = {};
     workers.filter(w => w.department === dept).forEach(w => {
        newStatus[w.workerName] = 'Present';
+       newOTs[w.workerName] = '0';
     });
     setWorkerStatuses(newStatus);
+    setWorkerOTs(newOTs);
   };
 
   const toggleWorkerStatus = (workerName: string) => {
@@ -154,6 +162,10 @@ export default function WorkerAttendance() {
     setWorkerStatuses(prev => ({
       ...prev,
       [worker.workerName]: 'Present'
+    }));
+    setWorkerOTs(prev => ({
+      ...prev,
+      [worker.workerName]: '0'
     }));
     setShowBorrowList(false);
   };
@@ -181,6 +193,7 @@ export default function WorkerAttendance() {
     // 1. Core workers marked Present
     for (const w of currentDeptWorkers) {
       if (workerStatuses[w.workerName] === 'Present') {
+        const workerOT = workerOTs[w.workerName] || '0';
         recordsToInsert.push({
           date: logDate,
           workerName: w.workerName,
@@ -188,7 +201,7 @@ export default function WorkerAttendance() {
           borrowedDepartment: '',
           timeIn,
           timeOut,
-          otHours: otHours === '0' ? '' : otHours
+          otHours: workerOT === '0' ? '' : workerOT
         });
       }
     }
@@ -196,6 +209,7 @@ export default function WorkerAttendance() {
     // 2. Borrowed workers marked Present
     for (const w of borrowedWorkers) {
       if (workerStatuses[w.workerName] === 'Present') {
+        const workerOT = workerOTs[w.workerName] || '0';
         recordsToInsert.push({
           date: logDate,
           workerName: w.workerName,
@@ -203,7 +217,7 @@ export default function WorkerAttendance() {
           borrowedDepartment: selectedDeptLog, // Where they are today
           timeIn,
           timeOut,
-          otHours: otHours === '0' ? '' : otHours
+          otHours: workerOT === '0' ? '' : workerOT
         });
       }
     }
@@ -608,20 +622,30 @@ export default function WorkerAttendance() {
                   )}
 
                   <div>
-                     <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Overtime (OT) Hours</label>
+                     <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Set Universal OT (For all Present workers)</label>
                      <div className="flex gap-2 flex-wrap">
-                       {['0', '1', '2', '3', '4'].map(hrs => (
+                       {['0', '0.5', '1', '1.5', '2', '2.5', '3', '3.5', '4'].map(hrs => (
                          <button
                            key={hrs}
                            type="button"
-                           onClick={() => setOtHours(hrs)}
+                           onClick={() => {
+                             setOtHours(hrs);
+                             // Update all workerOTs for workers marked present
+                             const updatedOTs = { ...workerOTs };
+                             [...currentDeptWorkers, ...borrowedWorkers].forEach(w => {
+                               if (workerStatuses[w.workerName] === 'Present') {
+                                 updatedOTs[w.workerName] = hrs;
+                               }
+                             });
+                             setWorkerOTs(updatedOTs);
+                           }}
                            className={`px-4 py-1.5 text-sm font-bold rounded-lg transition-all border ${
                              otHours === hrs
                                ? 'bg-purple-600 text-white border-transparent shadow-md'
                                : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:bg-gray-50'
                            }`}
                          >
-                           {hrs === '0' ? 'No OT' : `+${hrs} hr`}
+                           {hrs === '0' ? 'No OT' : hrs === '0.5' ? '+30 min' : hrs.includes('.5') ? `+${Math.floor(parseFloat(hrs))}h 30m` : `+${hrs} hr`}
                          </button>
                        ))}
                      </div>
@@ -647,33 +671,54 @@ export default function WorkerAttendance() {
                       const isPresent = status === 'Present';
 
                       return (
-                        <div key={worker.id} className={`flex items-center justify-between p-3 rounded-lg border transition-all ${isPresent ? 'bg-teal-50 border-teal-200 dark:bg-teal-900/20 dark:border-teal-800/40' : 'bg-gray-50 border-gray-200 dark:bg-gray-800 dark:border-gray-700 opacity-60'}`}>
-                          <div className="flex items-center gap-3 w-full">
-                            <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm ${isPresent ? 'bg-teal-100 text-teal-700' : 'bg-gray-200 text-gray-500'}`}>
-                              {worker.workerName.charAt(0)}
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <p className={`font-bold text-sm truncate ${isPresent ? 'text-teal-900 dark:text-teal-100' : 'text-gray-500 line-through'}`}>
-                                {worker.workerName}
-                              </p>
-                              {isBorrowed && (
-                                <p className="text-[10px] text-orange-600 font-bold">Borrowed from {worker.department}</p>
-                              )}
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() => toggleWorkerStatus(worker.workerName)}
-                              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-bold transition-all ${
-                                isPresent 
-                                  ? 'bg-white text-teal-700 hover:bg-teal-100 shadow-sm' 
-                                  : 'bg-white text-gray-500 hover:bg-gray-200 shadow-sm'
-                              }`}
-                            >
-                              {isPresent ? <CheckCircle2 size={14} className="text-teal-500"/> : <XCircle size={14} className="text-gray-400"/>}
-                              {isPresent ? 'Present' : 'Absent'}
-                            </button>
-                          </div>
-                        </div>
+                         <div key={worker.id} className={`flex flex-col p-2.5 rounded-xl border transition-all ${isPresent ? 'bg-teal-50 border-teal-200 dark:bg-teal-900/20 dark:border-teal-800/40' : 'bg-gray-50 border-gray-200 dark:bg-gray-800 dark:border-gray-700 opacity-60'}`}>
+                           {/* Top Row: Avatar & Name */}
+                           <div className="flex items-center gap-2 mb-2">
+                             <div className={`shrink-0 w-6 h-6 rounded-full flex items-center justify-center font-bold text-[10px] ${isPresent ? 'bg-teal-100 text-teal-700' : 'bg-gray-200 text-gray-500'}`}>
+                               {worker.workerName.charAt(0)}
+                             </div>
+                             <div className="flex-1 min-w-0">
+                               <p className={`font-bold text-xs truncate ${isPresent ? 'text-teal-900 dark:text-teal-100' : 'text-gray-500 line-through'}`}>
+                                 {worker.workerName}
+                               </p>
+                               {isBorrowed && (
+                                 <p className="text-[9px] text-orange-600 font-bold truncate leading-tight">From {worker.department}</p>
+                               )}
+                             </div>
+                           </div>
+                           
+                           {/* Bottom Row: OT Selector & Status Toggle */}
+                           <div className="flex items-center justify-between gap-2">
+                             <div className="flex-1 min-w-0">
+                               {isPresent && (
+                                 <select
+                                   value={workerOTs[worker.workerName] || '0'}
+                                   onChange={(e) => setWorkerOTs(prev => ({ ...prev, [worker.workerName]: e.target.value }))}
+                                   className="w-full text-[10px] font-bold bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-1.5 py-1 outline-none focus:ring-1 focus:ring-teal-500 transition-all text-teal-700 dark:text-teal-400 h-7"
+                                 >
+                                   {['0', '0.5', '1', '1.5', '2', '2.5', '3', '3.5', '4'].map(h => (
+                                     <option key={h} value={h}>
+                                       {h === '0' ? 'No OT' : h === '0.5' ? '30 min OT' : h.includes('.5') ? `${Math.floor(parseFloat(h))}h 30m OT` : `${h} hr OT`}
+                                     </option>
+                                   ))}
+                                 </select>
+                               )}
+                             </div>
+
+                             <button
+                               type="button"
+                               onClick={() => toggleWorkerStatus(worker.workerName)}
+                               className={`shrink-0 flex items-center gap-1.5 px-3 py-1 rounded-md text-[10px] font-black transition-all h-7 ${
+                                 isPresent 
+                                   ? 'bg-gradient-to-r from-teal-500 to-emerald-500 text-white shadow-sm' 
+                                   : 'bg-white text-gray-400 hover:bg-gray-50 border border-gray-100'
+                               }`}
+                             >
+                               {isPresent ? <CheckCircle2 size={10} /> : <XCircle size={10} />}
+                               {isPresent ? 'PRESENT' : 'ABSENT'}
+                             </button>
+                           </div>
+                         </div>
                       )
                     })}
 
