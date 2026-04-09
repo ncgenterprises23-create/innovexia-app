@@ -6,7 +6,7 @@ import Sidebar from './Sidebar';
 import Header from './Header';
 import { ensureSessionId } from '@/utils/session';
 
-export default function LayoutWrapper({ children }: { children: React.ReactNode }) {
+export default function LayoutWrapper({ children, disableNotifications = false }: { children: React.ReactNode; disableNotifications?: boolean }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const router = useRouter();
@@ -73,7 +73,7 @@ export default function LayoutWrapper({ children }: { children: React.ReactNode 
       {/* Main Content */}
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Header */}
-        <Header isOpen={sidebarOpen} setIsOpen={setSidebarOpen} />
+        <Header isOpen={sidebarOpen} setIsOpen={setSidebarOpen} disableNotifications={disableNotifications} />
 
         {/* Page Content */}
         <main className="flex-1 overflow-auto flex flex-col">

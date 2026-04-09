@@ -18,6 +18,7 @@ declare global {
 interface HeaderProps {
   isOpen: boolean;
   setIsOpen: (open: boolean) => void;
+  disableNotifications?: boolean;
 }
 
 interface Notification {
@@ -33,7 +34,7 @@ interface Notification {
   created_at: string;
 }
 
-export default function Header({ isOpen, setIsOpen }: HeaderProps) {
+export default function Header({ isOpen, setIsOpen, disableNotifications = false }: HeaderProps) {
   const { theme, setTheme, colors } = useThemeColor();
   const [user, setUser] = useState<any>(null);
   const [fullUserData, setFullUserData] = useState<any>(null);
@@ -62,6 +63,7 @@ export default function Header({ isOpen, setIsOpen }: HeaderProps) {
     { name: 'MOM', path: '/mom', icon: 'document' },
     { name: 'Lead to Sales', path: '/lead-to-sales', icon: 'trending' },
     { name: 'O2D', path: '/o2d', icon: 'clipboard' },
+    { name: 'Export FMS', path: '/export-fms', icon: 'clipboard' },
     { name: 'NBD', path: '/nbd', icon: 'clipboard' },
     { name: 'Collection', path: '/collection', icon: 'clipboard' },
     { name: 'Payable', path: '/payable', icon: 'clipboard' },
@@ -88,8 +90,10 @@ export default function Header({ isOpen, setIsOpen }: HeaderProps) {
         const data = await response.json();
         if (data.authenticated) {
           setUser(data.user);
-          // Fetch notification count with user data
-          fetchNotificationCount(data.user.id, data.user.role_name || data.user.role || '');
+          // Fetch notification count with user data (only if notifications are enabled)
+          if (!disableNotifications) {
+            fetchNotificationCount(data.user.id, data.user.role_name || data.user.role || '');
+          }
         }
       } catch (error) {
         console.error('Auth check failed:', error);
@@ -98,15 +102,17 @@ export default function Header({ isOpen, setIsOpen }: HeaderProps) {
 
     checkAuth();
 
-    // Poll for notifications every 30 seconds
-    const interval = setInterval(() => {
+    // Poll for notifications every 30 seconds (only if notifications are enabled)
+    const interval = disableNotifications ? null : setInterval(() => {
       if (user) {
         fetchNotificationCount(user.id, user.role_name || user.role || '');
       }
     }, 30000);
 
-    return () => clearInterval(interval);
-  }, [user?.id]);
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [user?.id, disableNotifications]);
 
   const fetchNotificationCount = async (userId: string, userRole: string) => {
     try {

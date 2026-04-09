@@ -30,6 +30,7 @@ export const SPREADSHEET_IDS = {
   RM_DEFECTS: '1a0pnGbY_tSk5y9_VN02KHcqiJWHUKQSLAav9_9aIDpE',
   JOB_WORK: '1V326z9jzR8bBaLy5J5eae4jKsyg3px7E87LZ9TOue90',
   IMS_FG: '1Jc8ITgif_JE3DkhZDewrc3k1ew5vZpYhobPhWS1eXTI',
+  EXPORT_FMS: '1W88Vnskum-0lYaKKe2vKVDKa1cd3TmwTt1uJYODT60g',
 };
 
 // Backward compatibility
@@ -66,6 +67,8 @@ const SHEETS = {
   RM_DEFECTS_CONFIG: 'Step Configuration',
   JOB_WORK: 'Job Work',
   JOB_WORK_CONFIG: 'Step Configuration',
+  EXPORT_FMS: 'Export FMS',
+  EXPORT_FMS_CONFIG: 'Step Configuration',
 };
 
 // Initialize Google Sheets API client with OAuth
@@ -141,6 +144,57 @@ export function objectToRow(headers: string[], obj: any): any[] {
     // Google Sheets will recognize them as text without adding quotes
     return value;
   });
+}
+
+// EXPORT FMS HELPER FUNCTIONS
+
+// Helper function to add days while skipping Sundays
+function addDaysSkipSunday(date: Date, days: number): Date {
+  const result = new Date(date);
+  let daysToAdd = days;
+  
+  while (daysToAdd > 0) {
+    result.setDate(result.getDate() + 1);
+    // Skip if Sunday (day 0)
+    if (result.getDay() !== 0) {
+      daysToAdd--;
+    }
+  }
+  
+  return result;
+}
+
+// Helper function to parse date string and return Date object
+function parseDate(dateStr: any): Date | null {
+  if (!dateStr) return null;
+  
+  try {
+    // Handle ISO format (YYYY-MM-DDTHH:mm:ss or YYYY-MM-DD)
+    if (typeof dateStr === 'string' && dateStr.match(/\d{4}-\d{2}-\d{2}/)) {
+      return new Date(dateStr);
+    }
+    // Handle dd/mm/yyyy HH:mm:ss format
+    if (typeof dateStr === 'string' && dateStr.includes('/')) {
+      const parts = dateStr.split(' ');
+      const dateParts = parts[0].split('/');
+      const timeParts = parts[1]?.split(':') || ['00', '00', '00'];
+      return new Date(
+        parseInt(dateParts[2], 10),
+        parseInt(dateParts[1], 10) - 1,
+        parseInt(dateParts[0], 10),
+        parseInt(timeParts[0], 10),
+        parseInt(timeParts[1], 10),
+        parseInt(timeParts[2], 10)
+      );
+    }
+    // If it's already a Date
+    if (dateStr instanceof Date) {
+      return dateStr;
+    }
+  } catch (error) {
+    console.error('Error parsing date:', dateStr, error);
+  }
+  return null;
 }
 
 // DELEGATION CRUD OPERATIONS
@@ -6310,6 +6364,365 @@ export async function deleteJobWorkData(id: string) {
     return { success: true };
   } catch (error) {
     console.error('Error deleting Job Work data:', error);
+    throw error;
+  }
+}
+
+// EXPORT FMS CRUD OPERATIONS
+
+export async function getExportFMSData() {
+  try {
+    const sheets = await getGoogleSheetsClient();
+    const spreadsheetId = SPREADSHEET_IDS.EXPORT_FMS;
+    const sheetName = SHEETS.EXPORT_FMS;
+
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${sheetName}!A:BF`,
+      valueRenderOption: 'UNFORMATTED_VALUE',
+    });
+
+    const rows = response.data.values;
+    if (!rows || rows.length === 0) return [];
+
+    const headers = rows[0].map((h: string) => h.trim());
+    return rows.slice(1).map((row, idx) => ({
+      ...rowToObject(headers, row),
+      _rowIndex: idx + 2,
+    }));
+  } catch (error) {
+    console.error('Error fetching Export FMS data:', error);
+    throw error;
+  }
+}
+
+export async function createExportFMSData(exports: any[]) {
+  try {
+    const sheets = await getGoogleSheetsClient();
+    const spreadsheetId = SPREADSHEET_IDS.EXPORT_FMS;
+    const sheetName = SHEETS.EXPORT_FMS;
+    const now = new Date();
+    const timestamp = now.toISOString();
+
+    // Get TAT configuration
+    const config = await getExportFMSConfig();
+    const tat1 = config.find(c => c.step === 1)?.tatValue || 1;
+
+    const existingRes = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${sheetName}!A:BF`,
+      valueRenderOption: 'UNFORMATTED_VALUE',
+    });
+    const existingRows = existingRes.data.values || [];
+    let headers: string[] = existingRows[0]?.map((h: string) => h.trim()) || [];
+
+    if (headers.length === 0) {
+      const defaultHeaders = [
+        'id', 'PI Number', 'Party Name', 'Container Type', 'Product', 'Timestamp', 'Cancelled',
+        'Planned_1', 'Actual_1', 'Status_1',
+        'Planned_2', 'Actual_2', 'Status_2',
+        'Planned_3', 'Actual_3', 'Status_3',
+        'Planned_4', 'Actual_4', 'Status_4',
+        'Planned_5', 'Actual_5', 'Status_5',
+        'Planned_6', 'Actual_6', 'Status_6',
+        'Planned_7', 'Actual_7', 'Status_7',
+        'Planned_8', 'Actual_8', 'Status_8',
+        'Planned_9', 'Actual_9', 'Checklist_9',
+        'Planned_10', 'Actual_10', 'Checklist_10',
+        'Planned_11', 'Actual_11', 'Checklist_11',
+        'Planned_12', 'Actual_12', 'Checklist_12',
+        'Planned_13', 'Actual_13', 'Status_13',
+        'Planned_14', 'Actual_14', 'Status_14',
+        'Planned_15', 'Actual_15', 'Status_15',
+        'Planned_16', 'Actual_16', 'Status_16',
+        'Planned_17', 'Actual_17', 'Checklist_17',
+      ];
+      await sheets.spreadsheets.values.update({
+        spreadsheetId,
+        range: `${sheetName}!A1`,
+        valueInputOption: 'RAW',
+        requestBody: { values: [defaultHeaders] }
+      });
+      headers = defaultHeaders;
+    }
+
+    const idColIdx = headers.indexOf('id');
+    let maxId = 0;
+    if (idColIdx !== -1 && existingRows.length > 1) {
+      existingRows.slice(1).forEach(row => {
+        const val = parseInt(row[idColIdx] || '0', 10);
+        if (!isNaN(val) && val > maxId) maxId = val;
+      });
+    }
+
+    // Calculate Planned_1 date based on TAT (skip Sundays)
+    const planned1Date = addDaysSkipSunday(now, tat1);
+    const planned1Formatted = planned1Date.toISOString();
+
+    const createdRecords: any[] = [];
+    const rowsData = exports.map((exp, index) => {
+      const newId = (maxId + index + 1).toString();
+      const rowMap: Record<string, string> = {
+        id: newId,
+        'PI Number': exp.piNumber,
+        'Party Name': exp.partyName || '',
+        'Container Type': exp.containerType || '',
+        'Product': typeof exp.products === 'string' ? exp.products : JSON.stringify(exp.products || []),
+        Timestamp: timestamp,
+        'Planned_1': planned1Formatted,
+      };
+      createdRecords.push({
+        id: newId,
+        'PI Number': exp.piNumber,
+        'Party Name': exp.partyName || '',
+        'Container Type': exp.containerType || '',
+      });
+      return headers.map(h => rowMap[h] ?? '');
+    });
+
+    await sheets.spreadsheets.values.append({
+      spreadsheetId,
+      range: `${sheetName}!A:AZ`,
+      valueInputOption: 'USER_ENTERED',
+      requestBody: { values: rowsData },
+    });
+
+    return { success: true, count: exports.length, records: createdRecords };
+  } catch (error) {
+    console.error('Error creating Export FMS data:', error);
+    throw error;
+  }
+}
+
+export async function updateExportFMSData(id: string, updates: any) {
+  try {
+    const sheets = await getGoogleSheetsClient();
+    const spreadsheetId = SPREADSHEET_IDS.EXPORT_FMS;
+    const sheetName = SHEETS.EXPORT_FMS;
+
+    // Get TAT configuration
+    const config = await getExportFMSConfig();
+    const tatMap: Record<number, number> = {};
+    config.forEach(c => { tatMap[c.step] = c.tatValue || 1; });
+
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${sheetName}!A:BF`,
+      valueRenderOption: 'UNFORMATTED_VALUE',
+    });
+    const rows = response.data.values;
+    if (!rows || rows.length === 0) throw new Error('Sheet is empty');
+
+    const headers: string[] = rows[0].map((h: string) => h.trim());
+    const idColIdx = headers.indexOf('id');
+    if (idColIdx === -1) throw new Error('id column not found');
+
+    const rowIdx = rows.findIndex((row, i) => i > 0 && (row[idColIdx] || '').toString().trim() === id.toString().trim());
+    if (rowIdx === -1) throw new Error('Record not found');
+
+    const sheetRowNumber = rowIdx + 1;
+    const existingRow = rows[rowIdx];
+    const updatedRowMap: Record<string, string> = {};
+    headers.forEach((h, i) => { updatedRowMap[h] = existingRow[i] || ''; });
+
+    const keyMap: Record<string, string> = {
+      piNumber: 'PI Number',
+      partyName: 'Party Name',
+      containerType: 'Container Type',
+      products: 'Product',
+    };
+
+    // Process updates and auto-calculate next planned dates
+    Object.keys(updates).forEach(key => {
+      if (key === 'id') return;
+      const headerName = keyMap[key] || key;
+      if (headers.includes(headerName)) {
+        const value = updates[key];
+        if (typeof value === 'object' && value !== null) {
+          updatedRowMap[headerName] = JSON.stringify(value);
+        } else {
+          updatedRowMap[headerName] = value === null ? '' : String(value);
+        }
+      }
+
+      // If Actual_X is being set, calculate Planned_(X+1) based on TAT
+      const actualMatch = key.match(/Actual_(\d+)/);
+      if (actualMatch) {
+        const step = parseInt(actualMatch[1], 10);
+        const nextStep = step + 1;
+        const nextPlannedKey = `Planned_${nextStep}`;
+
+        // Only set if next step exists (1-17) and value is provided
+        if (nextStep <= 17 && updates[key]) {
+          const actualDate = parseDate(updates[key]);
+          if (actualDate) {
+            const tatDays = tatMap[nextStep] || 1;
+            const nextPlannedDate = addDaysSkipSunday(actualDate, tatDays);
+            updatedRowMap[nextPlannedKey] = nextPlannedDate.toISOString();
+          }
+        }
+      }
+    });
+
+    const updatedRow = headers.map(h => updatedRowMap[h] ?? '');
+    const getColLetterInternal = (index: number): string => {
+      let letter = '';
+      while (index >= 0) {
+        letter = String.fromCharCode((index % 26) + 65) + letter;
+        index = Math.floor(index / 26) - 1;
+      }
+      return letter;
+    };
+    const colLetter = getColLetterInternal(headers.length - 1);
+    const range = `${sheetName}!A${sheetRowNumber}:${colLetter}${sheetRowNumber}`;
+
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range,
+      valueInputOption: 'USER_ENTERED',
+      requestBody: { values: [updatedRow] },
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error('Error updating Export FMS data:', error);
+    throw error;
+  }
+}
+
+export async function deleteExportFMSData(id: string) {
+  try {
+    const sheets = await getGoogleSheetsClient();
+    const spreadsheetId = SPREADSHEET_IDS.EXPORT_FMS;
+    const sheetName = SHEETS.EXPORT_FMS;
+
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${sheetName}!A:BF`,
+      valueRenderOption: 'UNFORMATTED_VALUE',
+    });
+    const rows = response.data.values;
+    if (!rows || rows.length === 0) throw new Error('Sheet is empty');
+
+    const headers: string[] = rows[0].map((h: string) => h.trim());
+    const idColIdx = headers.indexOf('id');
+    if (idColIdx === -1) throw new Error('id column not found');
+
+    const rowIdx = rows.findIndex((row, i) => i > 0 && (row[idColIdx] || '').toString().trim() === id.toString().trim());
+    if (rowIdx === -1) throw new Error('Record not found');
+
+    const spreadsheetMeta = await sheets.spreadsheets.get({ spreadsheetId });
+    const sheet = spreadsheetMeta.data.sheets?.find((s: any) => s.properties?.title === sheetName);
+    if (!sheet) throw new Error('Sheet not found');
+    const sheetId = sheet.properties?.sheetId;
+
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        requests: [{
+          deleteDimension: {
+            range: {
+              sheetId,
+              dimension: 'ROWS',
+              startIndex: rowIdx,
+              endIndex: rowIdx + 1
+            }
+          }
+        }]
+      }
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error('Error deleting Export FMS data:', error);
+    throw error;
+  }
+}
+
+export async function getExportFMSConfig() {
+  try {
+    const sheets = await getGoogleSheetsClient();
+    const spreadsheetId = SPREADSHEET_IDS.EXPORT_FMS;
+    const sheetName = SHEETS.EXPORT_FMS_CONFIG;
+
+    try {
+      const response = await sheets.spreadsheets.values.get({
+        spreadsheetId,
+        range: `${sheetName}!A:E`,
+        valueRenderOption: 'UNFORMATTED_VALUE',
+      });
+
+      const rows = response.data.values || [];
+      if (rows.length <= 1) return [];
+
+      const dataRows = rows.slice(1);
+
+      return dataRows.map(row => ({
+        step: parseInt(row[0]),
+        stepName: row[1],
+        doerName: row[2],
+        tatValue: parseInt(row[3]),
+        tatUnit: row[4]
+      })).sort((a, b) => a.step - b.step);
+    } catch (error: any) {
+      if (error.code === 400 || error.message?.includes('Unable to parse range')) {
+        return [];
+      }
+      throw error;
+    }
+  } catch (error) {
+    console.error('Error fetching Export FMS config:', error);
+    return [];
+  }
+}
+
+export async function updateExportFMSConfig(config: any[]) {
+  try {
+    const sheets = await getGoogleSheetsClient();
+    const spreadsheetId = SPREADSHEET_IDS.EXPORT_FMS;
+    const sheetName = SHEETS.EXPORT_FMS_CONFIG;
+
+    const headers = ['step', 'stepName', 'doerName', 'tatValue', 'tatUnit'];
+    const rows = [
+      headers,
+      ...config.map(c => [c.step, c.stepName, c.doerName, c.tatValue, c.tatUnit])
+    ];
+
+    try {
+      await sheets.spreadsheets.values.get({
+        spreadsheetId,
+        range: `${sheetName}!A1`,
+      });
+    } catch (error: any) {
+      if (error.code === 400 || error.message?.includes('Unable to parse range')) {
+        await sheets.spreadsheets.batchUpdate({
+          spreadsheetId,
+          requestBody: {
+            requests: [{
+              addSheet: {
+                properties: { title: sheetName }
+              }
+            }]
+          }
+        });
+      }
+    }
+
+    await sheets.spreadsheets.values.clear({
+      spreadsheetId,
+      range: `${sheetName}!A:E`,
+    });
+
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `${sheetName}!A1`,
+      valueInputOption: 'RAW',
+      requestBody: { values: rows },
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error('Error updating Export FMS config:', error);
     throw error;
   }
 }

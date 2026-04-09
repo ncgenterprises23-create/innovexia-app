@@ -58,7 +58,13 @@ export default function Sidebar({ isOpen, setIsOpen }: SidebarProps) {
         { label: 'Factory Requirement', icon: 'document', href: '/factory-requirements', roles: ['Admin', 'Manager'] },
         { label: 'Job Work', icon: 'clipboard-check', href: '/job-work', roles: ['Admin', 'Manager'] },
         { label: 'RM Defects', icon: 'alert', href: '/rm-defects', roles: ['Admin', 'Manager'] },
-      ]
+      ],
+    },
+    {
+      label: 'Export',
+      icon: 'clipboard',
+      href: '/export-fms',
+      roles: ['Admin', 'Manager'],
     },
     {
       label: 'IMS', icon: 'clipboard', roles: ['Admin', 'Manager'], children: [
