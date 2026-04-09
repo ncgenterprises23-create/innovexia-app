@@ -28,6 +28,8 @@ export default function PCDashboardPage() {
 
     const [expandedSection, setExpandedSection] = useState<'daily' | 'delayed' | 'pending' | null>('daily');
     const [activeTab, setActiveTab] = useState<'overview' | 'charts'>('overview');
+    const [selectedUsers, setSelectedUsers] = useState<string[]>([]);
+    const [isDropdownOpen, setIsDropdownOpen] = useState(false);
 
     const [modalConfig, setModalConfig] = useState<{
         isOpen: boolean;
@@ -217,6 +219,31 @@ export default function PCDashboardPage() {
         fetchAllData();
     }, []);
 
+    const displayedDailyJobs = dailyJobs.filter(t => selectedUsers.length === 0 || selectedUsers.includes(t.doerName.trim() || 'Missing Assignee'));
+    const displayedDelayedJobs = delayedJobs.filter(t => selectedUsers.length === 0 || selectedUsers.includes(t.doerName.trim() || 'Missing Assignee'));
+    const displayedPendingJobs = pendingJobs.filter(t => selectedUsers.length === 0 || selectedUsers.includes(t.doerName.trim() || 'Missing Assignee'));
+
+    const getFilterDropdownUsers = () => {
+        const statsMap = new Map<string, { daily: number, delayed: number, pending: number }>();
+        const initUser = (name: string) => {
+            if (!statsMap.has(name)) {
+                statsMap.set(name, { daily: 0, delayed: 0, pending: 0 });
+            }
+        };
+        dailyJobs.forEach(t => { const n = t.doerName.trim() || 'Missing Assignee'; initUser(n); statsMap.get(n)!.daily += 1; });
+        delayedJobs.forEach(t => { const n = t.doerName.trim() || 'Missing Assignee'; initUser(n); statsMap.get(n)!.delayed += 1; });
+        pendingJobs.forEach(t => { const n = t.doerName.trim() || 'Missing Assignee'; initUser(n); statsMap.get(n)!.pending += 1; });
+        
+        return Array.from(statsMap.entries()).map(([name, counts]) => ({
+            doerName: name,
+            daily: counts.daily,
+            delayed: counts.delayed,
+            pending: counts.pending,
+            total: counts.daily + counts.delayed + counts.pending
+        })).sort((a, b) => b.total - a.total); 
+    };
+    const filterOptions = getFilterDropdownUsers();
+
     const handleOpenTask = (task: UnifiedTask) => {
         let modalType = task.rawTaskData?.type || 'delegation';
         
@@ -237,17 +264,17 @@ export default function PCDashboardPage() {
             }
         };
 
-        dailyJobs.forEach(t => {
+        displayedDailyJobs.forEach(t => {
            const name = t.doerName.trim() || 'Missing Assignee';
            initUser(name);
            statsMap.get(name)!.daily += 1;
         });
-        delayedJobs.forEach(t => {
+        displayedDelayedJobs.forEach(t => {
            const name = t.doerName.trim() || 'Missing Assignee';
            initUser(name);
            statsMap.get(name)!.delayed += 1;
         });
-        pendingJobs.forEach(t => {
+        displayedPendingJobs.forEach(t => {
            const name = t.doerName.trim() || 'Missing Assignee';
            initUser(name);
            statsMap.get(name)!.pending += 1;
@@ -427,13 +454,73 @@ export default function PCDashboardPage() {
             <div className="w-full h-full min-h-screen bg-gray-50/50 dark:bg-gray-900/50">
                 <div className="p-3 sm:p-5 space-y-4 w-full max-w-[1920px] mx-auto">
                     {/* Header */}
-                    <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4 relative z-10">
+                    <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4 relative z-50">
                         <div>
                             <h1 className="text-3xl sm:text-4xl font-black text-gray-900 dark:text-white tracking-tight">PC Dashboard</h1>
                             <p className="text-sm sm:text-base text-gray-500 font-medium mt-1">Overview of all operational tasks across the ERP</p>
                         </div>
                         
                         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 w-full xl:w-auto">
+                            {/* Search Dropdown */}
+                            <div className="relative w-full sm:w-80">
+                                <button 
+                                    onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+                                    className="w-full flex items-center justify-between px-4 py-2 border border-gray-100 dark:border-gray-700 rounded-xl leading-5 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none hover:border-gray-200 dark:hover:border-gray-600 sm:text-sm transition-colors shadow-sm"
+                                >
+                                    <div className="flex items-center gap-2 truncate pr-2">
+                                        <svg className="h-5 w-5 text-gray-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
+                                        </svg>
+                                        <span className="truncate font-medium text-gray-600 dark:text-gray-300">
+                                            {selectedUsers.length === 0 ? "Filter purely by user..." : `${selectedUsers.length} user${selectedUsers.length > 1 ? 's' : ''} selected`}
+                                        </span>
+                                    </div>
+                                    <svg className={`h-5 w-5 text-gray-400 shrink-0 transition-transform ${isDropdownOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                    </svg>
+                                </button>
+                                
+                                <AnimatePresence>
+                                    {isDropdownOpen && (
+                                        <>
+                                            <div className="fixed inset-0 z-40" onClick={() => setIsDropdownOpen(false)}></div>
+                                            <motion.div 
+                                                initial={{ opacity: 0, y: -10 }}
+                                                animate={{ opacity: 1, y: 0 }}
+                                                exit={{ opacity: 0, y: -10 }}
+                                                className="absolute z-50 mt-2 w-full sm:min-w-[320px] max-w-md right-0 sm:left-0 max-h-96 overflow-y-auto bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl shadow-[0_10px_40px_-10px_rgba(0,0,0,0.1)] dark:shadow-[0_10px_40px_-10px_rgba(0,0,0,0.3)] ring-1 ring-black ring-opacity-5"
+                                            >
+                                                <div className="p-2 space-y-1">
+                                                    {filterOptions.length === 0 ? (
+                                                        <div className="text-center p-4 text-sm text-gray-500">No users found</div>
+                                                    ) : filterOptions.map((opt) => (
+                                                        <label key={opt.doerName} className="flex items-center p-2.5 hover:bg-gray-50 dark:hover:bg-gray-700/50 rounded-lg cursor-pointer transition-colors group">
+                                                            <input 
+                                                                type="checkbox" 
+                                                                checked={selectedUsers.includes(opt.doerName)}
+                                                                onChange={(e) => {
+                                                                    if(e.target.checked) setSelectedUsers(prev => [...prev, opt.doerName]);
+                                                                    else setSelectedUsers(prev => prev.filter(name => name !== opt.doerName));
+                                                                }}
+                                                                className="w-4 h-4 text-[var(--theme-primary)] rounded border-gray-300 dark:border-gray-600 dark:bg-gray-700 focus:ring-[var(--theme-primary)]/50 shrink-0"
+                                                            />
+                                                            <div className="ml-3 flex-1 flex flex-col sm:flex-row sm:items-center justify-between gap-1 overflow-hidden">
+                                                                <span className="text-sm font-bold text-gray-700 dark:text-gray-200 truncate" title={opt.doerName}>{opt.doerName}</span>
+                                                                <div className="flex items-center gap-1.5 text-[10px] font-bold shrink-0">
+                                                                    {opt.daily > 0 && <span className="text-green-700 bg-green-100/80 dark:bg-green-900/40 dark:text-green-400 px-1.5 py-0.5 rounded-md">Daily: {opt.daily}</span>}
+                                                                    {opt.delayed > 0 && <span className="text-red-700 bg-red-100/80 dark:bg-red-900/40 dark:text-red-400 px-1.5 py-0.5 rounded-md">Del: {opt.delayed}</span>}
+                                                                    {opt.pending > 0 && <span className="text-blue-700 bg-blue-100/80 dark:bg-blue-900/40 dark:text-blue-400 px-1.5 py-0.5 rounded-md">Pend: {opt.pending}</span>}
+                                                                </div>
+                                                            </div>
+                                                        </label>
+                                                    ))}
+                                                </div>
+                                            </motion.div>
+                                        </>
+                                    )}
+                                </AnimatePresence>
+                            </div>
+
                             {/* Tabs */}
                             <div className="flex bg-white dark:bg-gray-800 p-1.5 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 w-full sm:w-fit">
                                 <button
@@ -478,7 +565,7 @@ export default function PCDashboardPage() {
                                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 lg:gap-6">
                                     <StatCard 
                                         title="Daily Job Report" 
-                                        count={dailyJobs.length} 
+                                        count={displayedDailyJobs.length} 
                                         active={expandedSection === 'daily'}
                                         onClick={() => setExpandedSection(expandedSection === 'daily' ? null : 'daily')}
                                         gradientClass="bg-gradient-to-br from-emerald-400 to-green-600"
@@ -488,7 +575,7 @@ export default function PCDashboardPage() {
                                     />
                                     <StatCard 
                                         title="Delayed Jobs" 
-                                        count={delayedJobs.length} 
+                                        count={displayedDelayedJobs.length} 
                                         active={expandedSection === 'delayed'}
                                         onClick={() => setExpandedSection(expandedSection === 'delayed' ? null : 'delayed')}
                                         gradientClass="bg-gradient-to-br from-rose-400 to-red-600"
@@ -498,7 +585,7 @@ export default function PCDashboardPage() {
                                     />
                                     <StatCard 
                                         title="Pending Jobs" 
-                                        count={pendingJobs.length} 
+                                        count={displayedPendingJobs.length} 
                                         active={expandedSection === 'pending'}
                                         onClick={() => setExpandedSection(expandedSection === 'pending' ? null : 'pending')}
                                         gradientClass="bg-gradient-to-br from-blue-400 to-indigo-600"
@@ -522,9 +609,9 @@ export default function PCDashboardPage() {
                                             >
                                                 <h3 className="text-xl font-black text-gray-800 dark:text-gray-200 flex items-center gap-3 pl-2">
                                                     <span className="w-3 h-3 rounded-full bg-green-500 shadow-[0_0_10px_rgba(34,197,94,0.5)]"></span>
-                                                    Daily Job Report <span className="text-base font-bold text-gray-400 bg-gray-200 dark:bg-gray-700 px-3 py-0.5 rounded-full">{dailyJobs.length}</span>
+                                                    Daily Job Report <span className="text-base font-bold text-gray-400 bg-gray-200 dark:bg-gray-700 px-3 py-0.5 rounded-full">{displayedDailyJobs.length}</span>
                                                 </h3>
-                                                {dailyJobs.length === 0 ? (
+                                                {displayedDailyJobs.length === 0 ? (
                                                     <div className="p-12 text-center bg-white dark:bg-gray-800 rounded-3xl border-2 border-dashed border-gray-200 dark:border-gray-700">
                                                         <div className="w-16 h-16 bg-gray-50 dark:bg-gray-700 rounded-full flex items-center justify-center mx-auto mb-4 text-gray-400">
                                                             <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
@@ -533,7 +620,7 @@ export default function PCDashboardPage() {
                                                     </div>
                                                 ) : (
                                                     <div className="grid grid-cols-1 xl:grid-cols-2 gap-3 sm:gap-4">
-                                                        {dailyJobs.map(task => <TaskRow key={task.id} task={task} />)}
+                                                        {displayedDailyJobs.map(task => <TaskRow key={task.id} task={task} />)}
                                                     </div>
                                                 )}
                                             </motion.div>
@@ -550,9 +637,9 @@ export default function PCDashboardPage() {
                                             >
                                                 <h3 className="text-xl font-black text-gray-800 dark:text-gray-200 flex items-center gap-3 pl-2">
                                                     <span className="w-3 h-3 rounded-full bg-red-500 shadow-[0_0_10px_rgba(239,68,68,0.5)] animate-pulse"></span>
-                                                    Delayed Jobs <span className="text-base font-bold text-gray-400 bg-gray-200 dark:bg-gray-700 px-3 py-0.5 rounded-full">{delayedJobs.length}</span>
+                                                    Delayed Jobs <span className="text-base font-bold text-gray-400 bg-gray-200 dark:bg-gray-700 px-3 py-0.5 rounded-full">{displayedDelayedJobs.length}</span>
                                                 </h3>
-                                                {delayedJobs.length === 0 ? (
+                                                {displayedDelayedJobs.length === 0 ? (
                                                     <div className="p-12 text-center bg-white dark:bg-gray-800 rounded-3xl border-2 border-dashed border-gray-200 dark:border-gray-700">
                                                         <div className="w-16 h-16 bg-green-50 dark:bg-green-900/20 rounded-full flex items-center justify-center mx-auto mb-4 text-green-500">
                                                             <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
@@ -561,7 +648,7 @@ export default function PCDashboardPage() {
                                                     </div>
                                                 ) : (
                                                     <div className="grid grid-cols-1 xl:grid-cols-2 gap-3 sm:gap-4">
-                                                        {delayedJobs.map(task => <TaskRow key={task.id} task={task} />)}
+                                                        {displayedDelayedJobs.map(task => <TaskRow key={task.id} task={task} />)}
                                                     </div>
                                                 )}
                                             </motion.div>
@@ -578,9 +665,9 @@ export default function PCDashboardPage() {
                                             >
                                                 <h3 className="text-xl font-black text-gray-800 dark:text-gray-200 flex items-center gap-3 pl-2">
                                                     <span className="w-3 h-3 rounded-full bg-blue-500 shadow-[0_0_10px_rgba(59,130,246,0.5)]"></span>
-                                                    Pending Jobs <span className="text-base font-bold text-gray-400 bg-gray-200 dark:bg-gray-700 px-3 py-0.5 rounded-full">{pendingJobs.length}</span>
+                                                    Pending Jobs <span className="text-base font-bold text-gray-400 bg-gray-200 dark:bg-gray-700 px-3 py-0.5 rounded-full">{displayedPendingJobs.length}</span>
                                                 </h3>
-                                                {pendingJobs.length === 0 ? (
+                                                {displayedPendingJobs.length === 0 ? (
                                                     <div className="p-12 text-center bg-white dark:bg-gray-800 rounded-3xl border-2 border-dashed border-gray-200 dark:border-gray-700">
                                                         <div className="w-16 h-16 bg-gray-50 dark:bg-gray-700 rounded-full flex items-center justify-center mx-auto mb-4 text-gray-400">
                                                             <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
@@ -589,7 +676,7 @@ export default function PCDashboardPage() {
                                                     </div>
                                                 ) : (
                                                     <div className="grid grid-cols-1 xl:grid-cols-2 gap-3 sm:gap-4">
-                                                        {pendingJobs.map(task => <TaskRow key={task.id} task={task} />)}
+                                                        {displayedPendingJobs.map(task => <TaskRow key={task.id} task={task} />)}
                                                     </div>
                                                 )}
                                             </motion.div>

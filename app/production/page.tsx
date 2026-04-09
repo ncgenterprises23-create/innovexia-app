@@ -10,18 +10,21 @@ import {
   Users,
   CalendarCheck,
   LineChart,
-  FileText
+  FileText,
+  Banknote
 } from 'lucide-react';
 import WorkerInformation from './components/WorkerInformation';
 import WorkerAttendance from './components/WorkerAttendance';
 import DailyProduction from './components/DailyProduction';
 import ProductionReport from './components/ProductionReport';
+import WorkerSalary from './components/WorkerSalary';
 
 const TABS = [
   { id: 'worker-info', label: 'Worker Information', icon: <Users size={18} /> },
   { id: 'worker-attendance', label: 'Worker Attendance', icon: <CalendarCheck size={18} /> },
   { id: 'daily-production', label: 'Daily Production', icon: <LineChart size={18} /> },
   { id: 'report', label: 'Report', icon: <FileText size={18} /> },
+  { id: 'worker-salary', label: 'Worker Salary', icon: <Banknote size={18} /> },
 ];
 
 export default function ProductionPage() {
@@ -115,6 +118,8 @@ export default function ProductionPage() {
               {activeTab === 'daily-production' && <DailyProduction />}
 
                {activeTab === 'report' && <ProductionReport />}
+
+               {activeTab === 'worker-salary' && <WorkerSalary />}
             </motion.div>
           </AnimatePresence>
         </div>
