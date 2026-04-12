@@ -31,6 +31,7 @@ export const SPREADSHEET_IDS = {
   JOB_WORK: '1V326z9jzR8bBaLy5J5eae4jKsyg3px7E87LZ9TOue90',
   IMS_FG: '1Jc8ITgif_JE3DkhZDewrc3k1ew5vZpYhobPhWS1eXTI',
   EXPORT_FMS: '1W88Vnskum-0lYaKKe2vKVDKa1cd3TmwTt1uJYODT60g',
+  FMS_PRODUCT_SEARCH: '150XDtKwHl3TjMj8INwFIAcMVoOSWjydPkHxJkiE7ZXM',
 };
 
 // Backward compatibility
@@ -69,6 +70,8 @@ const SHEETS = {
   JOB_WORK_CONFIG: 'Step Configuration',
   EXPORT_FMS: 'Export FMS',
   EXPORT_FMS_CONFIG: 'Step Configuration',
+  FMS_PRODUCT_SEARCH: 'FMS',
+  FMS_PRODUCT_SEARCH_CONFIG: 'Step Configuration',
 };
 
 // Initialize Google Sheets API client with OAuth
@@ -6723,6 +6726,324 @@ export async function updateExportFMSConfig(config: any[]) {
     return { success: true };
   } catch (error) {
     console.error('Error updating Export FMS config:', error);
+    throw error;
+  }
+}
+
+// FMS PRODUCT SEARCH CRUD OPERATIONS
+
+export async function getFMSProductSearchConfig() {
+  try {
+    const sheets = await getGoogleSheetsClient();
+    const spreadsheetId = SPREADSHEET_IDS.FMS_PRODUCT_SEARCH;
+    const sheetName = SHEETS.FMS_PRODUCT_SEARCH_CONFIG;
+
+    try {
+      const response = await sheets.spreadsheets.values.get({
+        spreadsheetId,
+        range: `${sheetName}!A:E`,
+        valueRenderOption: 'UNFORMATTED_VALUE',
+      });
+
+      const rows = response.data.values;
+      if (!rows || rows.length <= 1) return [];
+
+      const dataRows = rows.slice(1);
+
+      return dataRows.map(row => ({
+        step: parseInt(row[0]),
+        stepName: row[1],
+        doerName: row[2],
+        tatValue: parseInt(row[3]),
+        tatUnit: row[4]
+      })).sort((a, b) => a.step - b.step);
+    } catch (error: any) {
+      if (error.code === 400 || error.message?.includes('Unable to parse range')) {
+        return [];
+      }
+      throw error;
+    }
+  } catch (error) {
+    console.error('Error fetching FMS Product Search step config:', error);
+    return [];
+  }
+}
+
+export async function updateFMSProductSearchConfig(config: any[]) {
+  try {
+    const sheets = await getGoogleSheetsClient();
+    const spreadsheetId = SPREADSHEET_IDS.FMS_PRODUCT_SEARCH;
+    const sheetName = SHEETS.FMS_PRODUCT_SEARCH_CONFIG;
+
+    const headers = ['step', 'step_name', 'doer_name', 'tat_value', 'tat_unit'];
+    const rows = [
+      headers,
+      ...config.map(c => [c.step, c.stepName, c.doerName, c.tatValue, c.tatUnit])
+    ];
+
+    try {
+      await sheets.spreadsheets.values.get({
+        spreadsheetId,
+        range: `${sheetName}!A1`,
+      });
+    } catch (error: any) {
+      if (error.code === 400 || error.message?.includes('Unable to parse range')) {
+        await sheets.spreadsheets.batchUpdate({
+          spreadsheetId,
+          requestBody: {
+            requests: [{
+              addSheet: {
+                properties: { title: sheetName }
+              }
+            }]
+          }
+        });
+      }
+    }
+
+    await sheets.spreadsheets.values.clear({
+      spreadsheetId,
+      range: `${sheetName}!A:E`,
+    });
+
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `${sheetName}!A1`,
+      valueInputOption: 'RAW',
+      requestBody: { values: rows },
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error('Error updating FMS Product Search step config:', error);
+    throw error;
+  }
+}
+
+export async function getFMSProductSearchData() {
+  try {
+    const sheets = await getGoogleSheetsClient();
+    const spreadsheetId = SPREADSHEET_IDS.FMS_PRODUCT_SEARCH;
+    const sheetName = SHEETS.FMS_PRODUCT_SEARCH;
+
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${sheetName}!A:AZ`,
+      valueRenderOption: 'UNFORMATTED_VALUE',
+    });
+
+    const rows = response.data.values;
+    if (!rows || rows.length === 0) return [];
+
+    const headers = rows[0].map((h: string) => h.trim());
+    return rows.slice(1).map((row, idx) => ({
+      ...rowToObject(headers, row),
+      _rowIndex: idx + 2,
+    }));
+  } catch (error) {
+    console.error('Error fetching FMS Product Search data:', error);
+    throw error;
+  }
+}
+
+export async function createFMSProductSearchData(products: any[]) {
+  try {
+    const sheets = await getGoogleSheetsClient();
+    const spreadsheetId = SPREADSHEET_IDS.FMS_PRODUCT_SEARCH;
+    const sheetName = SHEETS.FMS_PRODUCT_SEARCH;
+    const now = new Date();
+    const timestamp = now.toISOString();
+
+    const existingRes = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${sheetName}!A:AZ`,
+      valueRenderOption: 'UNFORMATTED_VALUE',
+    });
+    const existingRows = existingRes.data.values || [];
+    let headers: string[] = existingRows[0]?.map((h: string) => h.trim()) || [];
+
+    if (headers.length === 0) {
+      const defaultHeaders = [
+        'id', 'Product', 'Timestamp', 'Cancelled',
+        'Planned_1', 'Actual_1', 'Status_1', 'Contact_1',
+        'Planned_2', 'Actual_2', 'Status_2', 'Contact_2',
+        'Planned_3', 'Actual_3', 'Status_3', 'Contact_3',
+        'Planned_4', 'Actual_4', 'Status_4'
+      ];
+      await sheets.spreadsheets.values.update({
+        spreadsheetId,
+        range: `${sheetName}!A1`,
+        valueInputOption: 'RAW',
+        requestBody: { values: [defaultHeaders] }
+      });
+      headers = defaultHeaders;
+    }
+
+    // Ensure all headers exist (consistency check)
+    const requiredHeaders = [
+      'id', 'Product', 'Timestamp', 'Cancelled'
+    ];
+    for (let i = 1; i <= 4; i++) {
+      if (i < 4) {
+        requiredHeaders.push(`Planned_${i}`, `Actual_${i}`, `Status_${i}`, `Contact_${i}`);
+      } else {
+        requiredHeaders.push(`Planned_${i}`, `Actual_${i}`, `Status_${i}`);
+      }
+    }
+    const missingHeaders = requiredHeaders.filter(h => !headers.includes(h));
+    if (missingHeaders.length > 0) {
+      const newHeaders = [...headers, ...missingHeaders];
+      await sheets.spreadsheets.values.update({
+        spreadsheetId,
+        range: `${sheetName}!A1`,
+        valueInputOption: 'RAW',
+        requestBody: { values: [newHeaders] }
+      });
+      headers = newHeaders;
+    }
+
+    // Fetch Step 1 TAT from config to compute Planned_1 correctly
+    const config = await getFMSProductSearchConfig();
+    const step1Config = config.find((c: any) => c.step === 1);
+    const planned1 = getNextPlannedTime(now, step1Config?.tatValue || 24, step1Config?.tatUnit || 'hours').toISOString();
+
+    const idColIdx = headers.indexOf('id');
+    let maxId = 0;
+    if (idColIdx !== -1 && existingRows.length > 1) {
+      existingRows.slice(1).forEach(row => {
+        const val = parseInt(row[idColIdx] || '0', 10);
+        if (!isNaN(val) && val > maxId) maxId = val;
+      });
+    }
+
+    const rowsData = products.map((p, index) => {
+      const newId = (maxId + index + 1).toString();
+      const rowMap: Record<string, string> = {
+        id: newId,
+        Product: p.Product || '',
+        Timestamp: timestamp,
+        Planned_1: planned1,
+      };
+      return headers.map(h => rowMap[h] ?? '');
+    });
+
+    await sheets.spreadsheets.values.append({
+      spreadsheetId,
+      range: `${sheetName}!A:AZ`,
+      valueInputOption: 'USER_ENTERED',
+      requestBody: { values: rowsData },
+    });
+
+    return { success: true, count: products.length };
+  } catch (error) {
+    console.error('Error creating FMS Product Search data:', error);
+    throw error;
+  }
+}
+
+export async function updateFMSProductSearchData(id: string, updates: any) {
+  try {
+    const sheets = await getGoogleSheetsClient();
+    const spreadsheetId = SPREADSHEET_IDS.FMS_PRODUCT_SEARCH;
+    const sheetName = SHEETS.FMS_PRODUCT_SEARCH;
+
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${sheetName}!A:AZ`,
+      valueRenderOption: 'UNFORMATTED_VALUE',
+    });
+    const rows = response.data.values;
+    if (!rows || rows.length === 0) throw new Error('Sheet is empty');
+
+    const headers: string[] = rows[0].map((h: string) => h.trim());
+    const idColIdx = headers.indexOf('id');
+    if (idColIdx === -1) throw new Error('id column not found');
+
+    const rowIdx = rows.findIndex((row, i) => i > 0 && (row[idColIdx] || '').toString().trim() === id.toString().trim());
+    if (rowIdx === -1) throw new Error('Record not found');
+
+    const sheetRowNumber = rowIdx + 1;
+    const existingRow = rows[rowIdx];
+    const updatedRowMap: Record<string, string> = {};
+    headers.forEach((h, i) => { updatedRowMap[h] = existingRow[i] || ''; });
+
+    Object.keys(updates).forEach(key => {
+      if (key === 'id') return;
+      if (headers.includes(key)) {
+        updatedRowMap[key] = updates[key] === null ? '' : String(updates[key]);
+      }
+    });
+
+    const updatedRow = headers.map(h => updatedRowMap[h] ?? '');
+    const getColLetterInternal = (index: number): string => {
+      let letter = '';
+      while (index >= 0) {
+        letter = String.fromCharCode((index % 26) + 65) + letter;
+        index = Math.floor(index / 26) - 1;
+      }
+      return letter;
+    };
+    const range = `${sheetName}!A${sheetRowNumber}:${getColLetterInternal(headers.length - 1)}${sheetRowNumber}`;
+
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range,
+      valueInputOption: 'USER_ENTERED',
+      requestBody: { values: [updatedRow] },
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error('Error updating FMS Product Search data:', error);
+    throw error;
+  }
+}
+
+export async function deleteFMSProductSearchData(id: string) {
+  try {
+    const sheets = await getGoogleSheetsClient();
+    const spreadsheetId = SPREADSHEET_IDS.FMS_PRODUCT_SEARCH;
+    const sheetName = SHEETS.FMS_PRODUCT_SEARCH;
+
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${sheetName}!A:AZ`,
+      valueRenderOption: 'UNFORMATTED_VALUE',
+    });
+    const rows = response.data.values;
+    if (!rows || rows.length === 0) throw new Error('Sheet is empty');
+
+    const headers: string[] = rows[0].map((h: string) => h.trim());
+    const idColIdx = headers.indexOf('id');
+    if (idColIdx === -1) throw new Error('id column not found');
+
+    const rowIdx = rows.findIndex((row, i) => i > 0 && (row[idColIdx] || '').toString().trim() === id.toString().trim());
+    if (rowIdx === -1) throw new Error('Record not found');
+
+    const spreadsheetMeta = await sheets.spreadsheets.get({ spreadsheetId });
+    const sheet = spreadsheetMeta.data.sheets?.find((s: any) => s.properties?.title === sheetName);
+    if (!sheet) throw new Error('Sheet not found');
+    const sheetId = sheet.properties?.sheetId;
+
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        requests: [{
+          deleteDimension: {
+            range: {
+              sheetId,
+              dimension: 'ROWS',
+              startIndex: rowIdx,
+              endIndex: rowIdx + 1
+            }
+          }
+        }]
+      }
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error('Error deleting FMS Product Search data:', error);
     throw error;
   }
 }
