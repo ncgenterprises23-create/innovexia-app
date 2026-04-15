@@ -1,11 +1,11 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, Fragment } from 'react';
 import LayoutWrapper from '@/components/LayoutWrapper';
 import { useToast } from '@/components/ToastProvider';
 import { useLoader } from '@/components/LoaderProvider';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Loader2, AlertTriangle, Pencil, Trash2, X, Save } from 'lucide-react';
+import { Loader2, AlertTriangle, Pencil, Trash2, X, Save, Ban, RotateCcw } from 'lucide-react';
 
 interface StepConfig {
     step: number;
@@ -28,15 +28,42 @@ interface FMSProduct {
 }
 
 const PRODUCT_STAGES = [
-    { step: 1, name: 'GETTING DEALER CONTACT NO' },
-    { step: 2, name: 'GETTING THE SALES PERSON NO FROM DEALER' },
-    { step: 3, name: 'TALK AND RETRIEVE THE LIVE PRODUCT CATALOGUE' },
-    { step: 4, name: 'FILE THE PRODUCT LIST' },
+    { step: 1, name: 'GETTING DEALER CONTACT NO', shortName: 'GET CONTACT' },
+    { step: 2, name: 'GETTING THE SALES PERSON NO FROM DEALER', shortName: 'SALES PERSON' },
+    { step: 3, name: 'TALK AND RETRIEVE THE LIVE PRODUCT CATALOGUE', shortName: 'LIVE CATALOGUE' },
+    { step: 4, name: 'FILE THE PRODUCT LIST', shortName: 'FILE PRODUCT' },
 ];
 
 const ITEMS_PER_PAGE = 15;
 const emptyForm = { Product: '' };
 type ViewMode = 'data' | 'cancelled' | 'setup';
+
+const formatDateTime = (dateStr?: string) => {
+    if (!dateStr) return '-';
+    const date = new Date(dateStr);
+    if (isNaN(date.getTime())) return '-';
+    return date.toLocaleString('en-IN', {
+        day: '2-digit', month: '2-digit', year: 'numeric',
+        hour: '2-digit', minute: '2-digit', hour12: true
+    });
+};
+
+const getDelayInfo = (planned?: string, actual?: string) => {
+    if (!planned) return null;
+    const pDate = new Date(planned);
+    const refDate = actual ? new Date(actual) : new Date();
+    if (isNaN(pDate.getTime()) || isNaN(refDate.getTime())) return null;
+
+    const diffMs = refDate.getTime() - pDate.getTime();
+    const diffMin = Math.floor(diffMs / (1000 * 60));
+
+    if (diffMin > 0) {
+        return { text: `${Math.floor(diffMin / 60)}h ${diffMin % 60}m Delay`, color: 'text-red-500 font-bold' };
+    } else {
+        const absMin = Math.abs(diffMin);
+        return { text: `${Math.floor(absMin / 60)}h ${absMin % 60}m ${actual ? 'Ahead' : 'Left'}`, color: 'text-emerald-500 font-bold' };
+    }
+};
 
 const getNextPlannedTime = (from: Date, tatValue: number, tatUnit: 'hours' | 'days'): Date => {
     const next = new Date(from);
@@ -74,10 +101,13 @@ export default function FMSProductSearchPage() {
     // Follow-up process states
     const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
     const [itemsToMarkDone, setItemsToMarkDone] = useState<Set<string>>(new Set());
+    const [contactData, setContactData] = useState<Record<string, string>>({});
     const [isBulkUpdateModalOpen, setIsBulkUpdateModalOpen] = useState(false);
     const [showRemoveModal, setShowRemoveModal] = useState(false);
     const [removeTarget, setRemoveTarget] = useState<{ id: string, name: string } | null>(null);
     const [removeStep, setRemoveStep] = useState<number | 'all'>('all');
+    const [isCancelModalOpen, setIsCancelModalOpen] = useState(false);
+    const [cancellingItem, setCancellingItem] = useState<FMSProduct | null>(null);
 
     const fetchData = async () => {
         setLoading(true);
@@ -181,6 +211,9 @@ export default function FMSProductSearchPage() {
                 if (itemsToMarkDone.has(item.id) && currentStep <= 4) {
                     updatedData[`Actual_${currentStep}`] = now;
                     updatedData[`Status_${currentStep}`] = 'Completed';
+                    if (currentStep === 1 || currentStep === 2) {
+                        updatedData[`Contact_${currentStep}`] = contactData[item.id] || '';
+                    }
 
                     if (currentStep < 4) {
                         const nextStep = currentStep + 1;
@@ -201,6 +234,7 @@ export default function FMSProductSearchPage() {
             toast.success('Bulk updates applied');
             setItemsToMarkDone(new Set());
             setSelectedItems(new Set());
+            setContactData({});
             setIsBulkUpdateModalOpen(false);
             fetchData();
         } catch (error) {
@@ -257,6 +291,31 @@ export default function FMSProductSearchPage() {
             }
         } catch (e) {
             toast.error('Error removing follow-up');
+        } finally {
+            loader.hideLoader();
+        }
+    };
+
+    const handleToggleCancel = async () => {
+        if (!cancellingItem) return;
+        try {
+            loader.showLoader();
+            const isCancelling = cancellingItem.Cancelled?.trim().toLowerCase() !== 'yes';
+            const res = await fetch('/api/fms-product-search', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id: cancellingItem.id, Cancelled: isCancelling ? 'Yes' : '' })
+            });
+            if (res.ok) {
+                toast.success(isCancelling ? 'Product cancelled' : 'Product restored');
+                setIsCancelModalOpen(false);
+                setCancellingItem(null);
+                fetchData();
+            } else {
+                toast.error('Operation failed');
+            }
+        } catch (e) {
+            toast.error('Error updating cancel status');
         } finally {
             loader.hideLoader();
         }
@@ -606,17 +665,17 @@ export default function FMSProductSearchPage() {
                                                 setActiveStepFilter(nextStep);
                                                 setCurrentPage(1);
                                             }}
-                                            className={`cursor-pointer min-w-fit px-4 py-3 rounded-2xl border-2 transition-all flex items-center gap-3 ${activeStepFilter === stat.step
-                                                ? `bg-gradient-to-br ${stat.gradient} ${stat.border} border-opacity-100 shadow-lg shadow-amber-100/50`
+                                            className={`cursor-pointer min-w-fit px-3 py-1.5 rounded-xl border-2 transition-all flex items-center gap-3 ${activeStepFilter === stat.step
+                                                ? `bg-gradient-to-br ${stat.gradient} ${stat.border} border-opacity-100 shadow-md shadow-amber-100/50`
                                                 : `${stat.border} border-opacity-30 hover:border-opacity-100 text-white`
                                                 }`}
                                         >
-                                            <div className={`p-2.5 rounded-xl bg-gradient-to-br ${stat.iconBg} text-white`}>
+                                            <div className={`p-1.5 rounded-lg bg-gradient-to-br ${stat.iconBg} text-white`}>
                                                 <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d={stat.icon} /></svg>
                                             </div>
                                             <div>
-                                                <p className="text-[9px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest">{stat.label}</p>
-                                                <p className="text-lg font-black text-slate-900 dark:text-white">{stat.value}</p>
+                                                <p className="text-[8px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-tight">{stat.label}</p>
+                                                <p className="text-base font-black text-slate-900 dark:text-white leading-tight">{stat.value}</p>
                                             </div>
                                         </motion.div>
                                     ))}
@@ -717,20 +776,7 @@ export default function FMSProductSearchPage() {
                                 </div>
                             ) : (
                                 <>
-                                    {/* Bulk Update Bar */}
-                                    {selectedItems.size > 0 && (
-                                        <div className="px-6 py-3 bg-amber-50 dark:bg-amber-900/20 border-b border-amber-200 dark:border-amber-900/30 flex items-center justify-between">
-                                            <div className="text-sm font-bold text-amber-900 dark:text-amber-300">
-                                                {selectedItems.size} item{selectedItems.size !== 1 ? 's' : ''} selected
-                                            </div>
-                                            <button
-                                                onClick={() => setIsBulkUpdateModalOpen(true)}
-                                                className="px-6 py-2 bg-amber-400 text-gray-900 rounded-lg font-black text-sm uppercase tracking-widest hover:bg-amber-500 transition-all shadow-lg"
-                                            >
-                                                Update Status ({selectedItems.size})
-                                            </button>
-                                        </div>
-                                    )}
+
 
                                     <div className="overflow-x-auto">
                                         <table className="w-full text-sm">
@@ -748,8 +794,11 @@ export default function FMSProductSearchPage() {
                                                     <th className="px-6 py-4 text-left text-[10px] font-black uppercase tracking-widest text-gray-900 dark:text-white">ID</th>
                                                     <th className="px-6 py-4 text-left text-[10px] font-black uppercase tracking-widest text-gray-900 dark:text-white">PRODUCT</th>
                                                     {PRODUCT_STAGES.map(stage => (
-                                                        <th key={stage.step} className="px-6 py-4 text-left text-[10px] font-black uppercase tracking-widest text-gray-900 dark:text-white whitespace-nowrap">
-                                                            STEP {stage.step}<br />{stage.name}
+                                                        <th key={stage.step} className="px-6 py-4 text-left border-l border-white/10 min-w-[160px]">
+                                                            <div className="flex flex-col leading-tight">
+                                                                <span className="text-[9px] opacity-70 font-black text-gray-900 dark:text-white">STEP {stage.step}</span>
+                                                                <span className="text-[10px] font-black uppercase whitespace-nowrap text-gray-900 dark:text-white">{stage.shortName}</span>
+                                                            </div>
                                                         </th>
                                                     ))}
                                                 </tr>
@@ -789,6 +838,27 @@ export default function FMSProductSearchPage() {
                                                                 >
                                                                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
                                                                 </motion.button>
+                                                                {viewMode !== 'cancelled' ? (
+                                                                    <motion.button
+                                                                        whileHover={{ scale: 1.1 }}
+                                                                        whileTap={{ scale: 0.9 }}
+                                                                        onClick={() => { setCancellingItem(item); setIsCancelModalOpen(true); }}
+                                                                        className="p-2 text-orange-500 hover:bg-orange-100 dark:hover:bg-orange-900/30 rounded-lg"
+                                                                        title="Cancel Product"
+                                                                    >
+                                                                        <Ban size={16} />
+                                                                    </motion.button>
+                                                                ) : (
+                                                                    <motion.button
+                                                                        whileHover={{ scale: 1.1 }}
+                                                                        whileTap={{ scale: 0.9 }}
+                                                                        onClick={() => { setCancellingItem(item); setIsCancelModalOpen(true); }}
+                                                                        className="p-2 text-green-600 hover:bg-green-100 dark:hover:bg-green-900/30 rounded-lg"
+                                                                        title="Restore Product"
+                                                                    >
+                                                                        <RotateCcw size={16} />
+                                                                    </motion.button>
+                                                                )}
                                                                 <motion.button
                                                                     whileHover={{ scale: 1.1 }}
                                                                     whileTap={{ scale: 0.9 }}
@@ -812,14 +882,38 @@ export default function FMSProductSearchPage() {
                                                             const actual = (item as any)[actualKey];
                                                             const status = (item as any)[statusKey];
                                                             const contact = (item as any)[`Contact_${stage.step}`];
+                                                            const delay = getDelayInfo(planned, actual);
 
                                                             return (
-                                                                <td key={stage.step} className="px-6 py-4">
-                                                                    <div className="space-y-1">
-                                                                        {planned && <p className="text-[9px] text-blue-600 dark:text-blue-400">📅 {new Date(planned).toLocaleDateString()}</p>}
-                                                                        {actual && <p className="text-[9px] text-green-600 dark:text-green-400 font-bold">✓ {new Date(actual).toLocaleDateString()}</p>}
-                                                                        {contact && <p className="text-[9px] text-purple-600 dark:text-purple-400">👤 {contact}</p>}
-                                                                        {!actual && planned && <p className="text-[9px] text-orange-600 dark:text-orange-400">⏳ Pending</p>}
+                                                                <td key={stage.step} className="px-3 py-2 border-l border-slate-50 dark:border-slate-800/50">
+                                                                    <div className="flex flex-col gap-1">
+                                                                        <div className="flex items-center justify-between gap-2">
+                                                                            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-tighter">P:</span>
+                                                                            <span className="text-[10px] font-medium text-slate-600 dark:text-slate-400 tabular-nums text-right">
+                                                                                {planned ? formatDateTime(planned) : '-'}
+                                                                            </span>
+                                                                        </div>
+                                                                        <div className="flex items-center justify-between gap-2">
+                                                                            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-tighter">A:</span>
+                                                                            {actual ? (
+                                                                                <span className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 tabular-nums text-right">
+                                                                                    {formatDateTime(actual)}
+                                                                                </span>
+                                                                            ) : (
+                                                                                <span className="text-[10px] text-slate-200 dark:text-slate-700">-</span>
+                                                                            )}
+                                                                        </div>
+                                                                        {delay && (
+                                                                            <div className={`text-[9px] text-right italic ${delay.color}`}>
+                                                                                {delay.text}
+                                                                            </div>
+                                                                        )}
+                                                                        {contact && (
+                                                                            <div className="flex items-center gap-1 mt-0.5 justify-end">
+                                                                                <span className="text-[9px] font-bold text-purple-500">👤</span>
+                                                                                <span className="text-[10px] font-bold text-purple-600 dark:text-purple-400 truncate max-w-[100px]">{contact}</span>
+                                                                            </div>
+                                                                        )}
                                                                     </div>
                                                                 </td>
                                                             );
@@ -882,6 +976,43 @@ export default function FMSProductSearchPage() {
                         </motion.div>
                     )}
 
+                    {/* Cancel / Restore Modal */}
+                    {isCancelModalOpen && cancellingItem && (
+                        <motion.div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                            <motion.div className="bg-white dark:bg-gray-800 p-8 rounded-3xl max-w-md w-full">
+                                <h2 className="text-2xl font-black mb-4 uppercase tracking-wide">
+                                    {cancellingItem.Cancelled?.trim().toLowerCase() === 'yes' ? 'Restore Product?' : 'Cancel Product?'}
+                                </h2>
+                                <p className="text-slate-600 dark:text-slate-400 mb-2">
+                                    Product: <span className="font-black text-amber-600">{cancellingItem.Product}</span>
+                                </p>
+                                <p className="text-slate-600 dark:text-slate-400 mb-6">
+                                    {cancellingItem.Cancelled?.trim().toLowerCase() === 'yes'
+                                        ? 'This will move the product back to active data view.'
+                                        : 'This will move the product to cancelled view. You can restore it later.'}
+                                </p>
+                                <div className="flex gap-3">
+                                    <button
+                                        onClick={handleToggleCancel}
+                                        className={`flex-1 py-3 rounded-xl font-black uppercase text-white ${
+                                            cancellingItem.Cancelled?.trim().toLowerCase() === 'yes'
+                                                ? 'bg-green-600 hover:bg-green-700'
+                                                : 'bg-orange-500 hover:bg-orange-600'
+                                        }`}
+                                    >
+                                        {cancellingItem.Cancelled?.trim().toLowerCase() === 'yes' ? 'Restore' : 'Cancel Product'}
+                                    </button>
+                                    <button
+                                        onClick={() => { setIsCancelModalOpen(false); setCancellingItem(null); }}
+                                        className="flex-1 bg-slate-300 dark:bg-slate-600 py-3 rounded-xl hover:bg-slate-400 font-black uppercase"
+                                    >
+                                        Close
+                                    </button>
+                                </div>
+                            </motion.div>
+                        </motion.div>
+                    )}
+
                     {isDeleteModalOpen && (
                         <motion.div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
                             <motion.div className="bg-white dark:bg-gray-800 p-8 rounded-3xl max-w-md w-full">
@@ -908,63 +1039,114 @@ export default function FMSProductSearchPage() {
 
                     {/* Bulk Update Modal */}
                     {isBulkUpdateModalOpen && (
-                        <motion.div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-                            <motion.div className="bg-white dark:bg-gray-800 rounded-3xl shadow-2xl w-full max-w-2xl mx-4 max-h-[80vh] overflow-y-auto">
-                                <div className="p-6 bg-amber-400 dark:bg-amber-900/40 border-b border-amber-200 dark:border-amber-900/30">
-                                    <h2 className="text-2xl font-black text-gray-900 dark:text-white uppercase tracking-wide">Update Step Status</h2>
-                                    <p className="text-[11px] font-bold text-gray-700 dark:text-gray-300 uppercase tracking-widest mt-1">Mark selected products as done</p>
-                                </div>
-
-                                <form onSubmit={handleBulkUpdate} className="p-6 space-y-6">
-                                    <div className="space-y-3">
-                                        <label className="block text-sm font-black uppercase tracking-widest text-gray-700 dark:text-gray-300">Select Products to Complete Current Step:</label>
-                                        <div className="space-y-2 max-h-64 overflow-y-auto">
-                                            {Array.from(selectedItems).map(id => {
-                                                const item = data.find(d => d.id === id);
-                                                if (!item) return null;
-                                                const currentStep = getCurrentStep(item);
-                                                return (
-                                                    <label key={id} className="flex items-center gap-3 p-3 border border-slate-200 dark:border-slate-700 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700/50 cursor-pointer transition-colors">
-                                                        <input
-                                                            type="checkbox"
-                                                            checked={itemsToMarkDone.has(id)}
-                                                            onChange={() => {
-                                                                const newSet = new Set(itemsToMarkDone);
-                                                                if (newSet.has(id)) newSet.delete(id);
-                                                                else newSet.add(id);
-                                                                setItemsToMarkDone(newSet);
-                                                            }}
-                                                            className="w-4 h-4 rounded border-2"
-                                                        />
-                                                        <div className="flex-1">
-                                                            <p className="font-bold text-sm">{item.Product}</p>
-                                                            <p className="text-[11px] text-slate-500 dark:text-slate-400">Step {currentStep}: {PRODUCT_STAGES.find(s => s.step === currentStep)?.name}</p>
-                                                        </div>
-                                                    </label>
-                                                );
-                                            })}
+                        <Fragment key="modal-bulk">
+                            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                                onClick={() => setIsBulkUpdateModalOpen(false)} className="fixed inset-0 bg-black/40 backdrop-blur-[2px] z-[9998]" />
+                            <motion.div initial={{ opacity: 0, scale: 0.95, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }}
+                                exit={{ opacity: 0, scale: 0.95, y: 20 }} transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+                                className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
+                                <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl w-full max-w-4xl border border-gray-100 dark:border-gray-800 overflow-hidden text-gray-900 dark:text-gray-100 max-h-[90vh] flex flex-col">
+                                    <div className="p-5 bg-gradient-to-r from-amber-400 to-amber-500 text-gray-900 flex items-center justify-between shadow-lg">
+                                        <div className="flex items-center gap-3">
+                                            <div className="p-2 bg-white/20 rounded-xl shadow-inner"><Pencil size={20} /></div>
+                                            <div>
+                                                <h2 className="text-lg font-black uppercase tracking-tight leading-none">Bulk Update Status</h2>
+                                                <p className="text-[10px] font-bold opacity-70 uppercase tracking-widest mt-1.5">Applying updates to {selectedItems.size} selected items</p>
+                                            </div>
                                         </div>
+                                        <button onClick={() => setIsBulkUpdateModalOpen(false)} className="p-2 hover:bg-white/20 rounded-xl transition-all hover:rotate-90"><X size={20} /></button>
                                     </div>
 
-                                    <div className="flex gap-3 pt-4 border-t border-slate-200 dark:border-slate-700">
-                                        <button
-                                            type="button"
-                                            onClick={() => setIsBulkUpdateModalOpen(false)}
-                                            className="flex-1 px-6 py-3 border border-slate-300 dark:border-slate-600 rounded-xl font-black text-[10px] uppercase tracking-widest text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors"
-                                        >
+                                    <div className="flex-1 overflow-y-auto p-6 space-y-8 custom-scrollbar bg-gray-50/50 dark:bg-gray-900/50">
+                                        {PRODUCT_STAGES.map(stage => {
+                                            const stageItems = data.filter(d => selectedItems.has(d.id) && getCurrentStep(d) === stage.step);
+                                            if (stageItems.length === 0) return null;
+
+                                            return (
+                                                <div key={stage.step} className="space-y-4">
+                                                    <div className="flex items-center justify-between border-b border-gray-200 dark:border-gray-800 pb-3">
+                                                        <div className="flex items-center gap-3">
+                                                            <div className="w-1 h-8 rounded-full bg-amber-400 shadow-[0_0_12px_#fbbf24]" />
+                                                            <div>
+                                                                <h3 className="text-sm font-black text-gray-900 dark:text-white uppercase tracking-tight">Step {stage.step}: {stage.name}</h3>
+                                                                <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">{stageItems.length} items in this stage</p>
+                                                            </div>
+                                                        </div>
+                                                        <button
+                                                            onClick={() => {
+                                                                const allChecked = stageItems.every(i => itemsToMarkDone.has(i.id));
+                                                                const next = new Set(itemsToMarkDone);
+                                                                if (allChecked) stageItems.forEach(i => next.delete(i.id));
+                                                                else stageItems.forEach(i => next.add(i.id));
+                                                                setItemsToMarkDone(next);
+                                                            }}
+                                                            className={`px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all border ${stageItems.every(i => itemsToMarkDone.has(i.id))
+                                                                ? 'bg-gray-100 dark:bg-gray-800 text-gray-400 border-gray-200 dark:border-gray-700'
+                                                                : 'bg-amber-400/10 text-amber-600 dark:text-amber-400 border-amber-400/20 hover:bg-amber-400 hover:text-gray-900'
+                                                                }`}
+                                                        >
+                                                            {stageItems.every(i => itemsToMarkDone.has(i.id)) ? 'Unmark All' : 'Mark All Done'}
+                                                        </button>
+                                                    </div>
+
+                                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                                        {stageItems.map(item => (
+                                                            <div key={item.id} className={`p-4 rounded-2xl border transition-all relative overflow-hidden group ${itemsToMarkDone.has(item.id)
+                                                                ? 'bg-emerald-50/30 dark:bg-emerald-500/5 border-emerald-200 dark:border-emerald-500/20'
+                                                                : 'bg-white dark:bg-gray-800 border-gray-100 dark:border-gray-700 shadow-sm'
+                                                                }`}>
+                                                                <div className="flex flex-col gap-3">
+                                                                    <div className="flex items-center justify-between gap-3">
+                                                                        <div className="min-w-0">
+                                                                            <h4 className="text-[11px] font-black text-gray-900 dark:text-white uppercase tracking-tight leading-tight truncate">{item.Product}</h4>
+                                                                            <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest mt-1 truncate">ID: {item.id}</p>
+                                                                        </div>
+                                                                        <label className="relative inline-flex items-center cursor-pointer scale-75">
+                                                                            <input type="checkbox" className="sr-only peer" checked={itemsToMarkDone.has(item.id)}
+                                                                                onChange={() => {
+                                                                                    const next = new Set(itemsToMarkDone);
+                                                                                    if (next.has(item.id)) next.delete(item.id);
+                                                                                    else next.add(item.id);
+                                                                                    setItemsToMarkDone(next);
+                                                                                }}
+                                                                            />
+                                                                            <div className="w-11 h-6 bg-gray-200 dark:bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-emerald-500"></div>
+                                                                        </label>
+                                                                    </div>
+                                                                    {itemsToMarkDone.has(item.id) && (stage.step === 1 || stage.step === 2) && (
+                                                                        <div className="mt-1">
+                                                                            <input
+                                                                                type="text"
+                                                                                placeholder={stage.step === 1 ? "Enter Dealer Contact No" : "Enter Sales Person No"}
+                                                                                className="w-full text-xs font-bold px-3 py-2 border border-slate-200 dark:border-slate-700 rounded-xl bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-amber-400 focus:border-amber-400 outline-none transition-all"
+                                                                                value={contactData[item.id] || ''}
+                                                                                onChange={(e) => setContactData(prev => ({ ...prev, [item.id]: e.target.value }))}
+                                                                            />
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+
+                                    <div className="p-5 bg-white dark:bg-gray-900 border-t border-gray-100 dark:border-gray-800 flex items-center gap-3 shadow-[0_-4px_20px_rgba(0,0,0,0.05)]">
+                                        <button onClick={() => setIsBulkUpdateModalOpen(false)}
+                                            className="px-6 py-3 rounded-2xl border border-gray-200 dark:border-gray-700 text-[10px] font-black text-gray-500 uppercase tracking-widest hover:bg-gray-50 dark:hover:bg-gray-800 transition-all active:scale-95">
                                             Cancel
                                         </button>
-                                        <button
-                                            type="submit"
-                                            disabled={itemsToMarkDone.size === 0}
-                                            className="flex-1 px-6 py-3 bg-amber-400 text-gray-900 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-amber-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                                        >
-                                            Mark As Done ({itemsToMarkDone.size})
+                                        <button onClick={handleBulkUpdate}
+                                            className="flex-1 py-3 rounded-2xl bg-amber-400 text-gray-900 text-[10px] font-black uppercase tracking-widest shadow-xl shadow-amber-400/20 hover:scale-[1.01] active:scale-95 transition-all flex items-center justify-center gap-2">
+                                            <Save size={16} />
+                                            Apply Updates to {selectedItems.size} Records
                                         </button>
                                     </div>
-                                </form>
+                                </div>
                             </motion.div>
-                        </motion.div>
+                        </Fragment>
                     )}
 
                     {/* Remove Follow-Up Modal */}
