@@ -1265,9 +1265,12 @@ function DelegationContent() {
         const displayStatus = hasUserStatus ? delegation.status : calculateStatus(delegation.due_date);
 
         const displayStatusLower = (displayStatus || '').trim().toLowerCase();
+        const pendingStatuses = ['need_clarity', 'approval_waiting', 'need_revision', 're_open', 'planned', 'pending', 'overdue', 'without_plan'];
+        const isPendingFilterActive = filters.statuses.map(s => s.toLowerCase()).includes('pending');
+
         const hasMatch = filters.statuses.some(filterStatus =>
           filterStatus.trim().toLowerCase() === displayStatusLower
-        );
+        ) || (isPendingFilterActive && pendingStatuses.includes(displayStatusLower));
         if (!hasMatch) return false;
       }
 
@@ -1442,7 +1445,19 @@ function DelegationContent() {
   const uniqueAssignees = useMemo(() => Array.from(new Set(delegations.map(d => d.assigned_to).filter(Boolean))).sort(), [delegations]);
   const uniqueDoers = useMemo(() => Array.from(new Set(delegations.map(d => d.doer_name).filter(Boolean))).sort(), [delegations]);
   const uniqueDepartments = useMemo(() => Array.from(new Set(delegations.map(d => d.department).filter(Boolean))).sort(), [delegations]);
-  const uniqueStatuses = useMemo(() => Array.from(new Set(delegations.map(d => d.status).filter(Boolean))).sort(), [delegations]);
+  const uniqueStatuses = useMemo(() => {
+    const statuses = new Set<string>();
+    delegations.forEach(d => {
+      const hasUserStatus = d.status && ['need_clarity', 'approval_waiting', 'completed', 'need_revision', 'hold', 're_open'].includes(d.status.toLowerCase());
+      const displayStatus = hasUserStatus ? d.status : calculateStatus(d.due_date);
+      if (displayStatus) {
+        statuses.add(displayStatus.toLowerCase());
+      }
+    });
+    // Ensure pending is always available as a meta-filter
+    statuses.add('pending');
+    return Array.from(statuses).sort();
+  }, [delegations]);
 
   const activeFilterCount = useMemo(() => {
     let count = 0;
