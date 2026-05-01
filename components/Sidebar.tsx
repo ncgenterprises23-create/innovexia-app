@@ -64,8 +64,11 @@ export default function Sidebar({ isOpen, setIsOpen }: SidebarProps) {
     {
       label: 'Export',
       icon: 'clipboard',
-      href: '/export-fms',
       roles: ['Admin', 'Manager'],
+      children: [
+        { label: 'Export FMS', icon: 'clipboard', href: '/export-fms', roles: ['Admin', 'Manager'] },
+        { label: 'Sales Export FMS', icon: 'package', href: '/sales-export-purchase-enquiry-fms', roles: ['Admin', 'Manager'] },
+      ]
     },
     {
       label: 'IMS', icon: 'clipboard', roles: ['Admin', 'Manager'], children: [

@@ -8,7 +8,7 @@ interface TaskDetailModalProps {
     onClose: () => void;
     title: string;
     tasks: any[]; // Using any[] for flexibility, can be typed strictly if needed
-    type: 'delegation' | 'checklist' | 'o2d' | 'crm' | 'complain' | 'purchase' | 'factory' | 'jobwork' | 'rmdefect' | 'exportfms' | 'collection' | 'payable';
+    type: 'delegation' | 'checklist' | 'o2d' | 'crm' | 'complain' | 'purchase' | 'factory' | 'jobwork' | 'rmdefect' | 'exportfms' | 'salesexportenquiry' | 'collection' | 'payable';
 }
 
 export default function TaskDetailModal({ isOpen, onClose, title, tasks, type }: TaskDetailModalProps) {

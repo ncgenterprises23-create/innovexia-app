@@ -32,6 +32,7 @@ export const SPREADSHEET_IDS = {
   IMS_FG: '1Jc8ITgif_JE3DkhZDewrc3k1ew5vZpYhobPhWS1eXTI',
   EXPORT_FMS: '1W88Vnskum-0lYaKKe2vKVDKa1cd3TmwTt1uJYODT60g',
   FMS_PRODUCT_SEARCH: '150XDtKwHl3TjMj8INwFIAcMVoOSWjydPkHxJkiE7ZXM',
+  SALES_EXPORT_PURCHASE_ENQUIRY_FMS: '1NEy9qSv-9fCGVOjkW9cfgVZNdJbta79lcxIJ6xe_msE',
 };
 
 // Backward compatibility
@@ -72,6 +73,8 @@ const SHEETS = {
   EXPORT_FMS_CONFIG: 'Step Configuration',
   FMS_PRODUCT_SEARCH: 'FMS',
   FMS_PRODUCT_SEARCH_CONFIG: 'Step Configuration',
+  SALES_EXPORT_PURCHASE_ENQUIRY_FMS: 'Sheet1',
+  SALES_EXPORT_PURCHASE_ENQUIRY_FMS_CONFIG: 'Step Configuration',
 };
 
 // Initialize Google Sheets API client with OAuth
@@ -7044,6 +7047,306 @@ export async function deleteFMSProductSearchData(id: string) {
     return { success: true };
   } catch (error) {
     console.error('Error deleting FMS Product Search data:', error);
+    throw error;
+  }
+}
+
+// SALES EXPORT PURCHASE ENQUIRY FMS CRUD OPERATIONS
+
+export async function getSalesExportPurchaseEnquiryFMSConfig() {
+  try {
+    const sheets = await getGoogleSheetsClient();
+    const spreadsheetId = SPREADSHEET_IDS.SALES_EXPORT_PURCHASE_ENQUIRY_FMS;
+    const sheetName = SHEETS.SALES_EXPORT_PURCHASE_ENQUIRY_FMS_CONFIG;
+
+    try {
+      const response = await sheets.spreadsheets.values.get({
+        spreadsheetId,
+        range: `${sheetName}!A:E`,
+        valueRenderOption: 'UNFORMATTED_VALUE',
+      });
+
+      const rows = response.data.values;
+      if (!rows || rows.length <= 1) return [];
+
+      const dataRows = rows.slice(1);
+
+      return dataRows.map(row => ({
+        step: parseInt(row[0]),
+        stepName: row[1],
+        doerName: row[2],
+        tatValue: parseInt(row[3]),
+        tatUnit: row[4]
+      })).sort((a, b) => a.step - b.step);
+    } catch (error: any) {
+      if (error.code === 400 || error.message?.includes('Unable to parse range')) {
+        return [];
+      }
+      throw error;
+    }
+  } catch (error) {
+    console.error('Error fetching Sales Export Purchase Enquiry FMS step config:', error);
+    return [];
+  }
+}
+
+export async function updateSalesExportPurchaseEnquiryFMSConfig(config: any[]) {
+  try {
+    const sheets = await getGoogleSheetsClient();
+    const spreadsheetId = SPREADSHEET_IDS.SALES_EXPORT_PURCHASE_ENQUIRY_FMS;
+    const sheetName = SHEETS.SALES_EXPORT_PURCHASE_ENQUIRY_FMS_CONFIG;
+
+    const headers = ['step', 'step_name', 'doer_name', 'tat_value', 'tat_unit'];
+    const rows = [
+      headers,
+      ...config.map(c => [c.step, c.stepName, c.doerName, c.tatValue, c.tatUnit])
+    ];
+
+    try {
+      await sheets.spreadsheets.values.get({
+        spreadsheetId,
+        range: `${sheetName}!A1`,
+      });
+    } catch (error: any) {
+      if (error.code === 400 || error.message?.includes('Unable to parse range')) {
+        await sheets.spreadsheets.batchUpdate({
+          spreadsheetId,
+          requestBody: {
+            requests: [{
+              addSheet: {
+                properties: { title: sheetName }
+              }
+            }]
+          }
+        });
+      }
+    }
+
+    await sheets.spreadsheets.values.clear({
+      spreadsheetId,
+      range: `${sheetName}!A:E`,
+    });
+
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `${sheetName}!A1`,
+      valueInputOption: 'RAW',
+      requestBody: { values: rows },
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error('Error updating Sales Export Purchase Enquiry FMS step config:', error);
+    throw error;
+  }
+}
+
+export async function getSalesExportPurchaseEnquiryFMSData() {
+  try {
+    const sheets = await getGoogleSheetsClient();
+    const spreadsheetId = SPREADSHEET_IDS.SALES_EXPORT_PURCHASE_ENQUIRY_FMS;
+    const sheetName = SHEETS.SALES_EXPORT_PURCHASE_ENQUIRY_FMS;
+
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${sheetName}!A:AZ`,
+      valueRenderOption: 'UNFORMATTED_VALUE',
+    });
+
+    const rows = response.data.values;
+    if (!rows || rows.length === 0) return [];
+
+    const headers = rows[0].map((h: string) => h.trim());
+    return rows.slice(1).map((row, idx) => ({
+      ...rowToObject(headers, row),
+      _rowIndex: idx + 2,
+    }));
+  } catch (error) {
+    console.error('Error fetching Sales Export Purchase Enquiry FMS data:', error);
+    throw error;
+  }
+}
+
+export async function createSalesExportPurchaseEnquiryFMSData(items: any[]) {
+  try {
+    const sheets = await getGoogleSheetsClient();
+    const spreadsheetId = SPREADSHEET_IDS.SALES_EXPORT_PURCHASE_ENQUIRY_FMS;
+    const sheetName = SHEETS.SALES_EXPORT_PURCHASE_ENQUIRY_FMS;
+    const now = new Date();
+    const timestamp = now.toISOString();
+
+    const existingRes = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${sheetName}!A:AZ`,
+      valueRenderOption: 'UNFORMATTED_VALUE',
+    });
+    const existingRows = existingRes.data.values || [];
+    let headers: string[] = existingRows[0]?.map((h: string) => h.trim()) || [];
+
+    if (headers.length === 0) {
+      const defaultHeaders = [
+        'id', 'Party', 'Phone', 'Email', 'Country_Of_Destinations', 'Product_Name', 'Product_Quantity', 'Timestamp', 'Cancelled',
+        'Planned_1', 'Actual_1', 'Status_1',
+        'Planned_2', 'Actual_2', 'Status_2',
+        'Planned_3', 'Actual_3', 'Status_3',
+        'Planned_4', 'Actual_4', 'Status_4',
+        'Planned_5', 'Actual_5', 'Status_5'
+      ];
+      await sheets.spreadsheets.values.update({
+        spreadsheetId,
+        range: `${sheetName}!A1`,
+        valueInputOption: 'RAW',
+        requestBody: { values: [defaultHeaders] }
+      });
+      headers = defaultHeaders;
+    }
+
+    const config = await getSalesExportPurchaseEnquiryFMSConfig();
+    const step1Config = config.find((c: any) => c.step === 1);
+    const planned1 = getNextPlannedTime(now, step1Config?.tatValue || 24, step1Config?.tatUnit || 'hours').toISOString();
+
+    const idColIdx = headers.indexOf('id');
+    let maxId = 0;
+    if (idColIdx !== -1 && existingRows.length > 1) {
+      existingRows.slice(1).forEach(row => {
+        const val = parseInt(row[idColIdx] || '0', 10);
+        if (!isNaN(val) && val > maxId) maxId = val;
+      });
+    }
+
+    const rowsData = items.map((p, index) => {
+      const newId = (maxId + index + 1).toString();
+      const rowMap: Record<string, string> = {
+        id: newId,
+        Party: p.Party || '',
+        Phone: p.Phone || '',
+        Email: p.Email || '',
+        Country_Of_Destinations: p.Country_Of_Destinations || '',
+        Product_Name: p.Product_Name || '',
+        Product_Quantity: p.Product_Quantity || '',
+        Timestamp: timestamp,
+        Planned_1: planned1,
+      };
+      return headers.map(h => rowMap[h] ?? '');
+    });
+
+    await sheets.spreadsheets.values.append({
+      spreadsheetId,
+      range: `${sheetName}!A:AZ`,
+      valueInputOption: 'USER_ENTERED',
+      requestBody: { values: rowsData },
+    });
+
+    return { success: true, count: items.length };
+  } catch (error) {
+    console.error('Error creating Sales Export Purchase Enquiry FMS data:', error);
+    throw error;
+  }
+}
+
+export async function updateSalesExportPurchaseEnquiryFMSData(id: string, updates: any) {
+  try {
+    const sheets = await getGoogleSheetsClient();
+    const spreadsheetId = SPREADSHEET_IDS.SALES_EXPORT_PURCHASE_ENQUIRY_FMS;
+    const sheetName = SHEETS.SALES_EXPORT_PURCHASE_ENQUIRY_FMS;
+
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${sheetName}!A:AZ`,
+      valueRenderOption: 'UNFORMATTED_VALUE',
+    });
+    const rows = response.data.values;
+    if (!rows || rows.length === 0) throw new Error('Sheet is empty');
+
+    const headers: string[] = rows[0].map((h: string) => h.trim());
+    const idColIdx = headers.indexOf('id');
+    if (idColIdx === -1) throw new Error('id column not found');
+
+    const rowIdx = rows.findIndex((row, i) => i > 0 && (row[idColIdx] || '').toString().trim() === id.toString().trim());
+    if (rowIdx === -1) throw new Error('Record not found');
+
+    const sheetRowNumber = rowIdx + 1;
+    const existingRow = rows[rowIdx];
+    const updatedRowMap: Record<string, string> = {};
+    headers.forEach((h, i) => { updatedRowMap[h] = existingRow[i] || ''; });
+
+    Object.keys(updates).forEach(key => {
+      if (key === 'id') return;
+      if (headers.includes(key)) {
+        updatedRowMap[key] = updates[key] === null ? '' : String(updates[key]);
+      }
+    });
+
+    const updatedRow = headers.map(h => updatedRowMap[h] ?? '');
+    const getColLetterInternal = (index: number): string => {
+      let letter = '';
+      while (index >= 0) {
+        letter = String.fromCharCode((index % 26) + 65) + letter;
+        index = Math.floor(index / 26) - 1;
+      }
+      return letter;
+    };
+    const range = `${sheetName}!A${sheetRowNumber}:${getColLetterInternal(headers.length - 1)}${sheetRowNumber}`;
+
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range,
+      valueInputOption: 'USER_ENTERED',
+      requestBody: { values: [updatedRow] },
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error('Error updating Sales Export Purchase Enquiry FMS data:', error);
+    throw error;
+  }
+}
+
+export async function deleteSalesExportPurchaseEnquiryFMSData(id: string) {
+  try {
+    const sheets = await getGoogleSheetsClient();
+    const spreadsheetId = SPREADSHEET_IDS.SALES_EXPORT_PURCHASE_ENQUIRY_FMS;
+    const sheetName = SHEETS.SALES_EXPORT_PURCHASE_ENQUIRY_FMS;
+
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${sheetName}!A:AZ`,
+      valueRenderOption: 'UNFORMATTED_VALUE',
+    });
+    const rows = response.data.values;
+    if (!rows || rows.length === 0) throw new Error('Sheet is empty');
+
+    const headers: string[] = rows[0].map((h: string) => h.trim());
+    const idColIdx = headers.indexOf('id');
+    if (idColIdx === -1) throw new Error('id column not found');
+
+    const rowIdx = rows.findIndex((row, i) => i > 0 && (row[idColIdx] || '').toString().trim() === id.toString().trim());
+    if (rowIdx === -1) throw new Error('Record not found');
+
+    const spreadsheetMeta = await sheets.spreadsheets.get({ spreadsheetId });
+    const sheet = spreadsheetMeta.data.sheets?.find((s: any) => s.properties?.title === sheetName);
+    if (!sheet) throw new Error('Sheet not found');
+    const sheetId = sheet.properties?.sheetId;
+
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        requests: [{
+          deleteDimension: {
+            range: {
+              sheetId,
+              dimension: 'ROWS',
+              startIndex: rowIdx,
+              endIndex: rowIdx + 1
+            }
+          }
+        }]
+      }
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error('Error deleting Sales Export Purchase Enquiry FMS data:', error);
     throw error;
   }
 }

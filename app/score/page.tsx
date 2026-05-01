@@ -68,6 +68,7 @@ interface UserScore {
     jobWorkStats: CategoryStats;
     rmDefectStats: CategoryStats;
     exportFmsStats: CategoryStats;
+    salesExportEnquiryStats: CategoryStats;
     collectionStats: CategoryStats;
     payableStats: CategoryStats;
     trendData: ChartDataPoint[];
@@ -123,6 +124,9 @@ export default function ScorePage() {
     const [allO2DOrders, setAllO2DOrders] = useState<any[]>([]);
     const [o2dConfig, setO2dConfig] = useState<StepConfig[]>([]);
 
+    const [allSalesExportEnquiryData, setAllSalesExportEnquiryData] = useState<any[]>([]);
+    const [salesExportEnquiryConfig, setSalesExportEnquiryConfig] = useState<StepConfig[]>([]);
+
     const [allCRMData, setAllCRMData] = useState<any[]>([]);
     const [crmConfig, setCrmConfig] = useState<StepConfig[]>([]);
 
@@ -154,7 +158,7 @@ export default function ScorePage() {
         isOpen: boolean;
         title: string;
         tasks: any[];
-        type: 'delegation' | 'checklist' | 'o2d' | 'crm' | 'complain' | 'purchase' | 'factory' | 'jobwork' | 'rmdefect' | 'exportfms' | 'collection' | 'payable';
+        type: 'delegation' | 'checklist' | 'o2d' | 'crm' | 'complain' | 'purchase' | 'factory' | 'jobwork' | 'rmdefect' | 'exportfms' | 'salesexportenquiry' | 'collection' | 'payable';
     }>({
         isOpen: false,
         title: '',
@@ -177,6 +181,7 @@ export default function ScorePage() {
                 jwRes, jwCfgRes,
                 rmdRes, rmdCfgRes,
                 exportRes, exportCfgRes,
+                salesExportEnquiryRes, salesExportEnquiryCfgRes,
                 collRes, collDoerRes,
                 payRes, payDoerRes
             ] = await Promise.all([
@@ -199,6 +204,8 @@ export default function ScorePage() {
                 fetch('/api/rm-defects-config', { headers }),
                 fetch('/api/export-fms', { headers }),
                 fetch('/api/export-fms-config', { headers }),
+                fetch('/api/sales-export-purchase-enquiry-fms', { headers }),
+                fetch('/api/sales-export-purchase-enquiry-fms-config', { headers }),
                 fetch('/api/collection', { headers }),
                 fetch('/api/collection/doer', { headers }),
                 fetch('/api/payable', { headers }),
@@ -214,6 +221,7 @@ export default function ScorePage() {
                 jwData, jwCfgData,
                 rmdData, rmdCfgData,
                 exportData, exportCfgData,
+                salesExportEnquiryData, salesExportEnquiryCfgData,
                 collData, collDoerData,
                 payData, payDoerData
             ] = await Promise.all([
@@ -225,6 +233,7 @@ export default function ScorePage() {
                 jwRes.json(), jwCfgRes.json(),
                 rmdRes.json(), rmdCfgRes.json(),
                 exportRes.json(), exportCfgRes.json(),
+                salesExportEnquiryRes.json(), salesExportEnquiryCfgRes.json(),
                 collRes.json(), collDoerRes.json(),
                 payRes.json(), payDoerRes.json()
             ]);
@@ -255,8 +264,9 @@ export default function ScorePage() {
             setAllRMDefectData(extractData(rmdData));
             setRMDefectConfig(rmdCfgData.config && Array.isArray(rmdCfgData.config) ? rmdCfgData.config : []);
 
-            setAllExportFMSData(extractData(exportData));
             setExportFmsConfig(exportCfgData.config && Array.isArray(exportCfgData.config) ? exportCfgData.config : []);
+            setAllSalesExportEnquiryData(extractData(salesExportEnquiryData));
+            setSalesExportEnquiryConfig(salesExportEnquiryCfgData.config && Array.isArray(salesExportEnquiryCfgData.config) ? salesExportEnquiryCfgData.config : []);
 
             setAllCollectionData(collData.data || []);
             setCollectionDoer(collDoerData.doer || '');
@@ -311,6 +321,7 @@ export default function ScorePage() {
                 allJobWorkData, jobWorkConfig,
                 allRMDefectData, rmDefectConfig,
                 allExportFMSData, exportFmsConfig,
+                allSalesExportEnquiryData, salesExportEnquiryConfig,
                 allCollectionData, collectionDoer,
                 allPayableData, payableDoer
             );
@@ -325,6 +336,7 @@ export default function ScorePage() {
         allJobWorkData, jobWorkConfig,
         allRMDefectData, rmDefectConfig,
         allExportFMSData, exportFmsConfig,
+        allSalesExportEnquiryData, salesExportEnquiryConfig,
         allCollectionData, collectionDoer,
         allPayableData, payableDoer,
         dateRange, searchQuery
@@ -431,6 +443,7 @@ export default function ScorePage() {
         jwList: any[], jwCfg: StepConfig[],
         rmdList: any[], rmdCfg: StepConfig[],
         exportList: any[], exportCfg: StepConfig[],
+        salesEnquiryList: any[], salesEnquiryCfg: StepConfig[],
         collList: any[], collectDoer: string,
         payList: any[], payDoer: string
     ) => {
@@ -700,20 +713,21 @@ export default function ScorePage() {
             const jobWorkStats = processFmsData(user, jwList, jwCfg, 11);
             const rmDefectStats = processFmsData(user, rmdList, rmdCfg, 11);
             const exportFmsStats = processFmsData(user, exportList, exportCfg, 17);
+            const salesExportEnquiryStats = processFmsData(user, salesEnquiryList, salesEnquiryCfg, 5);
             const collectionStats = processCollectionData(user, collList, collectDoer);
             const payableStats = processPayableData(user, payList, payDoer);
 
             const totalTasks = userDelegations.length + userChecklists.length +
                 o2dStats.total + crmStats.total + complainStats.total +
-                purchaseStats.total + factoryStats.total + jobWorkStats.total + rmDefectStats.total + exportFmsStats.total + collectionStats.total + payableStats.total;
+                purchaseStats.total + factoryStats.total + jobWorkStats.total + rmDefectStats.total + exportFmsStats.total + salesExportEnquiryStats.total + collectionStats.total + payableStats.total;
 
             const completedTasks = completedDelegations.length + completedChecklists.length +
                 o2dStats.completed + crmStats.completed + complainStats.completed +
-                purchaseStats.completed + factoryStats.completed + jobWorkStats.completed + rmDefectStats.completed + exportFmsStats.completed + collectionStats.completed + payableStats.completed;
+                purchaseStats.completed + factoryStats.completed + jobWorkStats.completed + rmDefectStats.completed + exportFmsStats.completed + salesExportEnquiryStats.completed + collectionStats.completed + payableStats.completed;
 
             const onTimeTotal = onTimeDelegations.length + onTimeChecklists.length +
                 o2dStats.onTime + crmStats.onTime + complainStats.onTime +
-                purchaseStats.onTime + factoryStats.onTime + jobWorkStats.onTime + rmDefectStats.onTime + exportFmsStats.onTime + collectionStats.onTime + payableStats.onTime;
+                purchaseStats.onTime + factoryStats.onTime + jobWorkStats.onTime + rmDefectStats.onTime + exportFmsStats.onTime + salesExportEnquiryStats.onTime + collectionStats.onTime + payableStats.onTime;
 
             // Trend calculation
             const periods = getChartPeriods(filterType, dateRange);
@@ -735,11 +749,12 @@ export default function ScorePage() {
                 const pJW = jobWorkStats.items.filter(o => isTaskInRange(o.planned_date || '', o.actual_date || '', 'Completed', p.from, p.to));
                 const pRMD = rmDefectStats.items.filter(o => isTaskInRange(o.planned_date || '', o.actual_date || '', 'Completed', p.from, p.to));
                 const pExport = exportFmsStats.items.filter(o => isTaskInRange(o.planned_date || '', o.actual_date || '', 'Completed', p.from, p.to));
+                const pSalesEnquiry = salesExportEnquiryStats.items.filter(o => isTaskInRange(o.planned_date || '', o.actual_date || '', 'Completed', p.from, p.to));
                 const pColl = collectionStats.items.filter(o => isTaskInRange(o.planned_date || '', o.actual_date || '', 'Completed', p.from, p.to));
                 const pPay = payableStats.items.filter(o => isTaskInRange(o.planned_date || '', o.actual_date || '', 'Completed', p.from, p.to));
 
-                const pFmsTotal = pO2D.length + pCRM.length + pCompl.length + pPurch.length + pFact.length + pJW.length + pRMD.length + pExport.length + pColl.length + pPay.length;
-                const pFmsOnTime = [pO2D, pCRM, pCompl, pPurch, pFact, pJW, pRMD, pExport, pColl, pPay].reduce((acc, list) => acc + list.filter(it => it.status === 'On Time').length, 0);
+                const pFmsTotal = pO2D.length + pCRM.length + pCompl.length + pPurch.length + pFact.length + pJW.length + pRMD.length + pExport.length + pSalesEnquiry.length + pColl.length + pPay.length;
+                const pFmsOnTime = [pO2D, pCRM, pCompl, pPurch, pFact, pJW, pRMD, pExport, pSalesEnquiry, pColl, pPay].reduce((acc, list) => acc + list.filter(it => it.status === 'On Time').length, 0);
 
                 const pTotal = pDelTotal + pCheckTotal + pFmsTotal;
                 const pCompleted = (pDels.filter(d => d.status.toLowerCase() === 'completed').length +
@@ -786,6 +801,7 @@ export default function ScorePage() {
                 jobWorkStats,
                 rmDefectStats,
                 exportFmsStats,
+                salesExportEnquiryStats,
                 collectionStats,
                 payableStats,
                 trendData
@@ -916,7 +932,7 @@ export default function ScorePage() {
         });
     };
 
-    const handleOpenModal = (type: 'delegation' | 'checklist' | 'o2d' | 'crm' | 'complain' | 'purchase' | 'factory' | 'jobwork' | 'rmdefect' | 'exportfms' | 'collection' | 'payable', tasks: any[], userName: string) => {
+    const handleOpenModal = (type: 'delegation' | 'checklist' | 'o2d' | 'crm' | 'complain' | 'purchase' | 'factory' | 'jobwork' | 'rmdefect' | 'exportfms' | 'salesexportenquiry' | 'collection' | 'payable', tasks: any[], userName: string) => {
         const typeLabels: Record<string, string> = {
             delegation: 'Delegations',
             checklist: 'Checklists',
@@ -928,6 +944,7 @@ export default function ScorePage() {
             jobwork: 'Job Work',
             rmdefect: 'RM Defects',
             exportfms: 'Export FMS',
+            salesexportenquiry: 'Sales Export Purchase Enquiry FMS',
             collection: 'Collections',
             payable: 'Amount Payable'
         };
@@ -1272,6 +1289,17 @@ export default function ScorePage() {
                                                                                 <ScoreRow formulaLabel="On Time / Completed" completed={score.exportFmsStats.onTime} total={score.exportFmsStats.completed} percentage={score.exportFmsStats.completed > 0 ? Math.round((score.exportFmsStats.onTime / score.exportFmsStats.completed) * 100) : 0} />
                                                                             </div>
                                                                         </section>
+                                                                        
+                                                                        <section className="cursor-pointer group/sec hover:bg-gray-50 dark:hover:bg-gray-700/30 p-1.5 -mx-1.5 rounded-xl transition-colors" onClick={() => handleOpenModal('salesexportenquiry', score.salesExportEnquiryStats.items, score.user.username)}>
+                                                                            <h4 className="text-[9px] font-bold text-gray-900 dark:text-white uppercase tracking-widest mb-1.5 flex items-center gap-1.5">
+                                                                                <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+                                                                                Sales Exp. Enq.
+                                                                            </h4>
+                                                                            <div className="space-y-0.5">
+                                                                                <ScoreRow formulaLabel="Completed / Total" completed={score.salesExportEnquiryStats.completed} total={score.salesExportEnquiryStats.total} percentage={score.salesExportEnquiryStats.total > 0 ? Math.round((score.salesExportEnquiryStats.completed / score.salesExportEnquiryStats.total) * 100) : 0} />
+                                                                                <ScoreRow formulaLabel="On Time / Completed" completed={score.salesExportEnquiryStats.onTime} total={score.salesExportEnquiryStats.completed} percentage={score.salesExportEnquiryStats.completed > 0 ? Math.round((score.salesExportEnquiryStats.onTime / score.salesExportEnquiryStats.completed) * 100) : 0} />
+                                                                            </div>
+                                                                        </section>
 
                                                                         <section className="cursor-pointer group/sec hover:bg-gray-50 dark:hover:bg-gray-700/30 p-1.5 -mx-1.5 rounded-xl transition-colors" onClick={() => handleOpenModal('collection', score.collectionStats.items, score.user.username)}>
                                                                             <h4 className="text-[9px] font-bold text-gray-900 dark:text-white uppercase tracking-widest mb-1.5 flex items-center gap-1.5">
@@ -1382,6 +1410,7 @@ export default function ScorePage() {
                                                                             <FmsTableBreakdownRow label="Job Work" stats={score.jobWorkStats} colorClass="border-l-teal-400" onClick={() => handleOpenModal('jobwork', score.jobWorkStats.items, score.user.username)} />
                                                                             <FmsTableBreakdownRow label="RM Defect" stats={score.rmDefectStats} colorClass="border-l-gray-400" onClick={() => handleOpenModal('rmdefect', score.rmDefectStats.items, score.user.username)} />
                                                                             <FmsTableBreakdownRow label="Export FMS" stats={score.exportFmsStats} colorClass="border-l-yellow-400" onClick={() => handleOpenModal('exportfms', score.exportFmsStats.items, score.user.username)} />
+                                                                            <FmsTableBreakdownRow label="Sales Exp. Enq." stats={score.salesExportEnquiryStats} colorClass="border-l-amber-400" onClick={() => handleOpenModal('salesexportenquiry', score.salesExportEnquiryStats.items, score.user.username)} />
                                                                             <FmsTableBreakdownRow label="Collections" stats={score.collectionStats} colorClass="border-l-blue-500" onClick={() => handleOpenModal('collection', score.collectionStats.items, score.user.username)} />
                                                                             <FmsTableBreakdownRow label="Payables" stats={score.payableStats} colorClass="border-l-indigo-600" onClick={() => handleOpenModal('payable', score.payableStats.items, score.user.username)} />
                                                                             <tr className="h-2 bg-transparent"></tr>
