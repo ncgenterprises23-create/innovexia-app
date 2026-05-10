@@ -22,6 +22,9 @@ interface WorkerData {
   workerName: string;
   department: string;
   salary: string;
+  incentive: string;
+  gender: string;
+  otRate: string;
   rowIndex: number;
 }
 
@@ -34,7 +37,7 @@ export default function WorkerInformation() {
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [workerToEdit, setWorkerToEdit] = useState<WorkerData | null>(null);
   const [workerToDelete, setWorkerToDelete] = useState<WorkerData | null>(null);
-  const [formData, setFormData] = useState({ workerName: '', department: '', salary: '' });
+  const [formData, setFormData] = useState({ workerName: '', department: '', salary: '', incentive: 'No', gender: 'Male', otRate: '40' });
   const [submitting, setSubmitting] = useState(false);
   
   // Drill-down state
@@ -64,11 +67,14 @@ export default function WorkerInformation() {
       setFormData({ 
         workerName: worker.workerName, 
         department: worker.department, 
-        salary: worker.salary 
+        salary: worker.salary,
+        incentive: worker.incentive || 'No',
+        gender: worker.gender || 'Male',
+        otRate: worker.otRate || '40'
       });
     } else {
       setWorkerToEdit(null);
-      setFormData({ workerName: '', department: selectedDept || '', salary: '' });
+      setFormData({ workerName: '', department: selectedDept || '', salary: '', incentive: 'No', gender: 'Male', otRate: '40' });
     }
     setIsModalOpen(true);
   };
@@ -253,47 +259,86 @@ export default function WorkerInformation() {
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.9 }}
                 transition={{ delay: index * 0.05, duration: 0.2 }}
-                className="group relative bg-white/80 dark:bg-gray-800/80 backdrop-blur-md rounded-2xl p-5 shadow-[0_8px_30px_rgb(0,0,0,0.04)] dark:shadow-indigo-900/10 border border-white dark:border-gray-700/50 hover:shadow-xl hover:shadow-indigo-500/10 hover:-translate-y-1 transition-all duration-300"
+                className="group relative bg-white/90 dark:bg-gray-800/90 backdrop-blur-md rounded-3xl p-6 shadow-[0_10px_40px_rgb(0,0,0,0.04)] dark:shadow-indigo-900/10 border border-white dark:border-gray-700/50 hover:shadow-2xl hover:shadow-indigo-500/10 hover:-translate-y-1.5 transition-all duration-300 overflow-hidden"
               >
-                <div className="flex items-start justify-between mb-4">
-                  <div className="w-12 h-12 rounded-xl bg-gradient-to-tr from-gray-100 to-white dark:from-gray-700 dark:to-gray-600 flex items-center justify-center text-gray-700 dark:text-gray-200 font-black text-lg shadow-sm border border-gray-200/50 dark:border-gray-600/50">
+                {/* Background Accent */}
+                <div className={`absolute top-0 right-0 w-24 h-24 -mr-8 -mt-8 rounded-full opacity-[0.08] group-hover:scale-150 transition-transform duration-700 ${worker.gender === 'Female' ? 'bg-pink-500' : 'bg-blue-500'}`}></div>
+
+                <div className="flex items-start justify-between mb-5">
+                  <div className={`w-14 h-14 rounded-2xl flex items-center justify-center text-white font-black text-xl shadow-lg border-2 border-white dark:border-gray-700 transform -rotate-3 group-hover:rotate-0 transition-transform duration-300 ${
+                    worker.gender === 'Female' 
+                      ? 'bg-gradient-to-br from-pink-500 to-rose-600 shadow-pink-200 dark:shadow-pink-900/20' 
+                      : 'bg-gradient-to-br from-blue-500 to-indigo-600 shadow-blue-200 dark:shadow-blue-900/20'
+                  }`}>
                     {worker.workerName.charAt(0).toUpperCase()}
                   </div>
-                  <div className="flex gap-1.5">
+                  <div className="flex gap-1 bg-gray-50/50 dark:bg-gray-900/40 p-1 rounded-xl border border-gray-100 dark:border-gray-700/50">
                     <button
                       onClick={() => handleOpenModal(worker)}
-                      className="p-2 text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-500/20 dark:hover:text-blue-400 rounded-lg transition-all"
+                      className="p-2 text-gray-400 hover:text-indigo-600 hover:bg-white dark:hover:bg-gray-800 rounded-lg transition-all shadow-sm active:scale-90"
                       title="Edit"
                     >
-                      <Edit2 size={16} />
+                      <Edit2 size={14} />
                     </button>
                     <button
                       onClick={() => handleOpenDeleteModal(worker)}
-                      className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/20 dark:hover:text-red-400 rounded-lg transition-all"
+                      className="p-2 text-gray-400 hover:text-red-500 hover:bg-white dark:hover:bg-gray-800 rounded-lg transition-all shadow-sm active:scale-90"
                       title="Delete"
                     >
-                      <Trash2 size={16} />
+                      <Trash2 size={14} />
                     </button>
                   </div>
                 </div>
 
-                <div>
-                  <h3 className="text-base font-bold text-gray-900 dark:text-white truncate mb-3">
-                    {worker.workerName}
-                  </h3>
+                <div className="relative z-10">
+                  <div className="flex items-center gap-2 mb-1">
+                    <h3 className="text-lg font-extrabold text-gray-900 dark:text-white truncate">
+                      {worker.workerName}
+                    </h3>
+                    <span className={`text-[10px] font-black px-1.5 py-0.5 rounded-md uppercase tracking-wider ${
+                      worker.gender === 'Female' 
+                        ? 'bg-pink-100 text-pink-600 dark:bg-pink-900/30 dark:text-pink-400' 
+                        : 'bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400'
+                    }`}>
+                      {worker.gender === 'Female' ? 'F' : 'M'}
+                    </span>
+                  </div>
                   
-                  <div className="space-y-1.5">
-                    <div className="flex items-center gap-2 bg-gray-50 dark:bg-gray-900/50 px-2 py-1.5 rounded-lg border border-gray-100 dark:border-gray-800">
-                      <Briefcase size={12} className="text-gray-400" />
-                      <span className="text-xs font-medium text-gray-600 dark:text-gray-300 text-ellipsis overflow-hidden whitespace-nowrap">
-                        {worker.department}
-                      </span>
+                  <div className="flex items-center gap-1.5 text-gray-500 dark:text-gray-400 mb-4">
+                    <Briefcase size={12} className="opacity-70" />
+                    <span className="text-xs font-bold">{worker.department} Department</span>
+                  </div>
+                  
+                  <div className="space-y-3">
+                    <div className="p-4 bg-gradient-to-br from-emerald-50 to-teal-50 dark:from-emerald-900/20 dark:to-teal-900/20 rounded-2xl border border-emerald-100/50 dark:border-emerald-800/30 shadow-inner">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-[10px] font-black text-emerald-600 dark:text-emerald-400 uppercase tracking-widest opacity-80">Monthly Salary</span>
+                        <div className="flex items-center gap-1">
+                          <Banknote size={10} className="text-emerald-500" />
+                          <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-300">₹{worker.otRate}/h OT</span>
+                        </div>
+                      </div>
+                      <div className="flex items-baseline gap-1">
+                        <span className="text-2xl font-black text-gray-900 dark:text-white">₹{Number(worker.salary).toLocaleString()}</span>
+                        <span className="text-xs font-bold text-gray-400">/mo</span>
+                      </div>
                     </div>
                     
-                    <div className="flex items-center gap-2 bg-green-50 dark:bg-green-900/10 px-2 py-1.5 rounded-lg border border-green-100 dark:border-green-800/30">
-                      <Banknote size={12} className="text-green-500" />
-                      <span className="text-xs font-bold text-green-700 dark:text-green-400">
-                        ₹{worker.salary}
+                    <div className={`flex items-center justify-between px-3 py-2 rounded-xl border transition-all ${
+                      worker.incentive === 'Yes' 
+                        ? 'bg-indigo-50 dark:bg-indigo-900/20 border-indigo-100 dark:border-indigo-800/40 text-indigo-700 dark:text-indigo-400' 
+                        : 'bg-gray-50 dark:bg-gray-900/40 border-gray-100 dark:border-gray-800 text-gray-400'
+                    }`}>
+                      <div className="flex items-center gap-2">
+                        <AlertTriangle size={12} className={worker.incentive === 'Yes' ? 'text-indigo-500' : 'opacity-40'} />
+                        <span className="text-[10px] font-black uppercase tracking-widest">Incentive</span>
+                      </div>
+                      <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${
+                        worker.incentive === 'Yes' 
+                          ? 'bg-indigo-500 text-white shadow-sm' 
+                          : 'bg-gray-200 dark:bg-gray-700 text-gray-500'
+                      }`}>
+                        {worker.incentive === 'Yes' ? 'YES' : 'NO'}
                       </span>
                     </div>
                   </div>
@@ -376,6 +421,71 @@ export default function WorkerInformation() {
                       className="w-full pl-7 pr-3 py-2 text-sm bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-[var(--theme-primary)] outline-none"
                     />
                   </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-2">Gender</label>
+                    <div className="flex gap-2 p-1 bg-gray-50 dark:bg-gray-900/40 rounded-xl border border-gray-100 dark:border-gray-700">
+                      {['Male', 'Female'].map(g => (
+                        <button
+                          key={g}
+                          type="button"
+                          onClick={() => setFormData({
+                            ...formData, 
+                            gender: g, 
+                            otRate: g === 'Female' ? '36' : '40' // Default rates
+                          })}
+                          className={`flex-1 py-1.5 text-[10px] font-black rounded-lg transition-all ${
+                            formData.gender === g
+                              ? 'bg-white dark:bg-gray-800 text-indigo-600 shadow-sm border border-indigo-100 dark:border-indigo-900/30'
+                              : 'text-gray-400 hover:text-gray-600'
+                          }`}
+                        >
+                          {g.toUpperCase()}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1">OT Rate / Hour</label>
+                    <div className="relative">
+                      <div className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">₹</div>
+                      <input
+                        required
+                        type="number"
+                        value={formData.otRate}
+                        onChange={e => setFormData({...formData, otRate: e.target.value})}
+                        className="w-full pl-7 pr-3 py-2 text-sm bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-900/40 rounded-xl border border-gray-100 dark:border-gray-700">
+                  <div className="flex items-center gap-2">
+                    <div className={`p-1.5 rounded-lg ${formData.incentive === 'Yes' ? 'bg-purple-100 dark:bg-purple-900/30 text-purple-600' : 'bg-gray-200 dark:bg-gray-800 text-gray-500'}`}>
+                      <AlertTriangle size={14} />
+                    </div>
+                    <div>
+                      <p className="text-[11px] font-bold text-gray-700 dark:text-gray-200 leading-none">Incentive Eligibility</p>
+                      <p className="text-[9px] text-gray-500 mt-0.5">₹500 for perfect attendance</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setFormData({...formData, incentive: formData.incentive === 'Yes' ? 'No' : 'Yes'})}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${
+                      formData.incentive === 'Yes' ? 'bg-purple-600' : 'bg-gray-200 dark:bg-gray-700'
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                        formData.incentive === 'Yes' ? 'translate-x-6' : 'translate-x-1'
+                      }`}
+                    />
+                  </button>
                 </div>
 
                 <div className="pt-2 flex gap-2">

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { motion } from 'framer-motion';
 import { ChevronLeft, ChevronRight, Banknote, CalendarDays, Users, Loader2, Search, X } from 'lucide-react';
 
@@ -9,6 +9,9 @@ interface WorkerData {
   workerName: string;
   department: string;
   salary: string;
+  incentive: string;
+  gender: string;
+  otRate: string;
 }
 
 interface AttendanceData {
@@ -36,13 +39,8 @@ export default function WorkerSalary() {
   const monthName = currentDate.toLocaleString('default', { month: 'long', year: 'numeric' });
 
   const workingDaysInMonth = useMemo(() => {
-    let sundays = 0;
-    for (let day = 1; day <= daysInMonth; day++) {
-      const dateObj = new Date(year, month, day);
-      if (dateObj.getDay() === 0) sundays++;
-    }
-    return daysInMonth - sundays;
-  }, [year, month, daysInMonth]);
+    return daysInMonth; // Sundays are now included in daily calculation
+  }, [daysInMonth]);
 
   const today = new Date();
   const currentYear = today.getFullYear();
@@ -90,12 +88,11 @@ export default function WorkerSalary() {
     let count = 0;
     for (let day = 1; day <= daysInMonth; day++) {
       if (!isFutureDate(day)) {
-        const dateObj = new Date(year, month, day);
-        if (dateObj.getDay() !== 0) count++;
+        count++; // Sundays now included in expected count
       }
     }
     return count;
-  }, [year, month, daysInMonth, isFutureDate]);
+  }, [daysInMonth, isFutureDate]);
 
   // Derive Daily Base Salary from API's salary field
   const getDailyBase = (salaryStr: string) => {
@@ -118,23 +115,61 @@ export default function WorkerSalary() {
     return grouped;
   }, [workers, searchQuery]);
 
-  const getAttendanceRecord = (workerName: string, day: number) => {
-    // Format date as YYYY-MM-DD to match the API
-    const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  const getAttendanceRecord = (workerName: string, dayOffset: number) => {
+    // Use native Date to handle month/year rollovers (e.g. day 0 or day 32)
+    const targetDate = new Date(year, month, dayOffset);
+    // Format as YYYY-MM-DD in local time to avoid timezone shifts
+    const y = targetDate.getFullYear();
+    const m = String(targetDate.getMonth() + 1).padStart(2, '0');
+    const d = String(targetDate.getDate()).padStart(2, '0');
+    const dateStr = `${y}-${m}-${d}`;
     return attendance.find(a => a.workerName === workerName && a.date === dateStr);
   };
 
   const calculateDaySalary = (worker: WorkerData, day: number) => {
     const record = getAttendanceRecord(worker.workerName, day);
-    if (!record) return { present: false, base: 0, ot: 0, total: 0 };
-
+    const dateObj = new Date(year, month, day);
+    const isSunday = dateObj.getDay() === 0;
     const baseDaily = getDailyBase(worker.salary);
-    const hourlyRate = baseDaily / 9; // 9 hours shift
+
+    if (!record) {
+      if (isSunday) {
+        // Sandwich Rule: Unpaid if absent on both Saturday and Monday
+        const satRecord = getAttendanceRecord(worker.workerName, day - 1);
+        const monRecord = getAttendanceRecord(worker.workerName, day + 1);
+        
+        const isSandwichAbsent = !satRecord && !monRecord;
+
+        if (isSandwichAbsent) {
+          return {
+            present: false,
+            isPaidSunday: false,
+            base: 0,
+            ot: 0,
+            total: 0,
+            otHours: 0
+          };
+        }
+
+        return {
+          present: false,
+          isPaidSunday: true,
+          base: baseDaily,
+          ot: 0,
+          total: baseDaily,
+          otHours: 0
+        };
+      }
+      return { present: false, isPaidSunday: false, base: 0, ot: 0, total: 0, otHours: 0 };
+    }
+
+    const otRate = parseFloat(worker.otRate) || 40;
     const otHours = record.otHours ? parseFloat(record.otHours) : 0;
-    const otAmount = Math.round(otHours * hourlyRate);
+    const otAmount = Math.round(otHours * otRate);
 
     return {
       present: true,
+      isPaidSunday: isSunday,
       base: baseDaily,
       ot: otAmount,
       total: baseDaily + otAmount,
@@ -144,20 +179,28 @@ export default function WorkerSalary() {
 
   const calculateMonthlyTotals = (worker: WorkerData) => {
     let achieved = 0;
+    let absentOnWorkingDay = false;
     const baseDaily = getDailyBase(worker.salary);
 
     for (let day = 1; day <= daysInMonth; day++) {
       if (!isFutureDate(day)) {
         const salaryInfo = calculateDaySalary(worker, day);
-        if (salaryInfo.present) {
+        if (salaryInfo.present || salaryInfo.isPaidSunday) {
           achieved += salaryInfo.total;
+        }
+        
+        // Incentive logic: no absent/leave in month (on working days)
+        const dateObj = new Date(year, month, day);
+        if (dateObj.getDay() !== 0 && !salaryInfo.present) {
+          absentOnWorkingDay = true;
         }
       }
     }
     
     const expected = passedWorkingDaysCount * baseDaily;
+    const incentive = (!absentOnWorkingDay && worker.incentive === 'Yes') ? 500 : 0;
     
-    return { expected, achieved };
+    return { expected, achieved, incentive };
   };
 
   return (
@@ -174,7 +217,7 @@ export default function WorkerSalary() {
         </div>
 
         {/* Searchable Dropdown */}
-        <div className="relative flex-1 w-full max-w-sm sm:mx-6 shrink-0 z-50">
+        <div className="relative flex-1 w-full max-sm sm:mx-6 shrink-0 z-50">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
           <input 
             type="text" 
@@ -272,11 +315,21 @@ export default function WorkerSalary() {
                   <th className="px-4 py-4 text-xs font-black text-emerald-700 dark:text-emerald-400 uppercase tracking-widest text-center sticky left-[260px] w-[100px] bg-emerald-50/95 dark:bg-emerald-900/95 backdrop-blur-sm z-20 border-r border-emerald-200/60 dark:border-emerald-800/60 shadow-[4px_0_10px_rgba(0,0,0,0.02)]" title="Achieved based on Attendance & OT">
                     Achieved
                   </th>
-                  {days.map(day => (
-                    <th key={day} className={`px-2 py-4 text-xs font-black uppercase tracking-widest text-center min-w-[70px] ${isFutureDate(day) ? 'text-gray-400/50 dark:text-gray-600/50' : 'text-gray-500 dark:text-gray-400'}`}>
-                      {day}
-                    </th>
-                  ))}
+                  <th className="px-4 py-4 text-xs font-black text-purple-700 dark:text-purple-400 uppercase tracking-widest text-center sticky left-[360px] w-[90px] bg-purple-50/95 dark:bg-purple-900/95 backdrop-blur-sm z-20 border-r border-purple-200/60 dark:border-purple-800/60 shadow-[4px_0_10px_rgba(0,0,0,0.02)]" title="₹500 for perfect attendance">
+                    Incentive
+                  </th>
+                  {days.map(day => {
+                    const dateObj = new Date(year, month, day);
+                    const dayName = dateObj.toLocaleString('default', { weekday: 'short' });
+                    return (
+                      <th key={day} className={`px-2 py-3 text-[10px] font-black uppercase tracking-tighter text-center min-w-[65px] border-l border-gray-100/30 dark:border-gray-800/30 ${isFutureDate(day) ? 'text-gray-400/50 dark:text-gray-600/50' : 'text-gray-500 dark:text-gray-400'}`}>
+                        <div className="flex flex-col items-center gap-0.5">
+                          <span className="text-[9px] opacity-60 font-bold">{dayName}</span>
+                          <span className="text-xs">{day}</span>
+                        </div>
+                      </th>
+                    );
+                  })}
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100/50 dark:divide-gray-800/50 border-0">
@@ -291,12 +344,13 @@ export default function WorkerSalary() {
                       </td>
                       <td className="px-4 py-2 sticky left-[160px] w-[100px] bg-gray-100/95 dark:bg-gray-800/95 backdrop-blur-md z-10 border-r border-gray-200 dark:border-gray-700 shadow-[4px_0_10px_rgba(0,0,0,0.02)]"></td>
                       <td className="px-4 py-2 sticky left-[260px] w-[100px] bg-gray-100/95 dark:bg-gray-800/95 backdrop-blur-md z-10 border-r border-gray-200 dark:border-gray-700 shadow-[4px_0_10px_rgba(0,0,0,0.02)]"></td>
+                      <td className="px-4 py-2 sticky left-[360px] w-[90px] bg-gray-100/95 dark:bg-gray-800/95 backdrop-blur-md z-10 border-r border-gray-200 dark:border-gray-700 shadow-[4px_0_10px_rgba(0,0,0,0.02)]"></td>
                       <td colSpan={daysInMonth} className="px-2 py-2"></td>
                     </tr>
 
                     {groupedWorkers[dept].map((worker) => {
                       const baseDaily = getDailyBase(worker.salary);
-                      const { expected, achieved } = calculateMonthlyTotals(worker);
+                      const { expected, achieved, incentive } = calculateMonthlyTotals(worker);
 
                       return (
                         <tr key={worker.id} className="hover:bg-white/80 dark:hover:bg-gray-700/40 transition-colors">
@@ -315,6 +369,9 @@ export default function WorkerSalary() {
                           <td className="px-4 py-3 sticky left-[260px] w-[100px] bg-emerald-50/90 dark:bg-emerald-900/20 backdrop-blur-md z-10 border-r border-emerald-100 dark:border-emerald-800/40 font-black text-sm text-emerald-600 dark:text-emerald-400 shadow-[4px_0_10px_rgba(0,0,0,0.02)] text-center">
                             ₹{achieved.toLocaleString()}
                           </td>
+                          <td className="px-4 py-3 sticky left-[360px] w-[90px] bg-purple-50/90 dark:bg-purple-900/20 backdrop-blur-md z-10 border-r border-purple-100 dark:border-purple-800/40 font-black text-sm text-purple-600 dark:text-purple-400 shadow-[4px_0_10px_rgba(0,0,0,0.02)] text-center">
+                            ₹{incentive}
+                          </td>
                           {days.map(day => {
                             const isFuture = isFutureDate(day);
                             const salaryInfo = calculateDaySalary(worker, day);
@@ -327,17 +384,22 @@ export default function WorkerSalary() {
                                   </div>
                                 ) : (
                                   <div className={`mx-auto min-w-[3rem] px-2 py-1.5 rounded-lg transition-all flex flex-col justify-center items-center ${
-                                    salaryInfo.present 
+                                    salaryInfo.present || salaryInfo.isPaidSunday
                                       ? salaryInfo.ot > 0 
                                         ? 'bg-emerald-100/70 dark:bg-emerald-900/50 border border-emerald-200 dark:border-emerald-700' 
                                         : 'bg-emerald-50 dark:bg-emerald-900/20 border border-transparent'
                                       : 'bg-red-50 dark:bg-red-900/10 border border-transparent'
                                   }`}>
-                                    {salaryInfo.present ? (
+                                    {salaryInfo.present || salaryInfo.isPaidSunday ? (
                                       <>
-                                        <span className={`text-xs font-bold ${salaryInfo.ot > 0 ? 'text-emerald-800 dark:text-emerald-300' : 'text-emerald-600 dark:text-emerald-400'}`}>
-                                          ₹{salaryInfo.total}
-                                        </span>
+                                        <div className="flex items-center gap-1">
+                                          <span className={`text-xs font-bold ${salaryInfo.ot > 0 ? 'text-emerald-800 dark:text-emerald-300' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                                            ₹{salaryInfo.total}
+                                          </span>
+                                          {!salaryInfo.present && salaryInfo.isPaidSunday && (
+                                            <span className="text-[10px] font-black text-red-500/80 dark:text-red-400/80">A</span>
+                                          )}
+                                        </div>
                                         {salaryInfo.ot > 0 && (
                                           <span className="text-[9px] font-bold text-emerald-600/70 dark:text-emerald-400/80 -mt-0.5 whitespace-nowrap">
                                             {salaryInfo.base}+{salaryInfo.ot}
@@ -360,7 +422,7 @@ export default function WorkerSalary() {
 
                 {Object.keys(groupedWorkers).length === 0 && !loading && (
                    <tr>
-                     <td colSpan={daysInMonth + 3} className="px-4 py-8 text-center text-gray-500">
+                     <td colSpan={daysInMonth + 4} className="px-4 py-8 text-center text-gray-500">
                        No workers found. Add workers in the Worker Information tab.
                      </td>
                    </tr>

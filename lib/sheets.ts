@@ -33,6 +33,7 @@ export const SPREADSHEET_IDS = {
   EXPORT_FMS: '1W88Vnskum-0lYaKKe2vKVDKa1cd3TmwTt1uJYODT60g',
   FMS_PRODUCT_SEARCH: '150XDtKwHl3TjMj8INwFIAcMVoOSWjydPkHxJkiE7ZXM',
   SALES_EXPORT_PURCHASE_ENQUIRY_FMS: '1NEy9qSv-9fCGVOjkW9cfgVZNdJbta79lcxIJ6xe_msE',
+  IGST_REFUND: '1pmf0FcgLs_U_883CGwl6KWkwfg4a9Cq1RhVfMpijqh0',
 };
 
 // Backward compatibility
@@ -75,6 +76,8 @@ const SHEETS = {
   FMS_PRODUCT_SEARCH_CONFIG: 'Step Configuration',
   SALES_EXPORT_PURCHASE_ENQUIRY_FMS: 'Sheet1',
   SALES_EXPORT_PURCHASE_ENQUIRY_FMS_CONFIG: 'Step Configuration',
+  IGST_REFUND: 'IGST',
+  IGST_REFUND_CONFIG: 'Step Configuration',
 };
 
 // Initialize Google Sheets API client with OAuth
@@ -7347,6 +7350,258 @@ export async function deleteSalesExportPurchaseEnquiryFMSData(id: string) {
     return { success: true };
   } catch (error) {
     console.error('Error deleting Sales Export Purchase Enquiry FMS data:', error);
+    throw error;
+  }
+}
+
+// IGST REFUND CRUD OPERATIONS
+
+export async function getIgstRefundData() {
+  try {
+    const sheets = await getGoogleSheetsClient();
+    const spreadsheetId = SPREADSHEET_IDS.IGST_REFUND;
+    const sheetName = SHEETS.IGST_REFUND;
+
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${sheetName}!A:BF`,
+      valueRenderOption: 'UNFORMATTED_VALUE',
+    });
+
+    const rows = response.data.values;
+    if (!rows || rows.length === 0) return [];
+
+    const headers = rows[0].map((h: string) => h.trim());
+    return rows.slice(1).map((row, idx) => ({
+      ...rowToObject(headers, row),
+      _rowIndex: idx + 2,
+    }));
+  } catch (error) {
+    console.error('Error fetching IGST Refund data:', error);
+    throw error;
+  }
+}
+
+export async function createIgstRefundData(items: any[]) {
+  try {
+    const sheets = await getGoogleSheetsClient();
+    const spreadsheetId = SPREADSHEET_IDS.IGST_REFUND;
+    const sheetName = SHEETS.IGST_REFUND;
+    const now = new Date();
+    const timestamp = now.toISOString();
+
+    const config = await getIgstRefundConfig();
+    const tat1 = config.find(c => c.step === 1)?.tatValue || 1;
+
+    const existingRes = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${sheetName}!A:BF`,
+      valueRenderOption: 'UNFORMATTED_VALUE',
+    });
+    const existingRows = existingRes.data.values || [];
+    let headers: string[] = existingRows[0]?.map((h: string) => h.trim()) || [];
+
+    if (headers.length === 0) {
+      const defaultHeaders = [
+        'Id', 'Company_Name', 'Shipping_Bill_No', 'Shipping_Bill_Date',
+        'Igst_Amt', 'Drawback_Amt', 'Rod_Tep_Amt', 'Timestamp', 'Cancelled',
+        'Planned_1', 'Actual_1', 'Status_1',
+        'Planned_2', 'Actual_2', 'Status_2',
+        'Planned_3', 'Actual_3', 'Status_3',
+        'Planned_4', 'Actual_4', 'Status_4',
+        'Planned_5', 'Actual_5', 'Status_5',
+        'Planned_6', 'Actual_6', 'Status_6',
+      ];
+      await sheets.spreadsheets.values.update({
+        spreadsheetId,
+        range: `${sheetName}!A1`,
+        valueInputOption: 'RAW',
+        requestBody: { values: [defaultHeaders] }
+      });
+      headers = defaultHeaders;
+    }
+
+    const rowIdxs = existingRows.length;
+    let nextId = 1;
+    if (rowIdxs > 1) {
+      const ids = existingRows.slice(1)
+        .map(row => parseInt(String(row[0])))
+        .filter(id => !isNaN(id));
+      if (ids.length > 0) nextId = Math.max(...ids) + 1;
+    }
+
+    const planned1Date = new Date(now);
+    planned1Date.setHours(planned1Date.getHours() + tat1);
+
+    const newRows = items.map((item, i) => {
+      const fullItem = {
+        Id: nextId + i,
+        ...item,
+        Timestamp: timestamp,
+        Cancelled: '',
+        Planned_1: planned1Date.toISOString(),
+      };
+      return objectToRow(headers, fullItem);
+    });
+
+    await sheets.spreadsheets.values.append({
+      spreadsheetId,
+      range: `${sheetName}!A:BF`,
+      valueInputOption: 'USER_ENTERED',
+      requestBody: { values: newRows }
+    });
+
+    return { success: true, count: items.length };
+  } catch (error) {
+    console.error('Error adding IGST Refund records:', error);
+    throw error;
+  }
+}
+
+export async function updateIgstRefundData(id: string | number, updates: any) {
+  try {
+    const sheets = await getGoogleSheetsClient();
+    const spreadsheetId = SPREADSHEET_IDS.IGST_REFUND;
+    const sheetName = SHEETS.IGST_REFUND;
+
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${sheetName}!A:BF`,
+      valueRenderOption: 'UNFORMATTED_VALUE',
+    });
+
+    const rows = response.data.values;
+    if (!rows || rows.length === 0) throw new Error('No data found');
+
+    const headers = rows[0].map((h: string) => h.trim());
+    const dataRows = rows.slice(1);
+    
+    const targetId = String(id);
+    const rowIdx = dataRows.findIndex(row => String(row[0]) === targetId);
+
+    if (rowIdx === -1) throw new Error('Record not found');
+
+    const currentRow = rowToObject(headers, dataRows[rowIdx]);
+    const updatedRowObj = { ...currentRow, ...updates };
+    const newRow = objectToRow(headers, updatedRowObj);
+
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `${sheetName}!A${rowIdx + 2}`,
+      valueInputOption: 'USER_ENTERED',
+      requestBody: { values: [newRow] }
+    });
+
+    return updatedRowObj;
+  } catch (error) {
+    console.error('Error updating IGST Refund record:', error);
+    throw error;
+  }
+}
+
+export async function deleteIgstRefundData(id: string | number) {
+  try {
+    const sheets = await getGoogleSheetsClient();
+    const spreadsheetId = SPREADSHEET_IDS.IGST_REFUND;
+    const sheetName = SHEETS.IGST_REFUND;
+
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${sheetName}!A:A`,
+      valueRenderOption: 'UNFORMATTED_VALUE',
+    });
+
+    const idCol = response.data.values || [];
+    const targetId = String(id);
+    const rowIdx = idCol.findIndex(row => String(row[0]) === targetId);
+
+    if (rowIdx === -1) throw new Error('Record not found');
+
+    const metaRes = await sheets.spreadsheets.get({ spreadsheetId });
+    const sheetId = metaRes.data.sheets?.find(s => s.properties?.title === sheetName)?.properties?.sheetId;
+
+    if (sheetId === undefined) throw new Error('Sheet ID not found');
+
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        requests: [{
+          deleteDimension: {
+            range: {
+              sheetId,
+              dimension: 'ROWS',
+              startIndex: rowIdx,
+              endIndex: rowIdx + 1
+            }
+          }
+        }]
+      }
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error('Error deleting IGST Refund record:', error);
+    throw error;
+  }
+}
+
+export async function getIgstRefundConfig() {
+  try {
+    const sheets = await getGoogleSheetsClient();
+    const spreadsheetId = SPREADSHEET_IDS.IGST_REFUND;
+    const sheetName = SHEETS.IGST_REFUND_CONFIG;
+
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${sheetName}!A:E`,
+      valueRenderOption: 'UNFORMATTED_VALUE',
+    });
+
+    const rows = response.data.values;
+    if (!rows || rows.length <= 1) return [];
+
+    return rows.slice(1).map(row => ({
+      step: parseInt(row[0]),
+      stepName: row[1],
+      doerName: row[2] || '',
+      tatValue: parseInt(row[3]) || 24,
+      tatUnit: (row[4] === 'days' ? 'days' : 'hours') as 'hours' | 'days',
+    }));
+  } catch (error) {
+    console.error('Error fetching IGST Refund config:', error);
+    return [];
+  }
+}
+
+export async function updateIgstRefundConfig(configData: any[]) {
+  try {
+    const sheets = await getGoogleSheetsClient();
+    const spreadsheetId = SPREADSHEET_IDS.IGST_REFUND;
+    const sheetName = SHEETS.IGST_REFUND_CONFIG;
+
+    const headers = ['Step', 'StepName', 'DoerName', 'TAT_Value', 'TAT_Unit'];
+    const rows: any[] = [headers];
+
+    configData.forEach(cfg => {
+      rows.push([
+        cfg.step,
+        cfg.stepName,
+        cfg.doerName || '',
+        cfg.tatValue || 24,
+        cfg.tatUnit || 'hours',
+      ]);
+    });
+
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `${sheetName}!A1`,
+      valueInputOption: 'USER_ENTERED',
+      requestBody: { values: rows }
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error('Error updating IGST Refund config:', error);
     throw error;
   }
 }

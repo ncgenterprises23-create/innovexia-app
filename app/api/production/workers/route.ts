@@ -3,7 +3,7 @@ import { getGoogleSheetsClient } from '@/lib/oauth';
 
 const SHEET_ID = '1ML6ZOBSEqz58aozo_lyUsRdKjDmkzS-qW5B8Ej5dcXQ';
 const SHEET_NAME = 'Worker Information';
-const RANGE = `'Worker Information'!A:D`; // ID, Worker Name, Department, Salary
+const RANGE = `'Worker Information'!A:G`; // ID, Worker Name, Department, Salary, Incentive, Gender, OT Rate
 
 // Helper to wrap initialization
 async function ensureHeaders(sheets: any) {
@@ -17,10 +17,10 @@ async function ensureHeaders(sheets: any) {
     // Write headers
     await sheets.spreadsheets.values.update({
       spreadsheetId: SHEET_ID,
-      range: `'Worker Information'!A1:D1`,
+      range: `'Worker Information'!A1:G1`,
       valueInputOption: 'USER_ENTERED',
       requestBody: {
-        values: [['ID', 'Worker Name', 'Department', 'Salary']],
+        values: [['ID', 'Worker Name', 'Department', 'Salary', 'Incentive', 'Male/Female', 'OT Amt/Hour']],
       },
     });
   }
@@ -43,12 +43,15 @@ export async function GET(req: NextRequest) {
 
     // Map starting from index 1 (skipping header)
     const workers = rows.slice(1).map((row, index) => ({
-      id: row[0] || crypto.randomUUID(), // Fallback if missing
+      id: row[0] || crypto.randomUUID(), 
       workerName: row[1] || '',
       department: row[2] || '',
       salary: row[3] || '',
-      rowIndex: index + 2, // 1-based, plus 1 for header
-    })).filter(w => w.workerName); // exclude empty rows
+      incentive: row[4] || 'No',
+      gender: row[5] || 'Male',
+      otRate: row[6] || '40',
+      rowIndex: index + 2, 
+    })).filter(w => w.workerName); 
 
     return NextResponse.json({ workers });
   } catch (error: any) {
@@ -59,7 +62,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const { workerName, department, salary } = await req.json();
+    const { workerName, department, salary, incentive, gender, otRate } = await req.json();
     const sheets = await getGoogleSheetsClient();
     await ensureHeaders(sheets);
 
@@ -70,11 +73,11 @@ export async function POST(req: NextRequest) {
       range: RANGE,
       valueInputOption: 'USER_ENTERED',
       requestBody: {
-        values: [[newId, workerName, department, salary]],
+        values: [[newId, workerName, department, salary, incentive || 'No', gender || 'Male', otRate || '40']],
       },
     });
 
-    return NextResponse.json({ id: newId, workerName, department, salary }, { status: 201 });
+    return NextResponse.json({ id: newId, workerName, department, salary, incentive: incentive || 'No', gender, otRate }, { status: 201 });
   } catch (error: any) {
     console.error('Error creating worker:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });
@@ -83,7 +86,7 @@ export async function POST(req: NextRequest) {
 
 export async function PUT(req: NextRequest) {
   try {
-    const { id, workerName, department, salary, rowIndex } = await req.json();
+    const { id, workerName, department, salary, incentive, gender, otRate, rowIndex } = await req.json();
     
     if (!rowIndex) {
       return NextResponse.json({ error: 'Missing rowIndex for update' }, { status: 400 });
@@ -94,14 +97,14 @@ export async function PUT(req: NextRequest) {
 
     await sheets.spreadsheets.values.update({
       spreadsheetId: SHEET_ID,
-      range: `'Worker Information'!A${rowIndex}:D${rowIndex}`,
+      range: `'Worker Information'!A${rowIndex}:G${rowIndex}`,
       valueInputOption: 'USER_ENTERED',
       requestBody: {
-        values: [[id, workerName, department, salary]],
+        values: [[id, workerName, department, salary, incentive || 'No', gender || 'Male', otRate || '40']],
       },
     });
 
-    return NextResponse.json({ id, workerName, department, salary, rowIndex });
+    return NextResponse.json({ id, workerName, department, salary, incentive: incentive || 'No', gender, otRate, rowIndex });
   } catch (error: any) {
     console.error('Error updating worker:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });
@@ -119,8 +122,6 @@ export async function DELETE(req: NextRequest) {
 
     const sheets = await getGoogleSheetsClient();
 
-    // To delete a row properly, we need the sheet ID (gid) of "Worker Information".
-    // First, get the sheet details to find the sheetId.
     const spreadsheet = await sheets.spreadsheets.get({
       spreadsheetId: SHEET_ID,
     });

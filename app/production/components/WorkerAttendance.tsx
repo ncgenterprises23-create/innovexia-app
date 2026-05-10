@@ -527,9 +527,9 @@ export default function WorkerAttendance() {
             />
             <motion.div
               initial={{ opacity: 0, scale: 0.95, y: 10 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: 10 }}
-              className="relative w-full max-w-2xl max-h-[90vh] overflow-y-auto bg-white dark:bg-gray-800 rounded-2xl shadow-2xl border border-gray-100 dark:border-gray-700 flex flex-col"
+              className="relative w-full max-w-5xl max-h-[90vh] overflow-hidden bg-white dark:bg-gray-800 rounded-2xl shadow-2xl border border-gray-100 dark:border-gray-700 flex flex-col"
             >
-              <div className="sticky top-0 z-10 bg-white/80 dark:bg-gray-800/80 backdrop-blur-md border-b border-gray-200 dark:border-gray-700 p-5 flex items-center justify-between">
+              <div className="sticky top-0 z-10 bg-white/80 dark:bg-gray-800/80 backdrop-blur-md border-b border-gray-200 dark:border-gray-700 p-5 flex items-center justify-between shrink-0">
                 <h3 className="text-xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
                   <Users className="text-teal-500" size={22}/>
                   Bulk Log Department
@@ -539,98 +539,103 @@ export default function WorkerAttendance() {
                 </button>
               </div>
 
-              <div className="p-5 space-y-6">
-
-                {/* 1. Date & Department */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-gray-50 dark:bg-gray-900/30 p-4 rounded-xl border border-gray-100 dark:border-gray-800">
-                  <div>
-                     <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Log Date</label>
-                     <input
-                        type="date"
-                        value={logDate}
-                        onChange={e => setLogDate(e.target.value)}
-                        className="w-full px-3 py-2 text-sm font-bold bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-teal-500 outline-none"
-                      />
+              <div className="flex flex-1 overflow-hidden">
+                {/* LEFT PANEL: CONFIGURATION */}
+                <div className="w-2/5 p-6 space-y-6 border-r border-gray-100 dark:border-gray-700 overflow-y-auto bg-gray-50/30 dark:bg-gray-900/10">
+                  {/* 1. Date & Department */}
+                  <div className="space-y-4">
+                    <div>
+                       <label className="block text-[11px] font-black text-gray-400 uppercase tracking-widest mb-2">Log Date</label>
+                       <input
+                          type="date"
+                          value={logDate}
+                          onChange={e => setLogDate(e.target.value)}
+                          className="w-full px-3 py-2 text-sm font-bold bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl focus:ring-2 focus:ring-teal-500 outline-none shadow-sm"
+                        />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-black text-gray-400 uppercase tracking-widest mb-2">Select Department</label>
+                      <div className="grid grid-cols-3 gap-2">
+                        {DEPARTMENTS.map(dept => (
+                          <button
+                            key={dept}
+                            type="button"
+                            onClick={() => handleDeptSelect(dept)}
+                            className={`px-2 py-2 text-xs font-black rounded-lg transition-all border ${
+                              selectedDeptLog === dept
+                                ? 'bg-gradient-to-r from-teal-500 to-emerald-500 text-white border-transparent shadow-md'
+                                : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:bg-gray-100'
+                            }`}
+                          >
+                            {dept}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                   </div>
-                  <div>
-                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Select Department</label>
-                    <div className="flex gap-2">
-                      {DEPARTMENTS.map(dept => (
+
+                  {/* 2. Timing */}
+                  <div className="space-y-4 pt-4 border-t border-gray-100 dark:border-gray-700">
+                    <div>
+                      <label className="block text-[11px] font-black text-gray-400 uppercase tracking-widest mb-2">Shift Timing</label>
+                      <div className="space-y-2">
+                        {SHIFTS.map(shift => (
+                           <button
+                             key={shift.label}
+                             type="button"
+                             onClick={() => setShiftType(shift.label)}
+                             className={`w-full flex items-center justify-between px-4 py-2.5 text-xs font-bold rounded-xl transition-all border ${
+                               shiftType === shift.label
+                                 ? 'bg-gradient-to-r ' + shift.color + ' text-white border-transparent shadow'
+                                 : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:bg-gray-50'
+                             }`}
+                           >
+                             <div className="flex items-center gap-2">
+                               {shift.icon}
+                               {shift.label}
+                             </div>
+                             <span className="opacity-80 font-medium text-xs">{shift.in} - {shift.out}</span>
+                           </button>
+                        ))}
                         <button
-                          key={dept}
-                          type="button"
-                          onClick={() => handleDeptSelect(dept)}
-                          className={`flex-1 px-2 py-2 text-xs font-bold rounded-lg transition-all border ${
-                            selectedDeptLog === dept
-                              ? 'bg-gradient-to-r from-teal-500 to-emerald-500 text-white border-transparent shadow-md'
-                              : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:bg-gray-100'
-                          }`}
-                        >
-                          {dept}
+                             type="button"
+                             onClick={() => setShiftType('Custom')}
+                             className={`w-full flex items-center gap-2 px-4 py-2.5 text-xs font-bold rounded-xl transition-all border ${
+                               shiftType === 'Custom'
+                                 ? 'bg-gray-900 dark:bg-white text-white dark:text-gray-900 border-transparent shadow'
+                                 : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:bg-gray-50'
+                             }`}
+                           >
+                             <Clock size={14} />
+                             Custom Hours
                         </button>
-                      ))}
+                      </div>
                     </div>
-                  </div>
-                </div>
 
-                {/* 2. Timing Buttons */}
-                <div className="bg-gray-50 dark:bg-gray-900/30 p-4 rounded-xl border border-gray-100 dark:border-gray-800 space-y-4">
-                  <div>
-                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Shift Timing</label>
-                    <div className="flex gap-2 flex-wrap">
-                      {SHIFTS.map(shift => (
-                         <button
-                           key={shift.label}
-                           type="button"
-                           onClick={() => setShiftType(shift.label)}
-                           className={`flex items-center gap-2 px-4 py-2 text-sm font-bold rounded-lg transition-all border ${
-                             shiftType === shift.label
-                               ? 'bg-gradient-to-r ' + shift.color + ' text-white border-transparent shadow'
-                               : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:bg-gray-50'
-                           }`}
-                         >
-                           {shift.icon}
-                           {shift.label} ({shift.in} - {shift.out})
-                         </button>
-                      ))}
-                      <button
-                           type="button"
-                           onClick={() => setShiftType('Custom')}
-                           className={`flex items-center gap-2 px-4 py-2 text-sm font-bold rounded-lg transition-all border ${
-                             shiftType === 'Custom'
-                               ? 'bg-gray-900 dark:bg-white text-white dark:text-gray-900 border-transparent shadow'
-                               : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:bg-gray-50'
-                           }`}
-                         >
-                           <Clock size={14} />
-                           Custom
-                      </button>
-                    </div>
+                    {shiftType === 'Custom' && (
+                      <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} className="flex gap-3">
+                        <div className="flex-1">
+                          <label className="block text-[9px] font-bold text-gray-400 mb-1">TIME IN</label>
+                          <input type="time" value={customTimeIn} onChange={e => setCustomTimeIn(e.target.value)} className="w-full px-3 py-1.5 text-xs bg-white dark:bg-gray-800 border border-gray-200 rounded-lg outline-none" />
+                        </div>
+                        <div className="flex-1">
+                          <label className="block text-[9px] font-bold text-gray-400 mb-1">TIME OUT</label>
+                          <input type="time" value={customTimeOut} onChange={e => setCustomTimeOut(e.target.value)} className="w-full px-3 py-1.5 text-xs bg-white dark:bg-gray-800 border border-gray-200 rounded-lg outline-none" />
+                        </div>
+                      </motion.div>
+                    )}
                   </div>
 
-                  {shiftType === 'Custom' && (
-                    <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} className="flex gap-4">
-                      <div className="flex-1">
-                        <label className="block text-xs font-semibold text-gray-500 mb-1">Time In</label>
-                        <input type="time" value={customTimeIn} onChange={e => setCustomTimeIn(e.target.value)} className="w-full px-3 py-2 text-sm bg-white dark:bg-gray-800 border border-gray-200 rounded-lg outline-none" />
-                      </div>
-                      <div className="flex-1">
-                        <label className="block text-xs font-semibold text-gray-500 mb-1">Time Out</label>
-                        <input type="time" value={customTimeOut} onChange={e => setCustomTimeOut(e.target.value)} className="w-full px-3 py-2 text-sm bg-white dark:bg-gray-800 border border-gray-200 rounded-lg outline-none" />
-                      </div>
-                    </motion.div>
-                  )}
-
-                  <div>
-                     <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Set Universal OT (For all Present workers)</label>
-                     <div className="flex gap-2 flex-wrap">
-                       {['0', '0.5', '1', '1.5', '2', '2.5', '3', '3.5', '4'].map(hrs => (
+                  {/* 3. Universal OT */}
+                  <div className="space-y-4 pt-4 border-t border-gray-100 dark:border-gray-700">
+                     <label className="block text-[11px] font-black text-gray-400 uppercase tracking-widest mb-2">Set Universal OT</label>
+                     <div className="grid grid-cols-4 gap-1.5">
+                       {['0', '0.5', '1', '1.5', '2', '2.5', '3', '3.5', '4', '4.5', '5', '5.5', '6'].map(hrs => (
                          <button
                            key={hrs}
                            type="button"
                            onClick={() => {
                              setOtHours(hrs);
-                             // Update all workerOTs for workers marked present
                              const updatedOTs = { ...workerOTs };
                              [...currentDeptWorkers, ...borrowedWorkers].forEach(w => {
                                if (workerStatuses[w.workerName] === 'Present') {
@@ -639,139 +644,153 @@ export default function WorkerAttendance() {
                              });
                              setWorkerOTs(updatedOTs);
                            }}
-                           className={`px-4 py-1.5 text-sm font-bold rounded-lg transition-all border ${
+                           className={`py-1.5 text-[10px] font-black rounded-lg transition-all border ${
                              otHours === hrs
-                               ? 'bg-purple-600 text-white border-transparent shadow-md'
-                               : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:bg-gray-50'
+                               ? 'bg-purple-600 text-white border-transparent shadow-md scale-105 z-10'
+                               : 'bg-white dark:bg-gray-800 text-gray-500 dark:text-gray-400 border-gray-200 dark:border-gray-700 hover:border-purple-300'
                            }`}
                          >
-                           {hrs === '0' ? 'No OT' : hrs === '0.5' ? '+30 min' : hrs.includes('.5') ? `+${Math.floor(parseFloat(hrs))}h 30m` : `+${hrs} hr`}
+                           {hrs === '0' ? 'NONE' : hrs === '0.5' ? '30m' : hrs.includes('.5') ? `${Math.floor(parseFloat(hrs))}h30m` : `${hrs}H`}
                          </button>
                        ))}
                      </div>
                   </div>
                 </div>
 
-                {/* 3. Workers Checklist */}
-                <div>
-                  <div className="flex items-center justify-between mb-3 border-b border-gray-200 dark:border-gray-700 pb-2">
-                    <h4 className="font-bold text-gray-900 dark:text-white flex items-center gap-2">
-                      <Briefcase size={16} className="text-gray-400" />
-                      {selectedDeptLog} Workers
+                {/* RIGHT PANEL: WORKERS CHECKLIST */}
+                <div className="flex-1 p-6 overflow-y-auto">
+                  <div className="flex items-center justify-between mb-4 pb-2 border-b border-gray-100 dark:border-gray-700">
+                    <h4 className="font-extrabold text-gray-900 dark:text-white flex items-center gap-2">
+                      <Briefcase size={16} className="text-teal-500" />
+                      {selectedDeptLog.toUpperCase()} WORKERS
                     </h4>
-                    <span className="text-xs font-bold px-2 py-1 bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 rounded">
-                      {currentDeptWorkers.length + borrowedWorkers.length} Total
-                    </span>
+                    <div className="flex items-center gap-3">
+                      <span className="text-[10px] font-black px-2.5 py-1 bg-teal-50 dark:bg-teal-900/30 text-teal-600 dark:text-teal-400 rounded-lg">
+                        {currentDeptWorkers.length + borrowedWorkers.length} TOTAL
+                      </span>
+                    </div>
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-[300px] overflow-y-auto pr-2">
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 pb-6">
                     {[...currentDeptWorkers, ...borrowedWorkers].map(worker => {
                       const isBorrowed = worker.department !== selectedDeptLog;
                       const status = workerStatuses[worker.workerName];
                       const isPresent = status === 'Present';
 
                       return (
-                         <div key={worker.id} className={`flex flex-col p-2.5 rounded-xl border transition-all ${isPresent ? 'bg-teal-50 border-teal-200 dark:bg-teal-900/20 dark:border-teal-800/40' : 'bg-gray-50 border-gray-200 dark:bg-gray-800 dark:border-gray-700 opacity-60'}`}>
-                           {/* Top Row: Avatar & Name */}
-                           <div className="flex items-center gap-2 mb-2">
-                             <div className={`shrink-0 w-6 h-6 rounded-full flex items-center justify-center font-bold text-[10px] ${isPresent ? 'bg-teal-100 text-teal-700' : 'bg-gray-200 text-gray-500'}`}>
-                               {worker.workerName.charAt(0)}
+                         <div key={worker.id} className={`group flex flex-col p-3 rounded-2xl border transition-all duration-300 ${isPresent ? 'bg-white dark:bg-gray-800 border-teal-200 dark:border-teal-800/60 shadow-sm ring-1 ring-teal-50 dark:ring-teal-900/20' : 'bg-gray-50 dark:bg-gray-900/40 border-gray-100 dark:border-gray-800 opacity-60 grayscale'}`}>
+                           <div className="flex items-center justify-between mb-3">
+                             <div className="flex items-center gap-2.5">
+                               <div className={`shrink-0 w-8 h-8 rounded-xl flex items-center justify-center font-black text-[10px] transition-colors ${isPresent ? 'bg-gradient-to-tr from-teal-500 to-emerald-500 text-white shadow-sm' : 'bg-gray-200 text-gray-500'}`}>
+                                 {worker.workerName.charAt(0).toUpperCase()}
+                               </div>
+                               <div className="min-w-0">
+                                 <p className={`font-bold text-xs truncate ${isPresent ? 'text-gray-900 dark:text-white' : 'text-gray-500 line-through'}`}>
+                                   {worker.workerName}
+                                 </p>
+                                 {isBorrowed && (
+                                   <div className="flex items-center gap-1">
+                                     <ArrowRightLeft size={8} className="text-orange-500" />
+                                     <p className="text-[8px] text-orange-600 font-bold uppercase tracking-tighter">Borrowed from {worker.department}</p>
+                                   </div>
+                                 )}
+                               </div>
                              </div>
-                             <div className="flex-1 min-w-0">
-                               <p className={`font-bold text-xs truncate ${isPresent ? 'text-teal-900 dark:text-teal-100' : 'text-gray-500 line-through'}`}>
-                                 {worker.workerName}
-                               </p>
-                               {isBorrowed && (
-                                 <p className="text-[9px] text-orange-600 font-bold truncate leading-tight">From {worker.department}</p>
-                               )}
-                             </div>
+                             
+                             <button
+                                type="button"
+                                onClick={() => toggleWorkerStatus(worker.workerName)}
+                                className={`shrink-0 flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-[9px] font-black transition-all border ${
+                                  isPresent 
+                                    ? 'bg-teal-500 text-white border-transparent shadow-sm active:scale-95' 
+                                    : 'bg-white dark:bg-gray-800 text-gray-400 border-gray-200 dark:border-gray-700 hover:bg-gray-50'
+                                }`}
+                              >
+                                {isPresent ? <CheckCircle2 size={10} /> : <XCircle size={10} />}
+                                {isPresent ? 'PRESENT' : 'ABSENT'}
+                              </button>
                            </div>
                            
-                           {/* Bottom Row: OT Selector & Status Toggle */}
-                           <div className="flex items-center justify-between gap-2">
-                             <div className="flex-1 min-w-0">
-                               {isPresent && (
+                           {isPresent && (
+                             <div className="flex items-center gap-2 pl-10">
+                               <div className="flex-1 flex items-center gap-2 bg-gray-50 dark:bg-gray-900/50 p-1 rounded-lg border border-gray-100 dark:border-gray-800">
+                                 <Clock size={12} className="text-gray-400 ml-1.5" />
                                  <select
                                    value={workerOTs[worker.workerName] || '0'}
                                    onChange={(e) => setWorkerOTs(prev => ({ ...prev, [worker.workerName]: e.target.value }))}
-                                   className="w-full text-[10px] font-bold bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-1.5 py-1 outline-none focus:ring-1 focus:ring-teal-500 transition-all text-teal-700 dark:text-teal-400 h-7"
+                                   className="w-full text-[10px] font-bold bg-transparent border-none focus:ring-0 outline-none text-gray-700 dark:text-gray-300 h-6 cursor-pointer"
                                  >
-                                   {['0', '0.5', '1', '1.5', '2', '2.5', '3', '3.5', '4'].map(h => (
+                                   {['0', '0.5', '1', '1.5', '2', '2.5', '3', '3.5', '4', '4.5', '5', '5.5', '6'].map(h => (
                                      <option key={h} value={h}>
-                                       {h === '0' ? 'No OT' : h === '0.5' ? '30 min OT' : h.includes('.5') ? `${Math.floor(parseFloat(h))}h 30m OT` : `${h} hr OT`}
+                                       {h === '0' ? 'No Overtime' : h === '0.5' ? '30 Min Overtime' : h.includes('.5') ? `${Math.floor(parseFloat(h))}h 30m Overtime` : `${h} Hours Overtime`}
                                      </option>
                                    ))}
                                  </select>
-                               )}
+                               </div>
                              </div>
-
-                             <button
-                               type="button"
-                               onClick={() => toggleWorkerStatus(worker.workerName)}
-                               className={`shrink-0 flex items-center gap-1.5 px-3 py-1 rounded-md text-[10px] font-black transition-all h-7 ${
-                                 isPresent 
-                                   ? 'bg-gradient-to-r from-teal-500 to-emerald-500 text-white shadow-sm' 
-                                   : 'bg-white text-gray-400 hover:bg-gray-50 border border-gray-100'
-                               }`}
-                             >
-                               {isPresent ? <CheckCircle2 size={10} /> : <XCircle size={10} />}
-                               {isPresent ? 'PRESENT' : 'ABSENT'}
-                             </button>
-                           </div>
+                           )}
                          </div>
                       )
                     })}
 
                     {currentDeptWorkers.length === 0 && borrowedWorkers.length === 0 && (
-                      <div className="col-span-full py-6 text-center text-gray-500 text-sm">
-                        No workers in this department.
+                      <div className="col-span-full py-12 text-center">
+                        <div className="w-12 h-12 bg-gray-100 dark:bg-gray-800 rounded-full flex items-center justify-center mx-auto mb-3 text-gray-400">
+                          <Users size={24} />
+                        </div>
+                        <p className="text-sm font-bold text-gray-500">No workers found in this department.</p>
                       </div>
                     )}
                   </div>
 
                   {/* Add Borrowed Worker Button */}
-                  <div className="mt-4">
+                  <div className="mt-2 pt-4 border-t border-gray-100 dark:border-gray-700">
                     {!showBorrowList ? (
-                       <button type="button" onClick={() => setShowBorrowList(true)} className="flex items-center gap-1 text-sm font-bold text-orange-600 hover:text-orange-700 transition-colors">
-                         <Plus size={14} /> Add borrowed worker
-                       </button>
+                       <motion.button 
+                         whileHover={{ x: 5 }}
+                         type="button" 
+                         onClick={() => setShowBorrowList(true)} 
+                         className="flex items-center gap-2 text-xs font-black text-orange-600 hover:text-orange-700 transition-colors uppercase tracking-widest"
+                       >
+                         <Plus size={16} className="bg-orange-100 dark:bg-orange-900/30 p-0.5 rounded" />
+                         Borrow from other department
+                       </motion.button>
                     ) : (
-                       <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} className="bg-orange-50 dark:bg-orange-900/10 p-4 rounded-xl border border-orange-200 dark:border-orange-900/30">
-                         <div className="flex items-center justify-between mb-3">
-                           <h5 className="text-xs font-bold text-orange-800 dark:text-orange-300 uppercase">Select Worker to Borrow</h5>
-                           <button type="button" onClick={() => setShowBorrowList(false)} className="text-gray-400 hover:text-gray-600"><X size={14}/></button>
+                       <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} className="bg-orange-50/50 dark:bg-orange-900/10 p-5 rounded-2xl border border-orange-100 dark:border-orange-900/20 shadow-inner">
+                         <div className="flex items-center justify-between mb-4">
+                           <h5 className="text-[10px] font-black text-orange-800 dark:text-orange-300 uppercase tracking-widest">Available Workers</h5>
+                           <button type="button" onClick={() => setShowBorrowList(false)} className="p-1 text-gray-400 hover:text-gray-600 transition-colors"><X size={16}/></button>
                          </div>
                          {otherDeptWorkers.length > 0 ? (
-                           <div className="flex gap-2 flex-wrap">
+                           <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                              {otherDeptWorkers.map(w => (
                                <button
                                  key={w.id}
                                  type="button"
                                  onClick={() => addBorrowedWorker(w)}
-                                 className="px-3 py-1.5 bg-white dark:bg-gray-800 border border-orange-200 dark:border-orange-800 text-xs font-semibold rounded-lg hover:border-orange-500 hover:text-orange-600 transition-all shadow-sm"
+                                 className="px-3 py-2 bg-white dark:bg-gray-800 border border-orange-100 dark:border-orange-800 text-[10px] font-black rounded-xl hover:border-orange-400 hover:text-orange-600 hover:shadow-sm transition-all text-left flex flex-col gap-0.5"
                                >
-                                 {w.workerName} ({w.department})
+                                 <span className="truncate">{w.workerName}</span>
+                                 <span className="text-[8px] opacity-60 uppercase">{w.department}</span>
                                </button>
                              ))}
                            </div>
                          ) : (
-                           <p className="text-xs text-gray-500">No other workers available to borrow.</p>
+                           <p className="text-xs text-gray-500 font-medium text-center py-4">No other workers available to borrow.</p>
                          )}
                        </motion.div>
                     )}
                   </div>
                 </div>
-
               </div>
 
               {/* Footer */}
-              <div className="sticky bottom-0 bg-gray-50 dark:bg-gray-900 border-t border-gray-200 dark:border-gray-700 p-4 shrink-0 flex gap-3">
-                  <button type="button" onClick={handleCloseModal} className="flex-1 px-5 py-2.5 text-sm font-semibold bg-gray-200 dark:bg-gray-700 rounded-xl hover:bg-gray-300 text-gray-700 dark:text-white transition-all">Cancel</button>
-                  <button type="button" onClick={handleSubmit} disabled={submitting} className="flex-2 px-8 py-2.5 text-sm font-bold bg-teal-600 shadow-[0_4px_14px_0_rgba(13,148,136,0.39)] text-white rounded-xl hover:bg-teal-700 disabled:opacity-70 flex justify-center items-center gap-2 transition-all">
-                    {submitting ? <Loader2 className="animate-spin" size={14} /> : null} Submit Department Attendance
+              <div className="sticky bottom-0 bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700 p-5 shrink-0 flex gap-4">
+                  <button type="button" onClick={handleCloseModal} className="flex-1 px-6 py-3 text-sm font-bold bg-gray-100 dark:bg-gray-700 rounded-xl hover:bg-gray-200 text-gray-600 dark:text-white transition-all active:scale-95">Cancel</button>
+                  <button type="button" onClick={handleSubmit} disabled={submitting} className="flex-[2] px-8 py-3 text-sm font-black bg-gradient-to-r from-teal-600 to-emerald-600 shadow-xl shadow-teal-500/20 text-white rounded-xl hover:shadow-2xl hover:shadow-teal-500/30 disabled:opacity-70 flex justify-center items-center gap-2 transition-all active:scale-95 uppercase tracking-widest">
+                    {submitting ? <Loader2 className="animate-spin" size={18} /> : null} Submit Attendance
                   </button>
               </div>
-
             </motion.div>
           </div>
         )}

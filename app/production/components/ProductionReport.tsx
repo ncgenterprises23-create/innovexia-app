@@ -37,6 +37,8 @@ interface WorkerData {
   workerName: string;
   department: string;
   salary: string;
+  gender: string;
+  otRate: string;
 }
 
 interface AttendanceData {
@@ -62,7 +64,7 @@ const getWorkingDaysInMonth = (dateStr: string) => {
   const start = startOfMonth(date);
   const end = endOfMonth(date);
   const days = eachDayOfInterval({ start, end });
-  return days.filter(d => !isSunday(d)).length;
+  return days.length; // Now includes Sundays
 };
 
 export default function ProductionReport() {
@@ -112,60 +114,86 @@ export default function ProductionReport() {
     let ownCostInDept = 0;
     let borrowedCostInDept = 0;
 
-    attendance.forEach(att => {
-      const attDate = parseISO(att.date);
-      if (isWithinInterval(attDate, range)) {
-        const isBorrowed = att.borrowedDepartment && att.borrowedDepartment !== att.assignedDepartment;
-        const workingDept = att.borrowedDepartment || att.assignedDepartment;
-        const homeDept = att.assignedDepartment;
+    // 1. Calculate costs for each day in range (including Sundays)
+    const daysInRange = eachDayOfInterval(range);
+    
+    daysInRange.forEach(dateObj => {
+      const dateKey = format(dateObj, 'yyyy-MM-dd');
+      const isSun = isSunday(dateObj);
 
-        // Determine which dept this entry counts for based on GLOBAL attribution
-        // (Default to working department for consistent reporting)
-        const activeDept = workingDept;
+      if (isSun) {
+        // For Sundays, everyone gets paid their daily wage in their assigned dept
+        workers.forEach(w => {
+          const activeDept = w.department;
+          if (selectedDept !== 'All' && activeDept !== selectedDept) return;
+          if (filterType !== 'all' && filterType !== 'assigned') return; 
 
-        // Skip if department filter is active and doesn't match
-        if (selectedDept !== 'All' && activeDept !== selectedDept) return;
+          // Sandwich Rule Check
+          const satDate = format(addDays(dateObj, -1), 'yyyy-MM-dd');
+          const monDate = format(addDays(dateObj, 1), 'yyyy-MM-dd');
+          
+          const satPresent = attendance.some(a => a.workerName === w.workerName && a.date === satDate);
+          const monPresent = attendance.some(a => a.workerName === w.workerName && a.date === monDate);
 
-        // Sub-filter by Workforce Type (All / Own / Borrowed)
-        const passesWorkforceFilter = 
-          filterType === 'all' ||
-          (filterType === 'assigned' && !isBorrowed) ||
-          (filterType === 'working' && isBorrowed);
-
-        if (!passesWorkforceFilter) return;
-
-        if (!dailyStats[att.date]) dailyStats[att.date] = {};
-        if (!dailyStats[att.date][activeDept]) {
-          dailyStats[att.date][activeDept] = {
-            workersCount: 0,
-            totalCost: 0,
-            unitsProduced: 0,
-            products: new Set()
-          };
-        }
-
-        // Calculation
-        const workerInfo = workers.find(w => w.workerName === att.workerName);
-        if (workerInfo) {
-          const workingDays = getWorkingDaysInMonth(att.date);
-          const monthlySalary = parseFloat(workerInfo.salary) || 0;
-          const dailyWage = monthlySalary / workingDays;
-          const hourlyRate = dailyWage / 8;
-          const otHours = parseFloat(att.otHours) || 0;
-          const totalCost = dailyWage + (hourlyRate * otHours);
-
-          dailyStats[att.date][activeDept].workersCount += 1;
-          dailyStats[att.date][activeDept].totalCost += totalCost;
-
-          // Totals for summary
-          if (isBorrowed) {
-            borrowedWorkersInDept += 1;
-            borrowedCostInDept += totalCost;
-          } else {
-            ownWorkersInDept += 1;
-            ownCostInDept += totalCost;
+          if (!satPresent && !monPresent) {
+            // Unpaid Sunday due to sandwich absence
+            return;
           }
-        }
+
+          if (!dailyStats[dateKey]) dailyStats[dateKey] = {};
+          if (!dailyStats[dateKey][activeDept]) {
+            dailyStats[dateKey][activeDept] = { workersCount: 0, totalCost: 0, unitsProduced: 0, products: new Set() };
+          }
+
+          const workingDays = getWorkingDaysInMonth(dateKey);
+          const monthlySalary = parseFloat(w.salary) || 0;
+          const dailyWage = monthlySalary / workingDays;
+          
+          dailyStats[dateKey][activeDept].totalCost += dailyWage;
+          ownCostInDept += dailyWage;
+        });
+      } else {
+        // For non-Sundays, use attendance records
+        const dateAtts = attendance.filter(a => a.date === dateKey);
+        dateAtts.forEach(att => {
+          const isBorrowed = att.borrowedDepartment && att.borrowedDepartment !== att.assignedDepartment;
+          const activeDept = att.borrowedDepartment || att.assignedDepartment;
+
+          if (selectedDept !== 'All' && activeDept !== selectedDept) return;
+
+          const passesWorkforceFilter = 
+            filterType === 'all' ||
+            (filterType === 'assigned' && !isBorrowed) ||
+            (filterType === 'working' && isBorrowed);
+
+          if (!passesWorkforceFilter) return;
+
+          if (!dailyStats[dateKey]) dailyStats[dateKey] = {};
+          if (!dailyStats[dateKey][activeDept]) {
+            dailyStats[dateKey][activeDept] = { workersCount: 0, totalCost: 0, unitsProduced: 0, products: new Set() };
+          }
+
+          const workerInfo = workers.find(w => w.workerName === att.workerName);
+          if (workerInfo) {
+            const workingDays = getWorkingDaysInMonth(dateKey);
+            const monthlySalary = parseFloat(workerInfo.salary) || 0;
+            const dailyWage = monthlySalary / workingDays;
+            const otRate = parseFloat(workerInfo.otRate) || 40;
+            const otHours = parseFloat(att.otHours) || 0;
+            const totalCost = dailyWage + (otRate * otHours);
+
+            dailyStats[dateKey][activeDept].workersCount += 1;
+            dailyStats[dateKey][activeDept].totalCost += totalCost;
+
+            if (isBorrowed) {
+              borrowedWorkersInDept += 1;
+              borrowedCostInDept += totalCost;
+            } else {
+              ownWorkersInDept += 1;
+              ownCostInDept += totalCost;
+            }
+          }
+        });
       }
     });
 
