@@ -30,7 +30,7 @@ import {
   AreaChart,
   Area
 } from 'recharts';
-import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSunday, parseISO, isWithinInterval } from 'date-fns';
+import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSunday, parseISO, isWithinInterval, addDays } from 'date-fns';
 
 interface WorkerData {
   id: string;
