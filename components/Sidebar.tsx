@@ -77,15 +77,7 @@ export default function Sidebar({ isOpen, setIsOpen }: SidebarProps) {
         { label: 'IMS FG', icon: 'package', href: '/ims-fg', roles: ['Admin', 'Manager'] },
       ]
     },
-    {
-      label: 'Client Interface', icon: 'users', roles: ['Admin', 'Manager', 'Employee'], children: [
-        { label: 'Pre Order', icon: 'clipboard', href: '/pre-order', roles: ['Admin', 'Manager', 'Employee'] },
-        { label: 'Inventory', icon: 'package', href: '/inventory', roles: ['Admin', 'Manager', 'Employee'] },
-        { label: 'Freshness', icon: 'chart', href: '/freshness', roles: ['Admin', 'Manager', 'Employee'] },
-        { label: 'Tracker', icon: 'clock', href: '/tracker', roles: ['Admin', 'Manager', 'Employee'] },
-        { label: 'Documents', icon: 'document', href: '/documents', roles: ['Admin', 'Manager', 'Employee'] },
-      ]
-    },
+    { label: 'Client Interface', icon: 'users', href: '/client-interface', roles: ['Admin', 'Manager', 'Employee'] },
     { label: 'HelpDesk', icon: 'headset', href: '/helpdesk', roles: ['Admin', 'Manager', 'Employee'] },
     { label: 'Users', icon: 'users', href: '/users', roles: ['Admin'] },
     { label: 'Chat', icon: 'message', href: '/chat', roles: ['Admin', 'Manager', 'Employee'] },

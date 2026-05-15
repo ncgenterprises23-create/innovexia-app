@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAllUsers } from '@/lib/sheets';
+import { getAllUsers, getClientInterfaceData } from '@/lib/sheets';
 import bcrypt from 'bcryptjs';
 
 const createSessionId = (request: NextRequest) => {
@@ -21,27 +21,61 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Get all users and find the one with matching username
+    // 1. Try to find in ERP Users
     const users = await getAllUsers();
-    const user = users.find((u: any) => u.username === username);
+    let user = users.find((u: any) => u.username === username);
+    let isClient = false;
+
+    // 2. If not found in ERP, try Client Users
+    if (!user) {
+        try {
+            console.log('[Login] Checking Client Users for:', username);
+            const clientUsers = await getClientInterfaceData('Client User');
+            
+            // Find user with case-insensitive username match and trimmed values
+            const clientUser = clientUsers.find((u: any) => 
+                String(u.Username || '').trim().toLowerCase() === String(username).trim().toLowerCase()
+            );
+
+            if (clientUser) {
+                console.log('[Login] Found Client User match:', clientUser.Username);
+                user = {
+                    id: `client-${clientUser.Username}`,
+                    username: String(clientUser.Username).trim(),
+                    password: String(clientUser.Password).trim(), // Ensure password is a string
+                    role_name: 'Client',
+                    full_name: clientUser.Username
+                };
+                isClient = true;
+            }
+        } catch (e) {
+            console.error('Error fetching client users during login:', e);
+        }
+    }
 
     if (!user) {
+      console.log('[Login] No user found for:', username);
       return NextResponse.json(
         { error: 'Invalid username or password' },
         { status: 401 }
       );
     }
 
-    // Check if password is hashed (bcrypt hashes start with $2a$, $2b$, or $2y$)
-    const isHashed = user.password.startsWith('$2a$') || user.password.startsWith('$2b$') || user.password.startsWith('$2y$');
-
+    // Check if password is valid
     let isPasswordValid = false;
-    if (isHashed) {
-      // Compare with bcrypt for hashed passwords
-      isPasswordValid = await bcrypt.compare(password, user.password);
+    const incomingPassword = String(password).trim();
+
+    if (!isClient) {
+        // ERP Users might have hashed passwords
+        const isHashed = user.password.startsWith('$2a$') || user.password.startsWith('$2b$') || user.password.startsWith('$2y$');
+        if (isHashed) {
+            isPasswordValid = await bcrypt.compare(incomingPassword, user.password);
+        } else {
+            isPasswordValid = incomingPassword === String(user.password).trim();
+        }
     } else {
-      // Direct comparison for plain text passwords (development only)
-      isPasswordValid = password === user.password;
+        // Client Users are plain text
+        isPasswordValid = incomingPassword === user.password;
     }
 
     if (!isPasswordValid) {
@@ -56,7 +90,7 @@ export async function POST(request: NextRequest) {
     const userData = {
       id: user.id,
       username: user.username,
-      email: user.email,
+      email: user.email || '',
       full_name: user.full_name || user.username,
       role_name: user.role_name || 'User',
       late_long: user.late_long || '',

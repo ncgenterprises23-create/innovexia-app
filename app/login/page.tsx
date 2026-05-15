@@ -35,7 +35,11 @@ export default function LoginPage() {
 
       // Add a small delay to ensure cookie is set, then redirect
       setTimeout(() => {
-        router.push('/dashboard');
+        if (data.user?.role_name === 'Client') {
+            router.push('/website');
+        } else {
+            router.push('/dashboard');
+        }
       }, 500);
     } catch (err) {
       setError('An error occurred. Please try again.');

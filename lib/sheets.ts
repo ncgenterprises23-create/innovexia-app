@@ -7605,3 +7605,153 @@ export async function updateIgstRefundConfig(configData: any[]) {
     throw error;
   }
 }
+
+export async function getClientInterfaceData(sheetName: string) {
+  try {
+    const sheets = await getGoogleSheetsClient();
+    const spreadsheetId = '1udYmkJ6K1vhDjt106k9bYZuo1XB7HaWQy5tRFVR7uVk';
+
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${sheetName}!A:AZ`,
+      valueRenderOption: 'UNFORMATTED_VALUE',
+    });
+
+    const rows = response.data.values;
+    if (!rows || rows.length === 0) return [];
+
+    const headers = rows[0];
+    const dataRows = rows.slice(1);
+
+    return dataRows
+      .map(row => rowToObject(headers, row));
+  } catch (error) {
+    console.error(`Error fetching Client Interface data for ${sheetName}:`, error);
+    throw error;
+  }
+}
+
+export async function createClientInterfaceData(sheetName: string, data: any) {
+  try {
+    const sheets = await getGoogleSheetsClient();
+    const spreadsheetId = '1udYmkJ6K1vhDjt106k9bYZuo1XB7HaWQy5tRFVR7uVk';
+
+    // Get headers to ensure correct order
+    const headerResponse = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${sheetName}!A1:AZ1`,
+    });
+    const headers = headerResponse.data.values?.[0] || [];
+
+    const rowData = objectToRow(headers, data);
+
+    await sheets.spreadsheets.values.append({
+      spreadsheetId,
+      range: `${sheetName}!A:AZ`,
+      valueInputOption: 'USER_ENTERED',
+      requestBody: {
+        values: [rowData],
+      },
+    });
+
+    return data;
+  } catch (error) {
+    console.error(`Error creating Client Interface data for ${sheetName}:`, error);
+    throw error;
+  }
+}
+
+export async function updateClientInterfaceData(sheetName: string, identifierKey: string, identifierValue: any, updates: any) {
+  try {
+    const sheets = await getGoogleSheetsClient();
+    const spreadsheetId = '1udYmkJ6K1vhDjt106k9bYZuo1XB7HaWQy5tRFVR7uVk';
+
+    // 1. Get all data to find the row
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${sheetName}!A:AZ`,
+    });
+    const rows = response.data.values;
+    if (!rows || rows.length === 0) throw new Error('No data found');
+
+    const headers = rows[0];
+    const identifierIndex = headers.indexOf(identifierKey);
+    if (identifierIndex === -1) throw new Error(`Identifier key ${identifierKey} not found`);
+
+    const rowIndex = rows.findIndex(row => row[identifierIndex]?.toString() === identifierValue.toString());
+    if (rowIndex === -1) throw new Error('Record not found');
+
+    const actualRow = rowIndex + 1;
+    const existingData = rowToObject(headers, rows[rowIndex]);
+    const updatedData = { ...existingData, ...updates };
+    const rowData = objectToRow(headers, updatedData);
+
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `${sheetName}!A${actualRow}:AZ${actualRow}`,
+      valueInputOption: 'USER_ENTERED',
+      requestBody: {
+        values: [rowData],
+      },
+    });
+
+    return updatedData;
+  } catch (error) {
+    console.error(`Error updating Client Interface data for ${sheetName}:`, error);
+    throw error;
+  }
+}
+
+export async function deleteClientInterfaceData(sheetName: string, identifierKey: string, identifierValue: any) {
+  try {
+    const sheets = await getGoogleSheetsClient();
+    const spreadsheetId = '1udYmkJ6K1vhDjt106k9bYZuo1XB7HaWQy5tRFVR7uVk';
+
+    // 1. Get all data to find the row
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${sheetName}!A:AZ`,
+    });
+    const rows = response.data.values;
+    if (!rows || rows.length === 0) throw new Error('No data found');
+
+    const headers = rows[0];
+    const identifierIndex = headers.indexOf(identifierKey);
+    if (identifierIndex === -1) throw new Error(`Identifier key ${identifierKey} not found`);
+
+    const rowIndex = rows.findIndex(row => row[identifierIndex]?.toString() === identifierValue.toString());
+    if (rowIndex === -1) throw new Error('Record not found');
+
+    const actualRow = rowIndex + 1;
+
+    // Get sheetId for deletion
+    const spreadsheet = await sheets.spreadsheets.get({ spreadsheetId });
+    const sheet = spreadsheet.data.sheets?.find(s => s.properties?.title === sheetName);
+    const sheetId = sheet?.properties?.sheetId;
+
+    if (sheetId === undefined) throw new Error('Sheet ID not found');
+
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        requests: [
+          {
+            deleteDimension: {
+              range: {
+                sheetId,
+                dimension: 'ROWS',
+                startIndex: actualRow - 1,
+                endIndex: actualRow,
+              },
+            },
+          },
+        ],
+      },
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error(`Error deleting Client Interface data for ${sheetName}:`, error);
+    throw error;
+  }
+}

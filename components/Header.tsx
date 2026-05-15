@@ -380,6 +380,17 @@ export default function Header({ isOpen, setIsOpen, disableNotifications = false
                 </motion.div>
               )}
             </AnimatePresence>
+
+            {/* Website Button */}
+            <motion.button
+              onClick={() => router.push('/website')}
+              className="hidden lg:flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-black rounded-xl text-xs shadow-lg shadow-indigo-200 dark:shadow-none transition-all ml-2"
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" /></svg>
+              Website
+            </motion.button>
           </div>
 
           {/* Right: Icons and Profile */}
