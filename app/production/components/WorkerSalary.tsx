@@ -97,7 +97,7 @@ export default function WorkerSalary() {
   // Derive Daily Base Salary from API's salary field
   const getDailyBase = (salaryStr: string) => {
     const s = Number(salaryStr) || 0;
-    if (s > 5000) return Math.round(s / workingDaysInMonth);
+    if (s > 5000) return Math.round(s / 30);
     return s;
   };
 
@@ -178,28 +178,42 @@ export default function WorkerSalary() {
   };
 
   const calculateMonthlyTotals = (worker: WorkerData) => {
-    let achieved = 0;
     let absentOnWorkingDay = false;
+    let absentDaysCount = 0;
+    let totalOtAmount = 0;
     const baseDaily = getDailyBase(worker.salary);
+    const monthlySalary = Number(worker.salary) || 0;
 
     for (let day = 1; day <= daysInMonth; day++) {
       if (!isFutureDate(day)) {
         const salaryInfo = calculateDaySalary(worker, day);
-        if (salaryInfo.present || salaryInfo.isPaidSunday) {
-          achieved += salaryInfo.total;
-        }
         
-        // Incentive logic: no absent/leave in month (on working days)
+        // If a day is a working day and they are absent, or if Sunday is unpaid (sandwich absent)
         const dateObj = new Date(year, month, day);
-        if (dateObj.getDay() !== 0 && !salaryInfo.present) {
-          absentOnWorkingDay = true;
+        const isSunday = dateObj.getDay() === 0;
+
+        if (isSunday) {
+          if (!salaryInfo.isPaidSunday) {
+            absentDaysCount++;
+          }
+        } else {
+          if (!salaryInfo.present) {
+            absentDaysCount++;
+            absentOnWorkingDay = true;
+          }
+        }
+
+        if (salaryInfo.present) {
+          totalOtAmount += salaryInfo.ot;
         }
       }
     }
-    
-    const expected = passedWorkingDaysCount * baseDaily;
+
+    const expected = Math.round((passedWorkingDaysCount / daysInMonth) * monthlySalary);
+    const achievedBase = Math.max(0, expected - (absentDaysCount * baseDaily));
+    const achieved = achievedBase + totalOtAmount;
     const incentive = (!absentOnWorkingDay && worker.incentive === 'Yes') ? 500 : 0;
-    
+
     return { expected, achieved, incentive };
   };
 

@@ -145,7 +145,7 @@ export default function ProductionReport() {
             dailyStats[dateKey][activeDept] = { workersCount: 0, totalCost: 0, unitsProduced: 0, products: new Set() };
           }
 
-          const workingDays = getWorkingDaysInMonth(dateKey);
+          const workingDays = 30;
           const monthlySalary = parseFloat(w.salary) || 0;
           const dailyWage = monthlySalary / workingDays;
           
@@ -175,7 +175,7 @@ export default function ProductionReport() {
 
           const workerInfo = workers.find(w => w.workerName === att.workerName);
           if (workerInfo) {
-            const workingDays = getWorkingDaysInMonth(dateKey);
+            const workingDays = 30;
             const monthlySalary = parseFloat(workerInfo.salary) || 0;
             const dailyWage = monthlySalary / workingDays;
             const otRate = parseFloat(workerInfo.otRate) || 40;
