@@ -629,8 +629,8 @@ export default function WorkerAttendance() {
                   {/* 3. Universal OT */}
                   <div className="space-y-4 pt-4 border-t border-gray-100 dark:border-gray-700">
                      <label className="block text-[11px] font-black text-gray-400 uppercase tracking-widest mb-2">Set Universal OT</label>
-                     <div className="grid grid-cols-4 gap-1.5">
-                       {['0', '0.5', '1', '1.5', '2', '2.5', '3', '3.5', '4', '4.5', '5', '5.5', '6'].map(hrs => (
+                     <div className="grid grid-cols-4 gap-1.5 max-h-[140px] overflow-y-auto pr-1">
+                       {['0', '0.5', '1', '1.5', '2', '2.5', '3', '3.5', '4', '4.5', '5', '5.5', '6', '6.5', '7', '7.5', '8', '8.5', '9', '9.5', '10', '10.5', '11', '11.5', '12', '12.5', '13', '13.5', '14', '14.5', '15', '15.5', '16'].map(hrs => (
                          <button
                            key={hrs}
                            type="button"
@@ -720,7 +720,7 @@ export default function WorkerAttendance() {
                                    onChange={(e) => setWorkerOTs(prev => ({ ...prev, [worker.workerName]: e.target.value }))}
                                    className="w-full text-[10px] font-bold bg-transparent border-none focus:ring-0 outline-none text-gray-700 dark:text-gray-300 h-6 cursor-pointer"
                                  >
-                                   {['0', '0.5', '1', '1.5', '2', '2.5', '3', '3.5', '4', '4.5', '5', '5.5', '6'].map(h => (
+                                   {['0', '0.5', '1', '1.5', '2', '2.5', '3', '3.5', '4', '4.5', '5', '5.5', '6', '6.5', '7', '7.5', '8', '8.5', '9', '9.5', '10', '10.5', '11', '11.5', '12', '12.5', '13', '13.5', '14', '14.5', '15', '15.5', '16'].map(h => (
                                      <option key={h} value={h}>
                                        {h === '0' ? 'No Overtime' : h === '0.5' ? '30 Min Overtime' : h.includes('.5') ? `${Math.floor(parseFloat(h))}h 30m Overtime` : `${h} Hours Overtime`}
                                      </option>

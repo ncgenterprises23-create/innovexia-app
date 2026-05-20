@@ -140,7 +140,16 @@ export default function WorkerSalary() {
         
         const isSandwichAbsent = !satRecord && !monRecord;
 
-        if (isSandwichAbsent) {
+        // Preceding Week Rule: Unpaid if absent for all 6 days preceding this Sunday
+        let workedInPrecedingWeek = false;
+        for (let offset = 1; offset <= 6; offset++) {
+          if (getAttendanceRecord(worker.workerName, day - offset)) {
+            workedInPrecedingWeek = true;
+            break;
+          }
+        }
+
+        if (isSandwichAbsent || !workedInPrecedingWeek) {
           return {
             present: false,
             isPaidSunday: false,
@@ -209,7 +218,7 @@ export default function WorkerSalary() {
       }
     }
 
-    const expected = Math.round((passedWorkingDaysCount / daysInMonth) * monthlySalary);
+    const expected = passedWorkingDaysCount * baseDaily;
     const achievedBase = Math.max(0, expected - (absentDaysCount * baseDaily));
     const achieved = achievedBase + totalOtAmount;
     const incentive = (!absentOnWorkingDay && worker.incentive === 'Yes') ? 500 : 0;
@@ -416,7 +425,7 @@ export default function WorkerSalary() {
                                         </div>
                                         {salaryInfo.ot > 0 && (
                                           <span className="text-[9px] font-bold text-emerald-600/70 dark:text-emerald-400/80 -mt-0.5 whitespace-nowrap">
-                                            {salaryInfo.base}+{salaryInfo.ot}
+                                            {salaryInfo.isPaidSunday ? `OT: ₹${salaryInfo.ot}` : `${salaryInfo.base}+${salaryInfo.ot}`}
                                           </span>
                                         )}
                                       </>
