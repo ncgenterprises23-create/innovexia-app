@@ -7641,16 +7641,35 @@ export async function createClientInterfaceData(sheetName: string, data: any) {
       spreadsheetId,
       range: `${sheetName}!A1:AZ1`,
     });
-    const headers = headerResponse.data.values?.[0] || [];
+    let headers = headerResponse.data.values?.[0] || [];
 
-    const rowData = objectToRow(headers, data);
+    // Initialize headers for Orders/Tracker if empty
+    if (headers.length === 0) {
+      if (sheetName === 'Orders') {
+        headers = ['PI_Number', 'Date', 'Mode', 'Prepared_By', 'Total_Qty', 'Total_Weight', 'Total_Volume', 'Cont_Fill', 'Est_Value', 'PDF_Link', 'Line_Items', 'created_at'];
+      } else if (sheetName === 'Tracker') {
+        headers = ['Party Name', 'PI Number', 'Production', 'Loading', 'On Road to Port', 'Custom', 'Waiting for Vercel', 'Waiting for Vercel Link', 'Sailed', 'Sailed Manual Input', 'About to Arrive', 'Arrived', 'created_at'];
+      }
+      if (headers.length > 0) {
+        await sheets.spreadsheets.values.update({
+            spreadsheetId,
+            range: `${sheetName}!A1:AZ1`,
+            valueInputOption: 'USER_ENTERED',
+            requestBody: { values: [headers] }
+        });
+      }
+    }
+
+    const rowDataArray = Array.isArray(data) 
+      ? data.map(item => objectToRow(headers, item))
+      : [objectToRow(headers, data)];
 
     await sheets.spreadsheets.values.append({
       spreadsheetId,
       range: `${sheetName}!A:AZ`,
       valueInputOption: 'USER_ENTERED',
       requestBody: {
-        values: [rowData],
+        values: rowDataArray,
       },
     });
 

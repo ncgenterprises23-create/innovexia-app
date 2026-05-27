@@ -8,6 +8,7 @@ export const GOOGLE_DRIVE_FOLDERS = {
   USER_IMAGES: '1hgx7Na2C49OWr9zD1vcA3TcFhaTx19T-',
   CHAT_DOCS: '1pTqk7Xhe5GgObe327nGT7U22xkL3KWnB',
   CHECKLIST_ATTACHMENTS: '1avQ12kObGYLjWasZfCNteA0g89vCHrA2',
+  ORDERS: '1SQjykvSQbG_xYYOoAxNn1NLFnv8yNQhi',
 };
 
 // Default folder (delegation)

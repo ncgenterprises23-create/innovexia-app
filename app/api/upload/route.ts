@@ -50,6 +50,8 @@ export async function POST(request: NextRequest) {
       folderId = GOOGLE_DRIVE_FOLDERS.DELEGATION_DOCS;
     } else if (uploadType === 'checklist' || uploadType === 'checklist_attachment') {
       folderId = GOOGLE_DRIVE_FOLDERS.CHECKLIST_ATTACHMENTS;
+    } else if (uploadType === 'order' || uploadType === 'inventory') {
+      folderId = GOOGLE_DRIVE_FOLDERS.ORDERS;
     }
 
     // Generate unique filename

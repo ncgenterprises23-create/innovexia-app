@@ -11,7 +11,6 @@ const tabs = [
   { id: 'PreOrder', label: 'PRE-ORDER', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" /></svg> },
   { id: 'Orders', label: 'ORDERS', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" /></svg> },
   { id: 'Inventory', label: 'INVENTORY', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" /></svg> },
-  { id: 'Freshness Report', label: 'FRESHNESS', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg> },
   { id: 'Tracker', label: 'TRACKER', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg> },
   { id: 'Documents', label: 'DOCUMENTS', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg> },
 ];
@@ -66,6 +65,10 @@ export default function WebsitePage() {
   const [selectedBrand, setSelectedBrand] = useState<string | null>(null);
   const [rateType, setRateType] = useState<'FOB 20FT' | 'FOB 40FT'>('FOB 20FT');
   const [expandedProduct, setExpandedProduct] = useState<any | null>(null);
+  const [viewLineItems, setViewLineItems] = useState<any[] | null>(null);
+  const [ordersData, setOrdersData] = useState<any[]>([]);
+  const [filterParty, setFilterParty] = useState('');
+  const [filterPiNumber, setFilterPiNumber] = useState('');
 
   const { showLoader, hideLoader } = useLoader();
   const { addToast } = useToast();
@@ -99,6 +102,14 @@ export default function WebsitePage() {
       const result = await response.json();
       setData(Array.isArray(result) ? result : []);
       setCurrentPage(1);
+      // For Inventory tab, also fetch Orders to cross-reference
+      if (tabName === 'Inventory') {
+        const ordRes = await fetch('/api/client-interface?tab=Orders');
+        if (ordRes.ok) {
+          const ordData = await ordRes.json();
+          setOrdersData(Array.isArray(ordData) ? ordData : []);
+        }
+      }
     } catch (error) {
       console.error('Error fetching data:', error);
       addToast(`Error loading ${tabName} data`, 'error');
@@ -115,6 +126,43 @@ export default function WebsitePage() {
     }
   }, [activeTab, user]);
 
+  useEffect(() => {
+    setFilterParty('');
+    setFilterPiNumber('');
+  }, [activeTab]);
+
+  const getRowPartyAndPi = (row: any) => {
+    const party = row['Party Name'] || row.Party_Name || row['PARTY NAME'] || row.Prepared_By || row['Prepared By'] || '';
+    const pi = row['PI Number'] || row.PI_Number || row['PI NUMBER'] || '';
+    return {
+      party: String(party).trim(),
+      pi: String(pi).trim()
+    };
+  };
+
+  const dropdownOptions = useMemo(() => {
+    const parties = new Set<string>();
+    const piNumbers = new Set<string>();
+
+    data.forEach(row => {
+      const { party, pi } = getRowPartyAndPi(row);
+      if (party) parties.add(party);
+      
+      if (filterParty) {
+        if (party.toLowerCase() === filterParty.toLowerCase() && pi) {
+          piNumbers.add(pi);
+        }
+      } else {
+        if (pi) piNumbers.add(pi);
+      }
+    });
+
+    return {
+      parties: Array.from(parties).sort(),
+      piNumbers: Array.from(piNumbers).sort()
+    };
+  }, [data, filterParty]);
+
   const counts = useMemo(() => {
     const brandCounts: Record<string, number> = {};
     const typeCounts: Record<string, number> = {};
@@ -129,6 +177,43 @@ export default function WebsitePage() {
 
   const filteredAndSortedData = useMemo(() => {
     let result = [...data];
+
+    // Apply role-based filters first:
+    const isClientUser = user?.role_name === 'Client';
+    if (isClientUser && user) {
+      const matchFullName = (user.full_name || '').toLowerCase();
+      const matchUsername = (user.username || '').toLowerCase();
+      
+      result = result.filter(row => {
+        const party = String(row['Party Name'] || row.Party_Name || row['PARTY NAME'] || '').toLowerCase();
+        const pb = String(row.Prepared_By || row['Prepared By'] || '').toLowerCase();
+        const username = String(row.Username || '').toLowerCase();
+        
+        return party.includes(matchFullName) || party.includes(matchUsername) ||
+               pb.includes(matchFullName) || pb.includes(matchUsername) ||
+               username.includes(matchFullName) || username.includes(matchUsername) ||
+               party === 'client user' || pb === 'client user';
+      });
+    }
+
+    // Apply Party dropdown filter (for ERP User only)
+    if (!isClientUser && filterParty) {
+      result = result.filter(row => {
+        const { party } = getRowPartyAndPi(row);
+        return party.toLowerCase() === filterParty.toLowerCase();
+      });
+    }
+
+    // Apply PI Number dropdown filter
+    if (filterPiNumber) {
+      result = result.filter(row => {
+        const { pi } = getRowPartyAndPi(row);
+        return pi.toLowerCase() === filterPiNumber.toLowerCase();
+      });
+    }
+
+    // Note: Tracker and Orders strict ERP filters were removed so ERP users can view all data through dropdowns.
+
     if (searchQuery) {
         const q = searchQuery.toLowerCase();
         result = result.filter(row => Object.values(row).some(val => String(val).toLowerCase().includes(q)));
@@ -203,106 +288,477 @@ export default function WebsitePage() {
   const handleLogout = () => router.push('/login');
   const isUrl = (str: string) => typeof str === 'string' && (str.startsWith('http://') || str.startsWith('https://'));
 
-  const generateOrderPdf = () => {
-    const date = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'long', year: 'numeric' });
-    const rows = cart.map(item => {
-      const name = getVal(item, 'Product');
-      const brand = getVal(item, 'Brand');
-      const ean = getVal(item, 'Ean Code');
-      const grm = getVal(item, 'Grm');
-      const cbm = parseFloat(String(getVal(item, 'Cbm')).replace(/[^0-9.]/g, '')) || 0;
-      const rate = parseFloat(String(getVal(item, item.selectedRateType)).replace(/[^0-9.]/g, '')) || 0;
-      const qty = item.quantity || 0;
-      const totalCbm = (cbm * qty).toFixed(4);
-      const totalPrice = (rate * qty).toFixed(2);
-      return `<tr>
+  const formatDateValue = (val: string, header?: string) => {
+      if (!val) return val;
+      const num = Number(val);
+      const headerLower = header ? header.toLowerCase() : '';
+      const dateHeaders = [
+        'date', 'mfg', 'expiry', 
+        'production', 'loading', 'on road to port', 'custom', 
+        'waiting for vercel', 'sailed', 'about to arrive', 'arrived', 'created_at'
+      ];
+      const isDateHeader = header && dateHeaders.some(dh => headerLower.includes(dh));
+
+      if (!isNaN(num) && num > 40000 && num < 60000 && isDateHeader) {
+          const excelEpoch = new Date(1900, 0, 1);
+          const msPerDay = 86400000;
+          const d = new Date(excelEpoch.getTime() + (num - 2) * msPerDay);
+          const isDateOnly = headerLower === 'date' || headerLower.includes('mfg') || headerLower.includes('expiry');
+          return d.toLocaleString('en-IN', {
+              day: '2-digit', month: 'short', year: 'numeric',
+              ...(isDateOnly ? {} : { hour: '2-digit', minute: '2-digit', hour12: true })
+          });
+      }
+      
+      const isoRegex = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/;
+      if (isoRegex.test(val)) {
+          const d = new Date(val);
+          const isDateOnly = headerLower === 'date' || headerLower.includes('mfg') || headerLower.includes('expiry');
+          return d.toLocaleString('en-IN', {
+              day: '2-digit', month: 'short', year: 'numeric',
+              ...(isDateOnly ? {} : { hour: '2-digit', minute: '2-digit', hour12: true })
+          });
+      }
+
+      const localIsoRegex = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/;
+      if (localIsoRegex.test(val)) {
+          const d = new Date(val);
+          return d.toLocaleString('en-IN', {
+              day: '2-digit', month: 'short', year: 'numeric',
+              hour: '2-digit', minute: '2-digit', hour12: true
+          });
+      }
+
+      const plainDateRegex = /^\d{4}-\d{2}-\d{2}$/;
+      if (plainDateRegex.test(val)) {
+          const d = new Date(val + 'T00:00:00');
+          return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+      }
+      return val;
+  };
+
+  const handleUpdateStage = async (piNum: string, stageField: string, dateTimeVal: string, extraField?: string, extraVal?: string) => {
+    if (!dateTimeVal) {
+      addToast('Please select a date and time', 'error');
+      return;
+    }
+    showLoader();
+    try {
+      const updates = {
+        [stageField]: dateTimeVal,
+        ...(extraField && extraVal ? { [extraField]: extraVal } : {})
+      };
+      const response = await fetch('/api/client-interface', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tab: 'Tracker',
+          identifierKey: 'PI Number',
+          identifierValue: piNum,
+          updates: updates
+        })
+      });
+      if (!response.ok) throw new Error('Failed to update stage');
+      addToast('Stage scheduled successfully!', 'success');
+      fetchData('Tracker');
+    } catch (err: any) {
+      addToast(err.message || 'Failed to update stage', 'error');
+    } finally {
+      hideLoader();
+    }
+  };
+
+  const generateOrderPdf = async () => {
+    showLoader();
+    try {
+      const response = await fetch('/api/client-interface?tab=Orders');
+      const ordersData = await response.json();
+      const existingOrdersCount = Array.isArray(ordersData) ? ordersData.length : 0;
+      
+      const today = new Date();
+      const currentYear = today.getFullYear();
+      const currentMonth = today.getMonth();
+      let finYear = '';
+      if (currentMonth >= 3) {
+          finYear = `${String(currentYear).slice(2)}${String(currentYear + 1).slice(2)}`;
+      } else {
+          finYear = `${String(currentYear - 1).slice(2)}${String(currentYear).slice(2)}`;
+      }
+      const seq = existingOrdersCount + 1;
+      const piNumber = `INN/${finYear}/INNE/${seq}`;
+
+      const date = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'long', year: 'numeric' });
+      const rows = cart.map(item => {
+        const name = getVal(item, 'Product');
+        const brand = getVal(item, 'Brand');
+        const ean = getVal(item, 'Ean Code');
+        const grmStr = String(getVal(item, 'Grm')).replace(/[^0-9.]/g, '');
+        const grm = parseFloat(grmStr) || 0;
+        const cbm = parseFloat(String(getVal(item, 'Cbm')).replace(/[^0-9.]/g, '')) || 0;
+        const rate = parseFloat(String(getVal(item, item.selectedRateType)).replace(/[^0-9.]/g, '')) || 0;
+        const qty = item.quantity || 0;
+        
+        const totalWeightKg = ((grm * qty) / 1000).toFixed(2);
+        const totalCbm = (cbm * qty).toFixed(4);
+        const totalPrice = (rate * qty).toFixed(2);
+
+        return `<tr>
         <td>${brand}</td>
         <td>${name}</td>
         <td>${ean || '—'}</td>
-        <td>${grm || '—'}</td>
-        <td>${cbm.toFixed(4)}</td>
+        <td class="td-number">${grm ? grm + 'g' : '—'}</td>
+        <td class="td-number">${cbm.toFixed(4)}</td>
         <td>${item.selectedRateType}</td>
-        <td>$${rate.toFixed(2)}</td>
-        <td>${qty}</td>
-        <td>${totalCbm}</td>
-        <td><strong>$${totalPrice}</strong></td>
+        <td class="td-number">$${rate.toFixed(2)}</td>
+        <td class="td-number" style="color:var(--primary)"><strong>${qty}</strong></td>
+        <td class="td-number">${totalWeightKg}</td>
+        <td class="td-number">${totalCbm}</td>
+        <td class="td-number"><strong>$${totalPrice}</strong></td>
       </tr>`;
     }).join('');
+      const orderPayload = {
+        PI_Number: piNumber,
+        Date: date,
+        Mode: rateType,
+        Prepared_By: user?.full_name || user?.username || 'Client User',
+        Total_Qty: cartTotal,
+        Total_Weight: (cartTotalGrm / 1000).toFixed(2) + ' kg',
+        Total_Volume: cartTotalCbm.toFixed(3) + ' m³',
+        Cont_Fill: containerFillPercentage.toFixed(1) + '%',
+        Est_Value: '$' + cartTotalPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+        PDF_Link: '',
+        Line_Items: JSON.stringify(cart),
+        created_at: new Date().toISOString()
+      };
 
-    const html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8" /><title>Innovexia Order Request</title><style>
-      @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;900&display=swap');
+      const html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8" /><title>Innovexia Order Request</title>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+        <script type="application/json" id="order-payload">${JSON.stringify(orderPayload).replace(/</g, '\\u003c')}</script>
+        <style>
+      @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&display=swap');
+      :root {
+        --primary: #2874f0;
+        --primary-dark: #1d4ed8;
+        --accent: #ff9f00;
+        --text-main: #0f172a;
+        --text-muted: #64748b;
+        --bg-main: #ffffff;
+        --bg-alt: #f8fafc;
+        --border-color: #e2e8f0;
+      }
       * { margin: 0; padding: 0; box-sizing: border-box; }
-      body { font-family: 'Inter', sans-serif; color: #1e293b; background: #fff; padding: 40px; }
-      .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 40px; padding-bottom: 24px; border-bottom: 3px solid #2874f0; }
-      .brand { font-size: 32px; font-weight: 900; color: #2874f0; letter-spacing: -1px; }
-      .brand span { color: #ff9f00; }
-      .meta { text-align: right; font-size: 13px; color: #64748b; }
-      .meta strong { display: block; color: #1e293b; font-size: 15px; font-weight: 700; }
-      h2 { font-size: 11px; font-weight: 900; text-transform: uppercase; letter-spacing: 4px; color: #94a3b8; margin-bottom: 16px; }
-      table { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 32px; }
-      thead tr { background: #2874f0; color: white; }
-      thead th { padding: 10px 12px; text-align: left; font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: 1px; }
-      tbody tr { border-bottom: 1px solid #f1f5f9; }
+      body { font-family: 'Inter', sans-serif; color: var(--text-main); background: #f1f5f9; padding: 20px; display: flex; justify-content: center; }
+      
+      .document-container {
+        background: var(--bg-main);
+        width: 100%;
+        max-width: 1200px;
+        padding: 50px;
+        box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+        border-radius: 12px;
+      }
+
+      .no-print {
+        display: flex;
+        justify-content: flex-end;
+        gap: 12px;
+        margin-bottom: 24px;
+      }
+      
+      button {
+        padding: 10px 20px;
+        font-size: 13px;
+        font-weight: 600;
+        border-radius: 6px;
+        cursor: pointer;
+        border: none;
+        transition: all 0.2s;
+        font-family: 'Inter', sans-serif;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .btn-primary {
+        background: var(--primary);
+        color: white;
+        box-shadow: 0 4px 6px -1px rgba(40, 116, 240, 0.2);
+      }
+      .btn-primary:hover { background: var(--primary-dark); }
+      .btn-secondary {
+        background: white;
+        color: var(--text-main);
+        border: 1px solid var(--border-color);
+      }
+      .btn-secondary:hover { background: var(--bg-alt); }
+
+      .header { 
+        display: flex; justify-content: space-between; align-items: flex-start; 
+        margin-bottom: 40px; padding-bottom: 24px; border-bottom: 2px solid var(--border-color); 
+      }
+      .brand-container { display: flex; flex-direction: column; }
+      .brand { font-size: 36px; font-weight: 900; color: var(--primary); letter-spacing: -1.5px; line-height: 1; }
+      .brand span { color: var(--accent); }
+      .subtitle { font-size: 13px; color: var(--text-muted); margin-top: 6px; font-weight: 500; letter-spacing: 0.5px; text-transform: uppercase; }
+      
+      .meta-box {
+        background: var(--bg-alt);
+        padding: 16px 24px;
+        border-radius: 8px;
+        border: 1px solid var(--border-color);
+        text-align: right;
+      }
+      .meta { font-size: 13px; color: var(--text-muted); line-height: 1.6; }
+      .meta strong { color: var(--text-main); font-weight: 700; }
+      
+      h2 { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 2px; color: var(--text-muted); margin-bottom: 16px; }
+      
+      table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 11px; margin-bottom: 40px; border-radius: 8px; overflow: hidden; border: 1px solid var(--border-color); }
+      thead tr { background: var(--bg-alt); }
+      thead th { 
+        padding: 12px 14px; text-align: left; font-size: 10px; font-weight: 700; 
+        text-transform: uppercase; letter-spacing: 1px; color: var(--text-muted);
+        border-bottom: 1px solid var(--border-color);
+      }
+      tbody tr { transition: background 0.2s; }
+      tbody td { padding: 12px 14px; vertical-align: middle; border-bottom: 1px solid var(--border-color); font-weight: 500; }
+      tbody tr:last-child td { border-bottom: none; }
       tbody tr:hover { background: #f8fafc; }
-      tbody td { padding: 10px 12px; vertical-align: middle; }
-      tbody tr:nth-child(even) { background: #f8fafc; }
-      .totals { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 24px; }
-      .total-card { background: #f1f5f9; border-radius: 8px; padding: 20px; }
-      .total-card .label { font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: 2px; color: #94a3b8; margin-bottom: 6px; }
-      .total-card .value { font-size: 28px; font-weight: 900; color: #2874f0; }
-      .total-card.highlight { background: #2874f0; }
-      .total-card.highlight .label { color: rgba(255,255,255,0.7); }
-      .total-card.highlight .value { color: #fff; }
-      .footer { margin-top: 48px; padding-top: 20px; border-top: 1px solid #e2e8f0; display: flex; justify-content: space-between; font-size: 11px; color: #94a3b8; }
-      @media print { body { padding: 20px; } }
+      .td-number { text-align: right; font-variant-numeric: tabular-nums; }
+      .th-number { text-align: right; }
+      
+      .totals { 
+        display: grid; 
+        grid-template-columns: repeat(5, 1fr); 
+        gap: 16px; 
+        margin-top: 24px; 
+      }
+      .total-card { 
+        background: var(--bg-main); 
+        border-radius: 10px; 
+        padding: 18px;
+        border: 1px solid var(--border-color);
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+      }
+      .total-card .label { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--text-muted); margin-bottom: 6px; }
+      .total-card .value { font-size: 18px; font-weight: 800; color: var(--text-main); }
+      
+      .total-card.highlight { 
+        background: var(--primary); 
+        border-color: var(--primary);
+        box-shadow: 0 10px 15px -3px rgba(40, 116, 240, 0.2);
+      }
+      .total-card.highlight .label { color: rgba(255,255,255,0.8); }
+      .total-card.highlight .value { color: #fff; font-size: 22px; }
+      
+      .footer { 
+        margin-top: 48px; padding-top: 24px; border-top: 1px solid var(--border-color); 
+        display: flex; justify-content: space-between; font-size: 11px; color: var(--text-muted); font-weight: 500;
+      }
+
+      @media print { 
+        body { background: #fff; padding: 0; }
+        .document-container { box-shadow: none; border: none; padding: 0; max-width: none; }
+        .no-print { display: none !important; }
+      }
     </style></head><body>
-      <div class="header">
-        <div>
-          <div class="brand">Innov<span>exia</span></div>
-          <div style="font-size:12px;color:#64748b;margin-top:4px">Enterprise Portal — Order Request</div>
+      <div class="document-container" id="pdf-content">
+        <div class="no-print">
+          <button onclick="window.print()" class="btn-secondary">
+            <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg>
+            Print
+          </button>
+          <button onclick="downloadPdf()" class="btn-primary" id="download-btn">
+            <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+            Download PDF
+          </button>
+          <button onclick="placeOrder()" class="btn-primary" id="place-order-btn" style="background: var(--accent); color: #000;">
+            <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+            Place Order
+          </button>
         </div>
-        <div class="meta">
-          <strong>Date: ${date}</strong>
-          Mode: ${rateType}<br/>
-          Prepared by: ${user?.full_name || 'User'}<br/>
-          Total Items: ${cartTotal} units
+        
+        <div class="header">
+          <div class="brand-container">
+            <div class="brand">Innov<span>exia</span></div>
+            <div class="subtitle">Enterprise Portal — Order Request</div>
+          </div>
+          <div class="meta-box">
+            <div class="meta">
+              <strong>Date: ${date}</strong>
+              Mode: ${rateType}<br/>
+              Prepared by: ${user?.full_name || 'User'}<br/>
+            </div>
+          </div>
+        </div>
+
+        <h2>Order Line Items</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Brand</th>
+              <th>Product</th>
+              <th>EAN Code</th>
+              <th class="th-number">Grammage</th>
+              <th class="th-number">CBM/Unit</th>
+              <th>Mode</th>
+              <th class="th-number">Unit Price</th>
+              <th class="th-number">Qty</th>
+              <th class="th-number">Total Wt(kg)</th>
+              <th class="th-number">Total CBM</th>
+              <th class="th-number">Total Price</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows}
+          </tbody>
+        </table>
+
+        <div class="totals">
+          <div class="total-card">
+            <div class="label">Total Qty</div>
+            <div class="value">${cartTotal} units</div>
+          </div>
+          <div class="total-card">
+            <div class="label">Total Weight</div>
+            <div class="value">${(cartTotalGrm / 1000).toFixed(2)} kg</div>
+          </div>
+          <div class="total-card">
+            <div class="label">Total Volume</div>
+            <div class="value" style="color:#10b981">${cartTotalCbm.toFixed(3)} m³</div>
+          </div>
+          <div class="total-card">
+            <div class="label">Cont. Fill (${rateType === 'FOB 20FT' ? '20FT/28CBM' : '40FT/67CBM'})</div>
+            <div class="value" style="color:#f59e0b">${containerFillPercentage.toFixed(1)}%</div>
+          </div>
+          <div class="total-card highlight">
+            <div class="label">Est. Value</div>
+            <div class="value">$${cartTotalPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+          </div>
+        </div>
+
+        <div class="footer">
+          <span>Generated by Innovexia Enterprise Portal</span>
+          <span>This is a pre-order request and not a confirmed order.</span>
         </div>
       </div>
 
-      <h2>Order Line Items</h2>
-      <table>
-        <thead><tr>
-          <th>Brand</th><th>Product</th><th>EAN Code</th><th>Grm</th><th>CBM/Unit</th><th>Rate Mode</th><th>Unit Price</th><th>Qty</th><th>Total CBM</th><th>Total Price</th>
-        </tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
+      <script>
+        function downloadPdf() {
+          const btn = document.getElementById('download-btn');
+          const poBtn = document.getElementById('place-order-btn');
+          const btnGroup = document.querySelector('.no-print');
+          
+          btn.innerHTML = 'Generating...';
+          btn.style.opacity = '0.7';
+          btn.style.pointerEvents = 'none';
+          if (poBtn) poBtn.style.display = 'none';
 
-      <div class="totals">
-        <div class="total-card">
-          <div class="label">Total Volume</div>
-          <div class="value" style="font-size:22px;color:#10b981">${cartTotalCbm.toFixed(3)} m³</div>
-        </div>
-        <div class="total-card">
-          <div class="label">Container Fill (${rateType === 'FOB 20FT' ? '20FT / 28 CBM' : '40FT / 67 CBM'})</div>
-          <div class="value" style="font-size:22px;color:#f59e0b">${containerFillPercentage.toFixed(1)}%</div>
-        </div>
-        <div class="total-card highlight">
-          <div class="label">Total Estimated Value</div>
-          <div class="value">$${cartTotalPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-        </div>
-      </div>
+          // Hide buttons temporarily so they don't show up in PDF
+          btnGroup.style.display = 'none';
+          
+          const element = document.getElementById('pdf-content');
+          const opt = {
+            margin:       10,
+            filename:     'Innovexia_Order_Request.pdf',
+            image:        { type: 'jpeg', quality: 0.98 },
+            html2canvas:  { scale: 2, useCORS: true },
+            jsPDF:        { unit: 'mm', format: 'a4', orientation: 'landscape' }
+          };
 
-      <div class="footer">
-        <span>Generated by Innovexia Enterprise Portal</span>
-        <span>This is a pre-order request and not a confirmed order.</span>
-      </div>
+          html2pdf().set(opt).from(element).save().then(() => {
+            // Restore buttons
+            btnGroup.style.display = 'flex';
+            btn.innerHTML = '<svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg> Download PDF';
+            btn.style.opacity = '1';
+            btn.style.pointerEvents = 'auto';
+            if (poBtn) poBtn.style.display = 'flex';
+          });
+        }
+
+        async function placeOrder() {
+          const btn = document.getElementById('place-order-btn');
+          const dlBtn = document.getElementById('download-btn');
+          const btnGroup = document.querySelector('.no-print');
+          
+          btn.innerHTML = 'Placing Order...';
+          btn.style.opacity = '0.7';
+          btn.style.pointerEvents = 'none';
+          if (dlBtn) dlBtn.style.display = 'none';
+
+          btnGroup.style.display = 'none';
+          
+          const element = document.getElementById('pdf-content');
+          const opt = {
+            margin:       10,
+            filename:     'Innovexia_Order_Request.pdf',
+            image:        { type: 'jpeg', quality: 0.98 },
+            html2canvas:  { scale: 2, useCORS: true },
+            jsPDF:        { unit: 'mm', format: 'a4', orientation: 'landscape' }
+          };
+
+          try {
+              const pdfBlob = await html2pdf().set(opt).from(element).output('blob');
+              
+              btnGroup.style.display = 'flex';
+              btn.innerHTML = 'Uploading PDF...';
+
+              const formData = new FormData();
+              formData.append('file', pdfBlob, opt.filename);
+              formData.append('type', 'order');
+
+              const uploadRes = await fetch('/api/upload', {
+                  method: 'POST',
+                  body: formData
+              });
+              const uploadData = await uploadRes.json();
+              
+              if (!uploadRes.ok) throw new Error(uploadData.error || 'Failed to upload PDF');
+
+              const pdfLink = uploadData.url;
+
+              btn.innerHTML = 'Saving Order...';
+
+              const payloadRaw = document.getElementById('order-payload').textContent;
+              const orderPayload = JSON.parse(payloadRaw);
+              orderPayload.PDF_Link = pdfLink;
+
+              const saveRes = await fetch('/api/client-interface', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ tab: 'Orders', data: orderPayload })
+              });
+
+              if (!saveRes.ok) throw new Error('Failed to save order');
+
+              btn.innerHTML = 'Order Placed Successfully!';
+              btn.style.background = '#10b981';
+          } catch (error) {
+              console.error(error);
+              alert('Error placing order: ' + error.message);
+              btn.innerHTML = 'Place Order';
+              btn.style.opacity = '1';
+              btn.style.pointerEvents = 'auto';
+              btnGroup.style.display = 'flex';
+          } finally {
+              if (dlBtn) dlBtn.style.display = 'flex';
+          }
+        }
+      </script>
     </body></html>`;
 
-    const w = window.open('', '_blank');
-    if (w) {
-      w.document.write(html);
-      w.document.close();
-      setTimeout(() => w.print(), 800);
+      const w = window.open('', '_blank');
+      if (w) {
+        w.document.write(html);
+        w.document.close();
+      }
+    } catch (error) {
+      console.error(error);
+      addToast('Failed to prepare order request', 'error');
+    } finally {
+      hideLoader();
     }
   };
 
@@ -340,7 +796,9 @@ export default function WebsitePage() {
                     </div>
                     <span>Cart</span>
                 </button>
-                <button onClick={() => router.push('/dashboard')} className="px-3 py-1 bg-white text-[#2874f0] rounded-sm hover:bg-slate-100 transition-colors">ERP Dashboard</button>
+                {user && user.role_name !== 'Client' && (
+                    <button onClick={() => router.push('/dashboard')} className="px-3 py-1 bg-white text-[#2874f0] rounded-sm hover:bg-slate-100 transition-colors">ERP Dashboard</button>
+                )}
                 <div className="flex items-center gap-3 border-l border-white/20 pl-4">
                     <span className="text-[12px] opacity-80 truncate max-w-[100px]">{user.full_name}</span>
                     <button onClick={handleLogout} className="hover:text-red-300"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg></button>
@@ -407,16 +865,51 @@ export default function WebsitePage() {
         <main className="flex-grow px-2 md:px-4">
             
             <div className="bg-white p-3 mb-2 shadow-sm rounded-sm flex justify-between items-center flex-wrap gap-2 border border-slate-100">
-                <div className="flex items-center gap-4">
-                    <p className="text-[12px] font-bold text-slate-500">
+                <div className="flex items-center gap-4 flex-wrap">
+                    <p className="text-[12px] font-bold text-slate-500 whitespace-nowrap">
                         Items: <span className="text-slate-900">{filteredAndSortedData.length}</span>
-                        {selectedBrand && <span className="ml-2 px-1.5 py-0.5 bg-blue-50 text-[#2874f0] rounded-sm uppercase text-[9px] font-black border border-blue-100">{selectedBrand}</span>}
                     </p>
 
                     {activeTab === 'PreOrder' && (
                         <div className="flex items-center bg-[#f1f3f6] p-0.5 rounded-sm border">
                             <button onClick={() => setRateType('FOB 20FT')} className={`px-6 py-1.5 text-[10px] font-black rounded-sm transition-all ${rateType === 'FOB 20FT' ? 'bg-[#2874f0] text-white shadow-sm' : 'text-slate-500 hover:bg-white/50'}`}>FOB 20FT</button>
                             <button onClick={() => setRateType('FOB 40FT')} className={`px-6 py-1.5 text-[10px] font-black rounded-sm transition-all ${rateType === 'FOB 40FT' ? 'bg-[#2874f0] text-white shadow-sm' : 'text-slate-500 hover:bg-white/50'}`}>FOB 40FT</button>
+                        </div>
+                    )}
+
+                    {activeTab !== 'PreOrder' && user && (
+                        <div className="flex items-center gap-4 flex-wrap">
+                            {/* Party Filter Dropdown (Only for ERP users) */}
+                            {user.role_name !== 'Client' && (
+                                <div className="flex items-center gap-2">
+                                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Party</span>
+                                    <select
+                                        value={filterParty}
+                                        onChange={(e) => { setFilterParty(e.target.value); setFilterPiNumber(''); }}
+                                        className="text-[12px] font-black border bg-[#f1f3f6] px-3 py-1.5 rounded-sm outline-none cursor-pointer"
+                                    >
+                                        <option value="">All Parties</option>
+                                        {dropdownOptions.parties.map(p => (
+                                            <option key={p} value={p}>{p}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                            )}
+
+                            {/* PI Number Filter Dropdown (For all users) */}
+                            <div className="flex items-center gap-2">
+                                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">PI Number</span>
+                                <select
+                                    value={filterPiNumber}
+                                    onChange={(e) => setFilterPiNumber(e.target.value)}
+                                    className="text-[12px] font-black border bg-[#f1f3f6] px-3 py-1.5 rounded-sm outline-none cursor-pointer"
+                                >
+                                    <option value="">All PIs</option>
+                                    {dropdownOptions.piNumbers.map(pi => (
+                                        <option key={pi} value={pi}>{pi}</option>
+                                    ))}
+                                </select>
+                            </div>
                         </div>
                     )}
                 </div>
@@ -488,13 +981,584 @@ export default function WebsitePage() {
                                     />
                                     <button onClick={() => updateCart(product, 1)} className="w-8 h-8 flex items-center justify-center text-[#2874f0] font-black hover:bg-white rounded-sm transition-colors text-sm">+</button>
                                 </div>
-                                <button onClick={(e) => { e.stopPropagation(); updateCart(product, 1); addToast('Added to cart', 'success'); }} className="flex-grow py-2.5 bg-[#ff9f00] text-white text-[10px] font-black rounded-sm hover:bg-[#fb641b] transition-all uppercase shadow-sm active:scale-95 tracking-widest">
+                                <button onClick={(e) => { 
+                                    e.stopPropagation(); 
+                                    if (qty === 0) {
+                                        updateCart(product, 1); 
+                                    }
+                                    addToast('Added to cart', 'success'); 
+                                }} className="flex-grow py-2.5 bg-[#ff9f00] text-white text-[10px] font-black rounded-sm hover:bg-[#fb641b] transition-all uppercase shadow-sm active:scale-95 tracking-widest">
                                     ADD
                                 </button>
                             </div>
                         </div>
                     );
-                }) : (
+                }                ) : activeTab === 'Orders' ? (
+                    <div className="space-y-5 py-2">
+                      {paginatedData.length === 0 ? (
+                        <div className="text-center py-20 text-slate-400 font-bold">No orders found.</div>
+                      ) : paginatedData.map((order, i) => {
+                        const piNum = order.PI_Number || order['PI Number'] || order.PI_NUMBER || '—';
+                        const rawDate = order.Date || order.DATE || '';
+                        const date = rawDate ? (() => {
+                          const isoTest = /^\d{4}-\d{2}-\d{2}T/.test(rawDate);
+                          if (isoTest) return new Date(rawDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+                          return rawDate;
+                        })() : '—';
+                        const mode = order.Mode || order.MODE || '—';
+                        const preparedBy = order.Prepared_By || order['Prepared By'] || '—';
+                        const totalQty = order.Total_Qty || order['Total Qty'] || '—';
+                        const totalWeight = order.Total_Weight || order['Total Weight'] || '—';
+                        const totalVolume = order.Total_Volume || order['Total Volume'] || '—';
+                        const contFill = order.Cont_Fill || order['Cont Fill'] || order.CONT_FILL || null;
+                        const estValue = order.Est_Value || order['Est Value'] || '—';
+                        const pdfLink = order.PDF_Link || order['PDF Link'] || '';
+                        const fillNum = contFill ? parseFloat(String(contFill).replace(/[^0-9.]/g, '')) : 0;
+                        const fillPct = fillNum > 1 ? fillNum : fillNum * 100;
+                        let lineItems: any[] = [];
+                        try {
+                          const raw = order.Line_Items || order['Line Items'] || '';
+                          lineItems = typeof raw === 'string' ? JSON.parse(raw) : (Array.isArray(raw) ? raw : []);
+                        } catch {}
+
+                        const fillColor = fillPct > 95 ? '#ef4444' : fillPct > 80 ? '#f59e0b' : '#10b981';
+
+                        return (
+                          <motion.div
+                            key={i}
+                            initial={{ opacity: 0, y: 20 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ delay: i * 0.05 }}
+                            className="bg-white rounded-xl shadow-md border border-slate-100 overflow-hidden hover:shadow-xl transition-all duration-300"
+                          >
+                            {/* Card Header */}
+                            <div className="bg-gradient-to-r from-[#2874f0] to-[#1d4ed8] px-6 py-4 flex flex-wrap justify-between items-center gap-3">
+                              <div className="flex items-center gap-4">
+                                <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center">
+                                  <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                                </div>
+                                <div>
+                                  <p className="text-[10px] font-black text-blue-200 uppercase tracking-widest">PI Number</p>
+                                  <h3 className="text-[15px] font-black text-white tracking-tight">{piNum}</h3>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-3">
+                                <span className="px-3 py-1 bg-white/20 text-white text-[10px] font-black rounded-full uppercase tracking-widest">{mode}</span>
+                                <span className="px-3 py-1 bg-yellow-400/90 text-[#1d4ed8] text-[10px] font-black rounded-full">{date}</span>
+                                {pdfLink && (
+                                  <a href={pdfLink} target="_blank" rel="noopener noreferrer" className="px-3 py-1 bg-white text-[#2874f0] text-[10px] font-black rounded-full hover:bg-blue-50 transition-colors flex items-center gap-1">
+                                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
+                                    PDF
+                                  </a>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Stats Row */}
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-px bg-slate-100">
+                              {[
+                                { label: 'Total Qty', value: totalQty, icon: '📦', color: 'text-blue-600' },
+                                { label: 'Total Weight', value: totalWeight, icon: '⚖️', color: 'text-slate-700' },
+                                { label: 'Total Volume', value: totalVolume, icon: '📐', color: 'text-emerald-600' },
+                                { label: 'Est. Value', value: estValue, icon: '💰', color: 'text-[#2874f0] font-black text-base' },
+                              ].map((stat, si) => (
+                                <div key={si} className="bg-white px-5 py-3 flex flex-col">
+                                  <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">{stat.icon} {stat.label}</span>
+                                  <span className={`text-[13px] font-black ${stat.color}`}>{stat.value}</span>
+                                </div>
+                              ))}
+                            </div>
+
+                            {/* Container Fill Bar */}
+                            <div className="px-6 py-3 bg-slate-50 border-b flex items-center gap-4">
+                              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest whitespace-nowrap">Container Fill</span>
+                              <div className="flex-grow h-3 bg-slate-200 rounded-full overflow-hidden">
+                                <div
+                                  className="h-full rounded-full transition-all duration-700"
+                                  style={{ width: `${Math.min(100, fillPct)}%`, background: fillColor }}
+                                />
+                              </div>
+                              <span className="text-[11px] font-black whitespace-nowrap" style={{ color: fillColor }}>{fillPct.toFixed(1)}%</span>
+                            </div>
+
+                            {/* Line Items */}
+                            {lineItems.length > 0 && (
+                              <div className="px-6 py-4">
+                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">📋 Line Items ({lineItems.length} products)</p>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2">
+                                  {lineItems.slice(0, 8).map((item: any, li: number) => {
+                                    const prodName = item.PRODUCT || item.Product || item.product || item.name || '—';
+                                    const qty = item.QTY || item.Qty || item.quantity || item.QUANTITY || '—';
+                                    const img = formatImageUrl(item.Image || item.image || item.IMAGE || '');
+                                    return (
+                                      <div key={li} className="flex items-center gap-2 p-2 bg-slate-50 rounded-lg border border-slate-100 hover:bg-blue-50 hover:border-blue-100 transition-colors">
+                                        <div className="w-8 h-8 bg-white rounded-md flex items-center justify-center border border-slate-100 shrink-0 overflow-hidden">
+                                          {img ? <img src={img} referrerPolicy="no-referrer" className="max-w-full max-h-full object-contain" alt={prodName} /> : <span className="text-base">📦</span>}
+                                        </div>
+                                        <div className="min-w-0">
+                                          <p className="text-[11px] font-bold text-slate-700 truncate" title={prodName}>{prodName}</p>
+                                          <p className="text-[9px] font-black text-blue-500">Qty: {qty}</p>
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                  {lineItems.length > 8 && (
+                                    <button
+                                      onClick={() => setViewLineItems(lineItems)}
+                                      className="flex items-center justify-center gap-2 p-2 bg-blue-50 rounded-lg border border-blue-100 text-[11px] font-black text-[#2874f0] hover:bg-blue-100 transition-colors"
+                                    >
+                                      +{lineItems.length - 8} more
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Footer */}
+                            <div className="px-6 py-2.5 bg-slate-50 border-t flex justify-between items-center">
+                              <span className="text-[10px] font-bold text-slate-400">Prepared by: <span className="text-slate-600">{preparedBy}</span></span>
+                              {lineItems.length > 0 && (
+                                <button onClick={() => setViewLineItems(lineItems)} className="text-[10px] font-black text-[#2874f0] hover:underline flex items-center gap-1">
+                                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" /></svg>
+                                  View All Items
+                                </button>
+                              )}
+                            </div>
+                          </motion.div>
+                        );
+                      })}
+                    </div>
+                                ) : activeTab === 'Inventory' ? (
+                    // ─── Inventory Dashboard ───────────────────────────
+                    (() => {
+                      // Filter orders to this user's
+                      const userFullName = (user?.full_name || '').toLowerCase();
+                      const userUsername = (user?.username || '').toLowerCase();
+                      const myOrders = ordersData.filter(ord => {
+                        const pb = String(ord.Prepared_By || ord['Prepared By'] || '').toLowerCase();
+                        return pb === userFullName || pb === userUsername || pb === 'client user';
+                      });
+
+                      // All line items across all orders
+                      const allOrderedItems: any[] = [];
+                      myOrders.forEach(ord => {
+                        const piNum = ord.PI_Number || ord['PI Number'] || '';
+                        let items: any[] = [];
+                        try { const r = ord.Line_Items || ord['Line Items'] || ''; items = typeof r === 'string' ? JSON.parse(r) : (Array.isArray(r) ? r : []); } catch {}
+                        items.forEach(item => allOrderedItems.push({ ...item, _piNum: piNum }));
+                      });
+
+                      // Inventory submitted records
+                      const invData = data;
+
+                      // Helpers to parse numeric values
+                      const n = (v: any) => parseFloat(String(v || '0').replace(/[^0-9.]/g, '')) || 0;
+
+                      // Ordered totals from line items
+                      let ordQty = 0, ordCbm = 0, ordWt = 0, ordFob = 0;
+                      allOrderedItems.forEach(it => {
+                        const qty = n(it.quantity || it.Qty || it.QTY || it.QUANTITY);
+                        ordQty += qty;
+                        ordCbm += n(it.Cbm || it.CBM || it.cbm) * qty;
+                        ordWt += (n(it.Grm || it.GRM || it.grm) * qty) / 1000;
+                        ordFob += n(it['FOB 20FT'] || it.FOB_20FT || it['FOB 40FT'] || it.FOB_40FT || it.Price || it.price) * qty;
+                      });
+
+                      // Received totals from Inventory sheet
+                      let recQty = 0, recCbm = 0, recWt = 0, recFob = 0;
+                      invData.forEach(inv => {
+                        const qty = n(inv['Received Qty'] || inv.Received_Qty);
+                        recQty += qty;
+                        recWt += n(inv['Weight/Size'] || inv.Weight_Size) * qty / 1000;
+                        recFob += n(inv.Price) * qty;
+                      });
+
+                      // Item completion: for each ordered product, check if inventory has a matching entry
+                      const invProducts = new Set(invData.map((inv: any) => String(inv['Product Name'] || inv.Product_Name || '').toLowerCase().trim()));
+                      const completedItems = allOrderedItems.filter(it => invProducts.has(String(it.PRODUCT || it.Product || it.product || '').toLowerCase().trim()));
+                      const pendingItems = allOrderedItems.filter(it => !invProducts.has(String(it.PRODUCT || it.Product || it.product || '').toLowerCase().trim()));
+
+                      const tiles = [
+                        { label: 'Total Qty', ordered: ordQty.toFixed(0), received: recQty.toFixed(0), unit: 'units', color: '#2874f0', icon: '📦' },
+                        { label: 'Total Weight', ordered: ordWt.toFixed(2), received: recWt.toFixed(2), unit: 'kg', color: '#7c3aed', icon: '⚖️' },
+                        { label: 'Total CBM', ordered: ordCbm.toFixed(3), received: recCbm.toFixed(3), unit: 'm³', color: '#0891b2', icon: '📐' },
+                        { label: 'Total FOB', ordered: `$${ordFob.toFixed(2)}`, received: `$${recFob.toFixed(2)}`, unit: '', color: '#059669', icon: '💰' },
+                        { label: 'Items Status', ordered: `${completedItems.length} Done`, received: `${pendingItems.length} Pending`, unit: '', color: pendingItems.length > 0 ? '#f59e0b' : '#10b981', icon: '✅' },
+                      ];
+
+                      return (
+                        <div className="space-y-6">
+                          {/* Summary Tiles */}
+                          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+                            {tiles.map((tile, ti) => (
+                              <div key={ti} className="bg-white rounded-xl shadow-md border border-slate-100 p-4 flex flex-col gap-2 hover:shadow-lg transition-all">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-lg">{tile.icon}</span>
+                                  <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">{tile.label}</span>
+                                </div>
+                                <div className="space-y-1">
+                                  <div className="flex justify-between items-center">
+                                    <span className="text-[9px] font-black text-slate-400 uppercase">Ordered</span>
+                                    <span className="text-[13px] font-black" style={{ color: tile.color }}>{tile.ordered} <span className="text-[9px] text-slate-400">{tile.unit}</span></span>
+                                  </div>
+                                  <div className="flex justify-between items-center">
+                                    <span className="text-[9px] font-black text-slate-400 uppercase">Received</span>
+                                    <span className="text-[13px] font-black text-slate-700">{tile.received} <span className="text-[9px] text-slate-400">{tile.unit}</span></span>
+                                  </div>
+                                </div>
+                                {/* Mini progress bar */}
+                                {tile.label !== 'Items Status' && (
+                                  <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                                    <div className="h-full rounded-full transition-all" style={{ width: `${Math.min(100, (parseFloat(tile.received) / (parseFloat(tile.ordered) || 1)) * 100)}%`, background: tile.color }} />
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+
+                          {/* PI-wise Order Table with Completion Status */}
+                          {myOrders.length === 0 ? (
+                            <div className="text-center py-16 text-slate-400 font-bold bg-white rounded-xl shadow-sm">No orders found for your account.</div>
+                          ) : myOrders.map((ord, oi) => {
+                            const piNum = ord.PI_Number || ord['PI Number'] || '—';
+                            const ordDate = (() => { const d = ord.Date || ''; return /^\d{4}-\d{2}-\d{2}T/.test(d) ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : d || '—'; })();
+                            let items: any[] = [];
+                            try { const r = ord.Line_Items || ord['Line Items'] || ''; items = typeof r === 'string' ? JSON.parse(r) : (Array.isArray(r) ? r : []); } catch {}
+
+                            return (
+                              <motion.div key={oi} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: oi * 0.05 }} className="bg-white rounded-xl shadow-md border border-slate-100 overflow-hidden">
+                                {/* PI Header */}
+                                <div className="bg-gradient-to-r from-[#1e3a8a] to-[#2874f0] px-5 py-3 flex flex-wrap justify-between items-center gap-2">
+                                  <div className="flex items-center gap-3">
+                                    <div className="w-8 h-8 bg-white/20 rounded-lg flex items-center justify-center text-white text-sm">📋</div>
+                                    <div>
+                                      <p className="text-[9px] font-black text-blue-200 uppercase tracking-widest">PI Number</p>
+                                      <h3 className="text-[14px] font-black text-white">{piNum}</h3>
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <span className="px-2 py-1 bg-white/20 text-white text-[9px] font-black rounded-full">{ord.Mode || '—'}</span>
+                                    <span className="px-2 py-1 bg-yellow-400/90 text-[#1d4ed8] text-[9px] font-black rounded-full">{ordDate}</span>
+                                    <span className="px-2 py-1 bg-emerald-400/90 text-white text-[9px] font-black rounded-full">{ord.Est_Value || ord['Est Value'] || '—'}</span>
+                                  </div>
+                                </div>
+
+                                {/* Line Items Table */}
+                                {items.length > 0 && (
+                                  <div className="overflow-x-auto">
+                                    <table className="w-full text-left text-[11px] border-collapse min-w-[900px]">
+                                      <thead className="bg-slate-50 border-b border-slate-100">
+                                        <tr>
+                                          <th className="px-4 py-2.5 font-black text-slate-500 uppercase tracking-wider w-[80px]">Image</th>
+                                          <th className="px-4 py-2.5 font-black text-slate-500 uppercase tracking-wider w-[240px]">Product Name</th>
+                                          <th className="px-4 py-2.5 font-black text-slate-500 uppercase tracking-wider text-center w-[110px]">Weight/Size</th>
+                                          <th className="px-4 py-2.5 font-black text-slate-500 uppercase tracking-wider text-right w-[110px]">Price/FOB</th>
+                                          <th className="px-4 py-2.5 font-black text-slate-500 uppercase tracking-wider text-right w-[110px]">Ordered Qty</th>
+                                          <th className="px-4 py-2.5 font-black text-slate-500 uppercase tracking-wider text-right w-[110px]">Received Qty</th>
+                                          <th className="px-4 py-2.5 font-black text-slate-500 uppercase tracking-wider text-center w-[130px]">Mfg Date</th>
+                                          <th className="px-4 py-2.5 font-black text-slate-500 uppercase tracking-wider text-center w-[130px]">Expiry Date</th>
+                                          <th className="px-4 py-2.5 font-black text-slate-500 uppercase tracking-wider text-center w-[100px]">Status</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody className="divide-y divide-slate-50">
+                                         {items.map((item: any, ii: number) => {
+                                           const prodName = item.PRODUCT || item.Product || item.product || item.name || '—';
+                                           const orderedQty = item.quantity || item.Qty || item.QTY || item.QUANTITY || item.Quantity || 0;
+                                           
+                                           // Get weight/size and price/fob from ordered item
+                                           const weightSize = item.WEIGHT_SIZE || item.Weight_Size || item.Weight || item.Size || item['Weight/Size'] || item.weight || '—';
+                                           const priceVal = item.PRICE || item.Price || item.price || item.FOB || item.Fob || item.fob || '—';
+
+                                           // Find matching inventory entry
+                                           const invMatch = invData.find((inv: any) =>
+                                             String(inv['Product Name'] || inv.Product_Name || '').toLowerCase().trim() === String(prodName).toLowerCase().trim() &&
+                                             (String(inv['PI Number'] || inv.PI_Number || '').toLowerCase() === String(piNum).toLowerCase())
+                                           ) || invData.find((inv: any) =>
+                                             String(inv['Product Name'] || inv.Product_Name || '').toLowerCase().trim() === String(prodName).toLowerCase().trim()
+                                           );
+
+                                           // From received: receivedQty, mfgDate, expiryDate, and image
+                                           const receivedQty = invMatch ? n(invMatch['Received Qty'] || invMatch.Received_Qty) : 0;
+                                           const mfgDate = invMatch ? (invMatch['Mfg Date'] || invMatch.Mfg_Date || '') : '';
+                                           const expiryDate = invMatch ? (invMatch['Expiry Date'] || invMatch.Expiry_Date || '') : '';
+                                           const img = invMatch ? formatImageUrl(invMatch.Image || invMatch.image || invMatch.IMAGE || invMatch['Product Image'] || '') : '';
+                                           
+                                           const isComplete = invMatch != null;
+
+                                           return (
+                                             <tr key={ii} className={`hover:bg-slate-50 transition-colors border-b border-slate-100 ${isComplete ? '' : 'bg-orange-50/30'}`}>
+                                               {/* Image Preview Column */}
+                                               <td className="px-4 py-2.5">
+                                                 <div className="w-12 h-12 bg-white rounded-lg border border-slate-100 flex items-center justify-center overflow-hidden shrink-0 shadow-sm animate-fade-in">
+                                                   {img ? (
+                                                     <img src={img} referrerPolicy="no-referrer" className="max-w-full max-h-full object-contain hover:scale-110 transition-transform cursor-pointer" alt={prodName} />
+                                                   ) : (
+                                                     <span className="text-lg">📦</span>
+                                                   )}
+                                                 </div>
+                                               </td>
+
+                                               {/* Product Name Column */}
+                                               <td className="px-4 py-2.5">
+                                                 <span className="font-bold text-slate-700 block max-w-[220px] truncate" title={prodName}>
+                                                   {prodName}
+                                                 </span>
+                                               </td>
+
+                                               {/* Weight/Size Column */}
+                                               <td className="px-4 py-2.5 text-center font-bold text-slate-600">
+                                                 {weightSize}
+                                               </td>
+
+                                               {/* Price/FOB Column */}
+                                               <td className="px-4 py-2.5 text-right font-black text-slate-700">
+                                                 {priceVal !== '—' ? `${parseFloat(String(priceVal).replace(/[^0-9.]/g, '')).toFixed(2)}` : '—'}
+                                               </td>
+
+                                               {/* Ordered Qty Column */}
+                                               <td className="px-4 py-2.5 text-right font-black text-[#2874f0]">
+                                                 {orderedQty}
+                                               </td>
+
+                                               {/* Received Qty Column */}
+                                               <td className="px-4 py-2.5 text-right font-black text-emerald-600">
+                                                 {isComplete ? receivedQty : '—'}
+                                               </td>
+
+                                               {/* Mfg Date Column */}
+                                               <td className="px-4 py-2.5 text-center font-semibold text-slate-500">
+                                                 {mfgDate ? formatDateValue(String(mfgDate), 'Mfg Date') : '—'}
+                                               </td>
+
+                                               {/* Expiry Date Column */}
+                                               <td className="px-4 py-2.5 text-center font-semibold text-slate-500">
+                                                 {expiryDate ? formatDateValue(String(expiryDate), 'Expiry Date') : '—'}
+                                               </td>
+
+                                               {/* Status Column */}
+                                               <td className="px-4 py-2.5 text-center">
+                                                 {isComplete ? (
+                                                   <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-100 text-emerald-700 text-[10px] font-black rounded-full shadow-sm">
+                                                     <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>
+                                                     Received
+                                                   </span>
+                                                 ) : (
+                                                   <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-orange-100 text-orange-700 text-[10px] font-black rounded-full shadow-sm animate-pulse">
+                                                     <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                                                     Pending
+                                                   </span>
+                                                 )}
+                                               </td>
+                                             </tr>
+                                           );
+                                         })}
+                                       </tbody>
+                                    </table>
+                                  </div>
+                                )}
+                              </motion.div>
+                            );
+                          })}
+                        </div>
+                      );
+                    })()
+                ) : activeTab === 'Tracker' ? (
+                    <div className="space-y-6">
+                      {paginatedData.length === 0 ? (
+                        <div className="text-center py-20 text-slate-400 font-bold bg-white rounded-xl shadow-sm border">No tracker data found for your account.</div>
+                      ) : (
+                        paginatedData.map((row, idx) => {
+                          const piNum = row['PI Number'] || row.PI_Number || '—';
+                          const partyName = row['Party Name'] || row.Party_Name || '—';
+                          
+                          const stages = [
+                            { name: 'Production', field: 'Production', icon: '🏭', desc: 'Manufacturing completed', direction: 'up', rx: 60, ry: 220, px: 60, py: 130, tx: -10, ty: 15 },
+                            { name: 'Loading', field: 'Loading', icon: '🏗️', desc: 'Cargo loaded', direction: 'down', rx: 205, ry: 110, px: 205, py: 200, tx: 135, ty: 230 },
+                            { name: 'On Road to Port', field: 'On Road to Port', icon: '🚛', desc: 'Transit to port', direction: 'up', rx: 350, ry: 330, px: 350, py: 240, tx: 280, ty: 125 },
+                            { name: 'Custom', field: 'Custom', icon: '🛃', desc: 'Customs clearance', direction: 'down', rx: 495, ry: 110, px: 495, py: 200, tx: 425, ty: 230 },
+                            { name: 'Waiting for Vercel', field: 'Waiting for Vercel', icon: '🌐', desc: 'Vercel setup', direction: 'up', rx: 640, ry: 330, px: 640, py: 240, tx: 570, ty: 125, extraField: 'Waiting for Vercel Link' },
+                            { name: 'Sailed', field: 'Sailed', icon: '🚢', desc: 'Vessel sailed', direction: 'down', rx: 785, ry: 110, px: 785, py: 200, tx: 715, ty: 230, extraField: 'Sailed Manual Input' },
+                            { name: 'About to Arrive', field: 'About to Arrive', icon: '⚓', desc: 'Vessel approaching', direction: 'up', rx: 930, ry: 330, px: 930, py: 240, tx: 860, ty: 125 },
+                            { name: 'Arrived', field: 'Arrived', icon: '🏁', desc: 'Cargo arrived', direction: 'down', rx: 1075, ry: 220, px: 1075, py: 290, tx: 1005, ty: 320 }
+                          ];
+
+                          const completedCount = stages.filter(st => row[st.field] || row[st.name]).length;
+                          const progressPct = (completedCount / stages.length) * 100;
+
+                          return (
+                            <motion.div key={idx} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: idx * 0.05 }} className="bg-white rounded-2xl shadow-xl border border-slate-100 overflow-hidden hover:shadow-2xl transition-all duration-300">
+                              {/* Card Header */}
+                              <div className="bg-gradient-to-r from-[#0f172a] to-[#1e293b] px-6 py-5 flex flex-wrap justify-between items-center gap-4 border-b border-slate-800">
+                                <div className="flex items-center gap-4">
+                                  <div className="w-10 h-10 bg-indigo-500/10 rounded-xl flex items-center justify-center text-lg shadow-inner">📍</div>
+                                  <div>
+                                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1">Shipment Route & Milestone Roadmap</p>
+                                    <h3 className="text-base font-black text-white tracking-tight flex items-center gap-2">
+                                      {piNum}
+                                      <span className="text-[10px] font-bold text-indigo-400 bg-indigo-500/10 px-2.5 py-0.5 rounded-full border border-indigo-500/20">{partyName}</span>
+                                    </h3>
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-4">
+                                  <div className="text-right">
+                                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1">Logistics Progress</p>
+                                    <p className="text-xs font-black text-emerald-400">{completedCount} / {stages.length} Stages Completed</p>
+                                  </div>
+                                  <div className="w-24 bg-slate-800 h-2 rounded-full overflow-hidden border border-slate-700/50">
+                                    <div className="h-full bg-emerald-500 rounded-full transition-all duration-500" style={{ width: `${progressPct}%` }} />
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Winding road visual infographic timeline */}
+                              <div className="p-6 bg-[#f8fafc] overflow-hidden">
+                                <div className="w-full overflow-x-auto no-scrollbar py-6">
+                                  <div className="min-w-[1150px] mx-auto relative select-none" style={{ height: '420px' }}>
+                                    <svg width="1150" height="420" viewBox="0 0 1150 420" className="w-full h-full overflow-visible">
+                                      {/* Asphalt Road Shadow Base */}
+                                      <path
+                                        d="M -50 220 C 80 220, 130 110, 205 110 C 280 110, 275 330, 350 330 C 425 330, 420 110, 495 110 C 570 110, 565 330, 640 330 C 715 330, 710 110, 785 110 C 860 110, 855 330, 930 330 C 1005 330, 1000 220, 1200 220"
+                                        fill="none"
+                                        stroke="#1e293b"
+                                        strokeWidth="38"
+                                        strokeLinecap="round"
+                                        opacity="0.9"
+                                      />
+                                      {/* Inner Pavement Surface */}
+                                      <path
+                                        d="M -50 220 C 80 220, 130 110, 205 110 C 280 110, 275 330, 350 330 C 425 330, 420 110, 495 110 C 570 110, 565 330, 640 330 C 715 330, 710 110, 785 110 C 860 110, 855 330, 930 330 C 1005 330, 1000 220, 1200 220"
+                                        fill="none"
+                                        stroke="#334155"
+                                        strokeWidth="32"
+                                        strokeLinecap="round"
+                                      />
+                                      {/* Yellow Double Dashed Divider Lines */}
+                                      <path
+                                        d="M -50 220 C 80 220, 130 110, 205 110 C 280 110, 275 330, 350 330 C 425 330, 420 110, 495 110 C 570 110, 565 330, 640 330 C 715 330, 710 110, 785 110 C 860 110, 855 330, 930 330 C 1005 330, 1000 220, 1200 220"
+                                        fill="none"
+                                        stroke="#f59e0b"
+                                        strokeWidth="2"
+                                        strokeDasharray="8,8"
+                                        strokeLinecap="round"
+                                        opacity="0.85"
+                                      />
+
+                                      {/* Pins, Stems, and text boxes */}
+                                      {stages.map((st, si) => {
+                                        const rawVal = row[st.field] || row[st.name] || '';
+                                        const isDone = !!rawVal;
+                                        const formattedTime = isDone ? formatDateValue(String(rawVal), st.field) : '';
+                                        const extraVal = st.extraField ? row[st.extraField] || '' : '';
+
+                                        return (
+                                          <g key={si} className="group cursor-default">
+                                            {/* Stem pointing to the road */}
+                                            <line
+                                              x1={st.rx}
+                                              y1={st.ry}
+                                              x2={st.px}
+                                              y2={st.py}
+                                              stroke={isDone ? "#10b981" : "#94a3b8"}
+                                              strokeWidth="3"
+                                              strokeDasharray={isDone ? "none" : "3,3"}
+                                              className="transition-all duration-300"
+                                            />
+                                            {/* Landing point node on the center road yellow divider */}
+                                            <circle
+                                              cx={st.rx}
+                                              cy={st.ry}
+                                              r="5"
+                                              fill={isDone ? "#10b981" : "#64748b"}
+                                              stroke="#ffffff"
+                                              strokeWidth="2"
+                                              className="transition-all duration-300"
+                                            />
+                                            {/* Circular Badge Ring (Outer Ring) */}
+                                            <circle
+                                              cx={st.px}
+                                              cy={st.py}
+                                              r="21"
+                                              fill="#ffffff"
+                                              stroke={isDone ? "#10b981" : "#94a3b8"}
+                                              strokeWidth="5"
+                                              className="transition-all duration-300 hover:scale-110 shadow-sm"
+                                            />
+                                            {/* Stage Icon */}
+                                            <text
+                                              x={st.px}
+                                              y={st.py + 5}
+                                              textAnchor="middle"
+                                              fontSize="13"
+                                              fill="#1e293b"
+                                              className="pointer-events-none select-none font-bold"
+                                            >
+                                              {isDone ? "✓" : st.icon}
+                                            </text>
+
+                                            {/* Custom HTML Card details in standard responsive foreignObject */}
+                                            <foreignObject
+                                              x={st.tx}
+                                              y={st.ty}
+                                              width="140"
+                                              height="95"
+                                              className="overflow-visible"
+                                            >
+                                              <div className="flex flex-col items-center justify-center text-center font-sans">
+                                                <p className="text-[12px] font-black text-slate-900 uppercase tracking-tight leading-tight mb-1" style={{ textShadow: '0 1px 0px #fff' }}>
+                                                  {st.name}
+                                                </p>
+                                                {isDone ? (
+                                                  <div className="flex flex-col items-center">
+                                                    <span className="text-[9px] font-black text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded uppercase tracking-widest leading-none mb-1">
+                                                      Completed
+                                                    </span>
+                                                    <p className="text-[9.5px] text-slate-500 font-bold leading-normal max-w-[130px]">
+                                                      {formattedTime}
+                                                    </p>
+                                                    {st.extraField && extraVal && (
+                                                      <div className="mt-1 flex justify-center">
+                                                        {st.name === 'Waiting for Vercel' ? (
+                                                          <a
+                                                            href={extraVal}
+                                                            target="_blank"
+                                                            rel="noopener noreferrer"
+                                                            className="inline-flex items-center gap-1 px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 font-black rounded text-[8.5px] uppercase tracking-wider border border-indigo-100 transition-colors"
+                                                          >
+                                                            Link 🔗
+                                                          </a>
+                                                        ) : (
+                                                          <span
+                                                            className="text-[8.5px] font-bold text-indigo-600 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded leading-tight max-w-[120px] truncate block"
+                                                            title={extraVal}
+                                                          >
+                                                            {extraVal}
+                                                          </span>
+                                                        )}
+                                                      </div>
+                                                    )}
+                                                  </div>
+                                                ) : (
+                                                  <div className="flex flex-col items-center">
+                                                    <span className="text-[9px] font-black text-slate-400 bg-slate-50 border border-slate-200 px-2 py-0.5 rounded uppercase tracking-widest leading-none">
+                                                      Pending
+                                                    </span>
+                                                  </div>
+                                                )}
+                                              </div>
+                                            </foreignObject>
+                                          </g>
+                                        );
+                                      })}
+                                    </svg>
+                                  </div>
+                                </div>
+                              </div>
+                            </motion.div>
+                          );
+                        })
+                      )}
+                    </div>
+                  ) : (
                     <div className="bg-white overflow-hidden shadow-sm rounded-sm">
                         <div className="overflow-x-auto overflow-y-auto max-h-[700px] no-scrollbar">
                             <table className="w-full text-left text-sm border-collapse">
@@ -508,7 +1572,13 @@ export default function WebsitePage() {
                                         <tr key={i} className="hover:bg-slate-50 border-b last:border-0 transition-colors text-[12px]">
                                             {Object.keys(data[0] || {}).map(h => (
                                                 <td key={h} className="px-6 py-4 truncate max-w-[250px] text-slate-600 font-bold">
-                                                    {isUrl(row[h]) ? <a href={row[h]} target="_blank" className="text-[#2874f0] font-black underline underline-offset-4">Open Link</a> : row[h] || '—'}
+                                                    {h.toLowerCase() === 'line_items' || h.toLowerCase() === 'line items' ? (
+                                                        <button onClick={() => { try { const items = typeof row[h] === 'string' ? JSON.parse(row[h]) : row[h]; setViewLineItems(Array.isArray(items) ? items : []); } catch { setViewLineItems([]); } }} className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 text-[#2874f0] font-bold rounded-sm text-[10px] hover:bg-blue-100 transition-colors uppercase tracking-widest">View Items</button>
+                                                    ) : isUrl(row[h]) ? (
+                                                        <a href={row[h]} target="_blank" className="text-[#2874f0] font-black underline underline-offset-4">Open Link</a>
+                                                    ) : (
+                                                        formatDateValue(String(row[h] || ''), h) || '—'
+                                                    )}
                                                 </td>
                                             ))}
                                         </tr>
@@ -696,6 +1766,87 @@ export default function WebsitePage() {
                     </div>
                 </motion.div>
             </div>
+        )}
+      </AnimatePresence>
+
+      {/* View Line Items Modal */}
+      <AnimatePresence>
+        {viewLineItems && (
+          <div className="fixed inset-0 z-[400] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white w-full max-w-4xl max-h-[85vh] rounded-sm shadow-2xl overflow-hidden flex flex-col"
+            >
+              <div className="p-4 border-b flex justify-between items-center bg-slate-50">
+                <h2 className="text-[13px] font-black text-slate-800 uppercase tracking-widest flex items-center gap-2">
+                  Line Items
+                  <span className="bg-[#2874f0]/10 text-[#2874f0] px-2 py-0.5 rounded text-[10px] ml-2">{viewLineItems.length}</span>
+                </h2>
+                <button
+                  onClick={() => setViewLineItems(null)}
+                  className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-200 rounded-sm transition-all"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+
+              <div className="flex-grow overflow-auto p-4 custom-scrollbar bg-slate-50/50">
+                {viewLineItems.length === 0 ? (
+                    <div className="h-40 flex items-center justify-center text-slate-400 font-bold uppercase tracking-widest text-[10px]">No line items found.</div>
+                ) : (
+                    <table className="w-full text-left border-collapse">
+                        <thead>
+                            <tr className="bg-[#f1f3f6] text-slate-600 text-[10px] uppercase tracking-wider sticky top-0 shadow-sm z-10">
+                                <th className="px-4 py-3 font-black">Product</th>
+                                <th className="px-4 py-3 font-black">Brand</th>
+                                <th className="px-4 py-3 font-black">EAN</th>
+                                <th className="px-4 py-3 font-black text-right">Grammage</th>
+                                <th className="px-4 py-3 font-black text-right">CBM</th>
+                                <th className="px-4 py-3 font-black text-center">Rate Type</th>
+                                <th className="px-4 py-3 font-black text-right">Price</th>
+                                <th className="px-4 py-3 font-black text-right">Qty</th>
+                                <th className="px-4 py-3 font-black text-right">Total</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                            {viewLineItems.map((item, idx) => {
+                                const getValItem = (key: string) => {
+                                    const found = Object.keys(item).find(k => k.toLowerCase() === key.toLowerCase());
+                                    return found ? item[found] : undefined;
+                                };
+                                const product = getValItem('Product');
+                                const brand = getValItem('Brand');
+                                const ean = getValItem('Ean Code');
+                                const grm = getValItem('Grm');
+                                const cbm = getValItem('Cbm');
+                                const rateTypeVal = item.selectedRateType || getValItem('selectedRateType');
+                                const rate = parseFloat(String(getValItem(rateTypeVal) || '0').replace(/[^0-9.]/g, '')) || 0;
+                                const qty = item.quantity || getValItem('quantity') || 0;
+                                const total = rate * qty;
+                                return (
+                                    <tr key={idx} className="hover:bg-white transition-colors bg-white/50 border-b last:border-0 border-slate-100">
+                                        <td className="px-4 py-3 text-[12px] font-bold text-slate-800 whitespace-normal break-words max-w-[250px]" title={product}>{product || '—'}</td>
+                                        <td className="px-4 py-3 text-[10px] font-black text-slate-500 uppercase">{brand || '—'}</td>
+                                        <td className="px-4 py-3 text-[11px] text-[#2874f0] font-mono font-bold">{ean || '—'}</td>
+                                        <td className="px-4 py-3 text-[11px] text-right font-bold text-slate-600">{grm ? grm + 'g' : '—'}</td>
+                                        <td className="px-4 py-3 text-[11px] text-right font-bold text-slate-600">{cbm ? parseFloat(String(cbm)).toFixed(4) : '—'}</td>
+                                        <td className="px-4 py-3 text-[10px] text-center font-black text-[#2874f0] bg-[#2874f0]/5 uppercase">{rateTypeVal || '—'}</td>
+                                        <td className="px-4 py-3 text-[12px] text-right font-bold text-slate-900">${rate.toFixed(2)}</td>
+                                        <td className="px-4 py-3 text-[12px] text-right font-black text-slate-900 bg-slate-50">{qty}</td>
+                                        <td className="px-4 py-3 text-[12px] text-right font-black text-emerald-600">${total.toFixed(2)}</td>
+                                    </tr>
+                                );
+                            })}
+                        </tbody>
+                    </table>
+                )}
+              </div>
+            </motion.div>
+          </div>
         )}
       </AnimatePresence>
 
