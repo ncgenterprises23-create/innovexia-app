@@ -125,7 +125,7 @@ export default function ExportFMSPage() {
             const res = await fetch('/api/export-fms');
             const json = await res.json();
             if (json.data) {
-                const sanitized = json.data.filter((d: ExportFMS) => d['PI Number']?.trim()).map((d: ExportFMS, idx: number) => ({
+                const sanitized = json.data.filter((d: ExportFMS) => String(d['PI Number'] || '').trim()).map((d: ExportFMS, idx: number) => ({
                     ...d,
                     id: d.id ? String(d.id) : `temp-${idx}`
                 }));

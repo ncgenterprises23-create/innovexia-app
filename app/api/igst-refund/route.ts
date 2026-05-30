@@ -25,7 +25,7 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: 'At least one record is required' }, { status: 400 });
         }
 
-        const validRecords = records.filter(rec => rec.Shipping_Bill_No?.trim());
+        const validRecords = records.filter(rec => String(rec.Shipping_Bill_No || '').trim());
         if (validRecords.length === 0) {
             return NextResponse.json({ error: 'Shipping_Bill_No is required for all records' }, { status: 400 });
         }

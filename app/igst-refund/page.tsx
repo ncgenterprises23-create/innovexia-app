@@ -130,7 +130,7 @@ export default function IgstRefundPage() {
             const res = await fetch('/api/igst-refund');
             const json = await res.json();
             if (json.data) {
-                const sanitized = json.data.filter((d: IgstRefund) => d['Shipping_Bill_No']?.trim()).map((d: IgstRefund, idx: number) => {
+                const sanitized = json.data.filter((d: IgstRefund) => String(d['Shipping_Bill_No'] || '').trim()).map((d: IgstRefund, idx: number) => {
                     const realId = d.id || d.Id || d.ID;
                     return {
                         ...d,
@@ -196,8 +196,8 @@ export default function IgstRefundPage() {
     const activeData = useMemo(() => {
         let filtered = data.filter(d =>
             viewMode === 'cancelled'
-                ? d['Cancelled']?.trim().toLowerCase() === 'yes'
-                : !d['Cancelled'] || d['Cancelled'].trim().toLowerCase() !== 'yes'
+                ? String(d['Cancelled'] || '').toLowerCase() === 'yes'
+                : !d['Cancelled'] || String(d['Cancelled'] || '').toLowerCase() !== 'yes'
         );
 
         if (viewMode === 'data' && activeStepFilter !== 'all') {
@@ -246,7 +246,7 @@ export default function IgstRefundPage() {
     }, [data, viewMode, activeStepFilter, activeTimeFilter]);
 
     const statusStats = useMemo(() => {
-        const active = data.filter(d => !d['Cancelled'] || d['Cancelled'].trim().toLowerCase() !== 'yes');
+        const active = data.filter(d => !d['Cancelled'] || String(d['Cancelled'] || '').toLowerCase() !== 'yes');
         const stats: any = { Total: active.length };
         for (let i = 1; i <= 6; i++) {
             // Count items currently at this step (completed all previous steps, not yet completed this one)
@@ -270,7 +270,7 @@ export default function IgstRefundPage() {
     }, [data]);
 
     const timeStats = useMemo(() => {
-        const active = data.filter(d => !d['Cancelled'] || d['Cancelled'].trim().toLowerCase() !== 'yes');
+        const active = data.filter(d => !d['Cancelled'] || String(d['Cancelled'] || '').toLowerCase() !== 'yes');
         const now = new Date();
         const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
         const oneDayMs = 24 * 60 * 60 * 1000;
@@ -407,7 +407,7 @@ export default function IgstRefundPage() {
     };
 
     const handleSave = async () => {
-        if (!form.Shipping_Bill_No.trim()) {
+        if (!String(form.Shipping_Bill_No || '').trim()) {
             toast.error('Shipping_Bill_No is required');
             return;
         }

@@ -180,36 +180,40 @@ export default function WebsitePage() {
 
     // Apply role-based filters first:
     const isClientUser = user?.role_name === 'Client';
-    if (isClientUser && user) {
-      const matchFullName = (user.full_name || '').toLowerCase();
-      const matchUsername = (user.username || '').toLowerCase();
-      
-      result = result.filter(row => {
-        const party = String(row['Party Name'] || row.Party_Name || row['PARTY NAME'] || '').toLowerCase();
-        const pb = String(row.Prepared_By || row['Prepared By'] || '').toLowerCase();
-        const username = String(row.Username || '').toLowerCase();
-        
-        return party.includes(matchFullName) || party.includes(matchUsername) ||
-               pb.includes(matchFullName) || pb.includes(matchUsername) ||
-               username.includes(matchFullName) || username.includes(matchUsername) ||
-               party === 'client user' || pb === 'client user';
-      });
-    }
+    
+    // Bypass party/user filtering for the PreOrder catalog
+    if (activeTab !== 'PreOrder') {
+        if (isClientUser && user) {
+          const matchFullName = (user.full_name || '').toLowerCase();
+          const matchUsername = (user.username || '').toLowerCase();
+          
+          result = result.filter(row => {
+            const party = String(row['Party Name'] || row.Party_Name || row['PARTY NAME'] || '').toLowerCase();
+            const pb = String(row.Prepared_By || row['Prepared By'] || '').toLowerCase();
+            const username = String(row.Username || '').toLowerCase();
+            
+            return party.includes(matchFullName) || party.includes(matchUsername) ||
+                   pb.includes(matchFullName) || pb.includes(matchUsername) ||
+                   username.includes(matchFullName) || username.includes(matchUsername) ||
+                   party === 'client user' || pb === 'client user';
+          });
+        }
 
-    // Apply Party dropdown filter (for ERP User only)
-    if (!isClientUser && filterParty) {
-      result = result.filter(row => {
-        const { party } = getRowPartyAndPi(row);
-        return party.toLowerCase() === filterParty.toLowerCase();
-      });
-    }
+        // Apply Party dropdown filter (for ERP User only)
+        if (!isClientUser && filterParty) {
+          result = result.filter(row => {
+            const { party } = getRowPartyAndPi(row);
+            return party.toLowerCase() === filterParty.toLowerCase();
+          });
+        }
 
-    // Apply PI Number dropdown filter
-    if (filterPiNumber) {
-      result = result.filter(row => {
-        const { pi } = getRowPartyAndPi(row);
-        return pi.toLowerCase() === filterPiNumber.toLowerCase();
-      });
+        // Apply PI Number dropdown filter
+        if (filterPiNumber) {
+          result = result.filter(row => {
+            const { pi } = getRowPartyAndPi(row);
+            return pi.toLowerCase() === filterPiNumber.toLowerCase();
+          });
+        }
     }
 
     // Note: Tracker and Orders strict ERP filters were removed so ERP users can view all data through dropdowns.
@@ -227,7 +231,7 @@ export default function WebsitePage() {
         result.sort((a, b) => (parseFloat(String(getVal(b, rateType)).replace(/[^0-9.]/g, '')) || 0) - (parseFloat(String(getVal(a, rateType)).replace(/[^0-9.]/g, '')) || 0));
     }
     return result;
-  }, [data, searchQuery, selectedProductType, selectedBrand, sortBy, rateType]);
+  }, [data, searchQuery, selectedProductType, selectedBrand, sortBy, rateType, activeTab, user, filterParty, filterPiNumber]);
 
   const totalPages = Math.ceil(filteredAndSortedData.length / ITEMS_PER_PAGE);
   const paginatedData = useMemo(() => {
