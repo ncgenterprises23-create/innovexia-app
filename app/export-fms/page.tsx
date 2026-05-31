@@ -117,7 +117,15 @@ export default function ExportFMSPage() {
     const [isChecklistViewModalOpen, setIsChecklistViewModalOpen] = useState(false);
     const [checklistViewItem, setChecklistViewItem] = useState<ExportFMS | null>(null);
     const [checklistViewStep, setChecklistViewStep] = useState<number | null>(null);
-    const [savedChecklistItems, setSavedChecklistItems] = useState<string[]>([]);
+    const [savedChecklistItems, setSavedChecklistItems] = useState<any>([]);
+    const [step3FormData, setStep3FormData] = useState({
+        stock: '',
+        date: '',
+        specialRemarks: '',
+        packSize: '',
+        documents: [] as string[],
+        leadTime: ''
+    });
 
     const fetchData = async () => {
         setLoading(true);
@@ -352,7 +360,9 @@ export default function ExportFMSPage() {
                     updatedData[`Status_${currentStep}`] = 'Completed';
 
                     // Add checklist items if this step has checklists
-                    if (STEP_CHECKLISTS[currentStep]) {
+                    if (currentStep === 3) {
+                        updatedData[`Checklist_3`] = JSON.stringify(step3FormData);
+                    } else if (STEP_CHECKLISTS[currentStep]) {
                         const checklistItems = Array.from(selectedChecklist)
                             .filter(key => key.startsWith(`step_${currentStep}_item_`))
                             .map(key => {
@@ -382,6 +392,7 @@ export default function ExportFMSPage() {
             setItemsToMarkDone(new Set());
             setSelectedItems(new Set());
             setSelectedChecklist(new Set());
+            setStep3FormData({ stock: '', date: '', specialRemarks: '', packSize: '', documents: [], leadTime: '' });
             setIsBulkUpdateModalOpen(false);
             fetchData();
         } catch (error) {
@@ -540,19 +551,23 @@ export default function ExportFMSPage() {
     const openChecklistViewModal = (item: ExportFMS, step: number) => {
         const checklistKey = `Checklist_${step}` as keyof ExportFMS;
         const checklistData = item[checklistKey] as any;
-        let submittedItems: string[] = [];
+        let submittedItems: any = step === 3 ? {} : [];
         
         if (checklistData) {
             try {
-                // Handle both string and array formats
+                // Handle string, array, and object formats
                 if (typeof checklistData === 'string') {
                     submittedItems = JSON.parse(checklistData);
-                } else if (Array.isArray(checklistData)) {
+                    // Ensure that if it parsed as a string again (double serialized), we parse again
+                    if (typeof submittedItems === 'string') {
+                        submittedItems = JSON.parse(submittedItems);
+                    }
+                } else if (typeof checklistData === 'object' && checklistData !== null) {
                     submittedItems = checklistData;
                 }
             } catch (e) {
                 console.error('Error parsing checklist data:', e);
-                submittedItems = [];
+                submittedItems = step === 3 ? {} : [];
             }
         }
         
@@ -980,7 +995,7 @@ export default function ExportFMSPage() {
                                                         const planned = item[`Planned_${s.step}` as keyof ExportFMS] as string;
                                                         const actual = item[`Actual_${s.step}` as keyof ExportFMS] as string;
                                                         const delay = getDelayInfo(planned, actual);
-                                                        const hasChecklist = STEP_CHECKLISTS[s.step];
+                                                        const hasChecklist = STEP_CHECKLISTS[s.step] || s.step === 3;
                                                         const checklistData = hasChecklist ? item[`Checklist_${s.step}` as keyof ExportFMS] as string : null;
 
                                                         return (
@@ -1297,7 +1312,51 @@ export default function ExportFMSPage() {
                                                         ))}
                                                     </div>
 
-                                                    {STEP_CHECKLISTS[stage.step] && stageItems.some(i => itemsToMarkDone.has(i.id)) && (
+                                                    {stage.step === 3 && stageItems.some(i => itemsToMarkDone.has(i.id)) ? (
+                                                        <div className="border-t border-gray-200 dark:border-gray-700 pt-4 mt-4">
+                                                            <h4 className="text-[10px] font-black text-gray-900 dark:text-white uppercase tracking-tight mb-3">Step 3 Details</h4>
+                                                            <div className="space-y-3 p-4 bg-white dark:bg-gray-800/50 rounded-xl border border-gray-100 dark:border-gray-700">
+                                                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                                                    <div>
+                                                                        <label className="block text-[9px] font-black uppercase text-gray-500 mb-1">Stock</label>
+                                                                        <input type="text" value={step3FormData.stock} onChange={e => setStep3FormData(s => ({...s, stock: e.target.value}))} className="w-full px-3 py-2 text-xs border rounded-xl bg-gray-50 dark:bg-gray-900/50 dark:border-gray-700 outline-none focus:border-[var(--theme-primary)] transition-all" placeholder="Enter stock" />
+                                                                    </div>
+                                                                    <div>
+                                                                        <label className="block text-[9px] font-black uppercase text-gray-500 mb-1">Date</label>
+                                                                        <input type="date" value={step3FormData.date} onChange={e => setStep3FormData(s => ({...s, date: e.target.value}))} className="w-full px-3 py-2 text-xs border rounded-xl bg-gray-50 dark:bg-gray-900/50 dark:border-gray-700 outline-none focus:border-[var(--theme-primary)] transition-all" />
+                                                                    </div>
+                                                                    <div>
+                                                                        <label className="block text-[9px] font-black uppercase text-gray-500 mb-1">Pack Size</label>
+                                                                        <input type="text" value={step3FormData.packSize} onChange={e => setStep3FormData(s => ({...s, packSize: e.target.value}))} className="w-full px-3 py-2 text-xs border rounded-xl bg-gray-50 dark:bg-gray-900/50 dark:border-gray-700 outline-none focus:border-[var(--theme-primary)] transition-all" placeholder="Enter pack size" />
+                                                                    </div>
+                                                                    <div>
+                                                                        <label className="block text-[9px] font-black uppercase text-gray-500 mb-1">Lead Time</label>
+                                                                        <input type="text" value={step3FormData.leadTime} onChange={e => setStep3FormData(s => ({...s, leadTime: e.target.value}))} className="w-full px-3 py-2 text-xs border rounded-xl bg-gray-50 dark:bg-gray-900/50 dark:border-gray-700 outline-none focus:border-[var(--theme-primary)] transition-all" placeholder="Enter lead time" />
+                                                                    </div>
+                                                                </div>
+                                                                <div>
+                                                                    <label className="block text-[9px] font-black uppercase text-gray-500 mb-1">Special Remarks</label>
+                                                                    <textarea value={step3FormData.specialRemarks} onChange={e => setStep3FormData(s => ({...s, specialRemarks: e.target.value}))} className="w-full px-3 py-2 text-xs border rounded-xl bg-gray-50 dark:bg-gray-900/50 dark:border-gray-700 outline-none focus:border-[var(--theme-primary)] transition-all" placeholder="Special remarks (e.g., Like toy)" rows={2} />
+                                                                </div>
+                                                                <div>
+                                                                    <label className="block text-[9px] font-black uppercase text-gray-500 mb-2">Documents List</label>
+                                                                    <div className="grid grid-cols-2 gap-2">
+                                                                        {['Invoice', 'Packing list', 'BL', 'COC', 'Health', 'Milk declaration', 'Loading photos.'].map(doc => (
+                                                                            <label key={doc} className="flex items-center gap-2.5 p-2 bg-gray-50 dark:bg-gray-900/50 rounded-lg border border-gray-100 dark:border-gray-700 cursor-pointer hover:border-[var(--theme-primary)] transition-all">
+                                                                                <input type="checkbox" checked={step3FormData.documents.includes(doc)} onChange={e => {
+                                                                                    setStep3FormData(s => ({
+                                                                                        ...s,
+                                                                                        documents: e.target.checked ? [...s.documents, doc] : s.documents.filter(d => d !== doc)
+                                                                                    }))
+                                                                                }} className="w-4 h-4 rounded border-2 accent-[var(--theme-primary)] cursor-pointer" />
+                                                                                <span className="text-[10px] font-bold text-gray-700 dark:text-gray-300">{doc}</span>
+                                                                            </label>
+                                                                        ))}
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    ) : STEP_CHECKLISTS[stage.step] && stageItems.some(i => itemsToMarkDone.has(i.id)) && (
                                                         <div className="border-t border-gray-200 dark:border-gray-700 pt-4 mt-4">
                                                             <h4 className="text-[10px] font-black text-gray-900 dark:text-white uppercase tracking-tight mb-3">Checklist Items for Step {stage.step}</h4>
                                                             <div className="space-y-2 max-h-64 overflow-y-auto p-2 bg-white dark:bg-gray-800/50 rounded-xl border border-gray-100 dark:border-gray-700">
@@ -1371,6 +1430,49 @@ export default function ExportFMSPage() {
 
                                     <div className="p-6 space-y-3 max-h-[60vh] overflow-y-auto">
                                         {(() => {
+                                            if (checklistViewStep === 3) {
+                                                const data = (savedChecklistItems as any) || {};
+                                                return (
+                                                    <div className="space-y-3">
+                                                        <div className="grid grid-cols-2 gap-3">
+                                                            <div className="bg-slate-50 dark:bg-slate-800 p-3 rounded-xl border dark:border-slate-700 shadow-sm">
+                                                                <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-0.5">Stock</p>
+                                                                <p className="text-sm font-bold text-slate-900 dark:text-white">{data.stock || '-'}</p>
+                                                            </div>
+                                                            <div className="bg-slate-50 dark:bg-slate-800 p-3 rounded-xl border dark:border-slate-700 shadow-sm">
+                                                                <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-0.5">Date</p>
+                                                                <p className="text-sm font-bold text-slate-900 dark:text-white">{data.date ? new Date(data.date).toLocaleDateString('en-GB') : '-'}</p>
+                                                            </div>
+                                                            <div className="bg-slate-50 dark:bg-slate-800 p-3 rounded-xl border dark:border-slate-700 shadow-sm">
+                                                                <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-0.5">Pack Size</p>
+                                                                <p className="text-sm font-bold text-slate-900 dark:text-white">{data.packSize || '-'}</p>
+                                                            </div>
+                                                            <div className="bg-slate-50 dark:bg-slate-800 p-3 rounded-xl border dark:border-slate-700 shadow-sm">
+                                                                <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-0.5">Lead Time</p>
+                                                                <p className="text-sm font-bold text-slate-900 dark:text-white">{data.leadTime || '-'}</p>
+                                                            </div>
+                                                        </div>
+                                                        <div className="bg-slate-50 dark:bg-slate-800 p-3 rounded-xl border dark:border-slate-700 shadow-sm">
+                                                            <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-0.5">Special Remarks</p>
+                                                            <p className="text-sm font-bold text-slate-900 dark:text-white whitespace-pre-wrap">{data.specialRemarks || '-'}</p>
+                                                        </div>
+                                                        <div className="bg-slate-50 dark:bg-slate-800 p-3 rounded-xl border dark:border-slate-700 shadow-sm">
+                                                            <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1.5">Documents</p>
+                                                            {data.documents?.length > 0 ? (
+                                                                <div className="flex flex-wrap gap-1.5">
+                                                                    {data.documents.map((d: string) => (
+                                                                        <span key={d} className="px-2.5 py-1 bg-white dark:bg-slate-900 border border-gray-200 dark:border-gray-600 rounded-lg text-[10px] font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5 shadow-sm">
+                                                                            <CheckCircle2 size={12} className="text-[var(--theme-primary)]" />
+                                                                            {d}
+                                                                        </span>
+                                                                    ))}
+                                                                </div>
+                                                            ) : <p className="text-sm font-bold text-slate-900 dark:text-white">-</p>}
+                                                        </div>
+                                                    </div>
+                                                );
+                                            }
+
                                             const allItems = checklistViewStep && STEP_CHECKLISTS[checklistViewStep] ? STEP_CHECKLISTS[checklistViewStep] : [];
                                             
                                             if (allItems.length === 0) {

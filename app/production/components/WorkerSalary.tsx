@@ -176,12 +176,15 @@ export default function WorkerSalary() {
     const otHours = record.otHours ? parseFloat(record.otHours) : 0;
     const otAmount = Math.round(otHours * otRate);
 
+    // If present on Sunday, it's double paid (baseDaily * 2)
+    const currentBase = isSunday ? baseDaily * 2 : baseDaily;
+
     return {
       present: true,
       isPaidSunday: isSunday,
-      base: baseDaily,
+      base: currentBase,
       ot: otAmount,
-      total: baseDaily + otAmount,
+      total: currentBase + otAmount,
       otHours
     };
   };
@@ -190,6 +193,7 @@ export default function WorkerSalary() {
     let absentOnWorkingDay = false;
     let absentDaysCount = 0;
     let totalOtAmount = 0;
+    let totalBaseAmount = 0;
     const baseDaily = getDailyBase(worker.salary);
     const monthlySalary = Number(worker.salary) || 0;
 
@@ -212,6 +216,7 @@ export default function WorkerSalary() {
           }
         }
 
+        totalBaseAmount += salaryInfo.base;
         if (salaryInfo.present) {
           totalOtAmount += salaryInfo.ot;
         }
@@ -219,7 +224,7 @@ export default function WorkerSalary() {
     }
 
     const expected = passedWorkingDaysCount * baseDaily;
-    const achievedBase = Math.max(0, expected - (absentDaysCount * baseDaily));
+    const achievedBase = totalBaseAmount;
     const achieved = achievedBase + totalOtAmount;
     const incentive = (!absentOnWorkingDay && worker.incentive === 'Yes') ? 500 : 0;
 
@@ -425,7 +430,7 @@ export default function WorkerSalary() {
                                         </div>
                                         {salaryInfo.ot > 0 && (
                                           <span className="text-[9px] font-bold text-emerald-600/70 dark:text-emerald-400/80 -mt-0.5 whitespace-nowrap">
-                                            {salaryInfo.isPaidSunday ? `OT: ₹${salaryInfo.ot}` : `${salaryInfo.base}+${salaryInfo.ot}`}
+                                            {`${salaryInfo.base}+${salaryInfo.ot}`}
                                           </span>
                                         )}
                                       </>
