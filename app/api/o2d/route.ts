@@ -1,4 +1,6 @@
 import { NextResponse } from 'next/server';
+
+export const dynamic = 'force-dynamic';
 import { createO2DOrder, getO2DOrders, updateO2DOrder, deleteO2DOrder, updateO2DItem, deleteO2DItem, updateO2DFollowUp } from '@/lib/sheets';
 
 export async function GET() {

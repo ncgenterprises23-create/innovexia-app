@@ -1,4 +1,6 @@
 import { NextResponse } from 'next/server';
+
+export const dynamic = 'force-dynamic';
 import { getIgstRefundConfig, updateIgstRefundConfig } from '@/lib/sheets';
 
 export async function GET() {
