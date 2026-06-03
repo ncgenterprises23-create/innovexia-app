@@ -118,7 +118,7 @@ export function rowToObject(headers: string[], row: any[]): any {
     // Handle Date fields automatically
     const dateHeaders = ['created_at', 'updated_at', 'due_date', 'date', 'last_updated', 'follow_up_date', 'next_follow_up_date'];
     if (dateHeaders.includes(header.toLowerCase())) {
-      obj[header] = parseSheetDate(value);
+      obj[header] = parseSheetDate(value) || (value === '' || value === undefined ? null : value);
       return;
     }
 
@@ -161,7 +161,7 @@ export function objectToRow(headers: string[], obj: any): any[] {
 function addDaysSkipSunday(date: Date, days: number): Date {
   const result = new Date(date);
   let daysToAdd = days;
-  
+
   while (daysToAdd > 0) {
     result.setDate(result.getDate() + 1);
     // Skip if Sunday (day 0)
@@ -169,14 +169,14 @@ function addDaysSkipSunday(date: Date, days: number): Date {
       daysToAdd--;
     }
   }
-  
+
   return result;
 }
 
 // Helper function to parse date string and return Date object
 function parseDate(dateStr: any): Date | null {
   if (!dateStr) return null;
-  
+
   try {
     // Handle ISO format (YYYY-MM-DDTHH:mm:ss or YYYY-MM-DD)
     if (typeof dateStr === 'string' && dateStr.match(/\d{4}-\d{2}-\d{2}/)) {
@@ -7475,7 +7475,7 @@ export async function updateIgstRefundData(id: string | number, updates: any) {
 
     const headers = rows[0].map((h: string) => h.trim());
     const dataRows = rows.slice(1);
-    
+
     const targetId = String(id);
     const rowIdx = dataRows.findIndex(row => String(row[0]) === targetId);
 
@@ -7646,21 +7646,21 @@ export async function createClientInterfaceData(sheetName: string, data: any) {
     // Initialize headers for Orders/Tracker if empty
     if (headers.length === 0) {
       if (sheetName === 'Orders') {
-        headers = ['PI_Number', 'Date', 'Mode', 'Prepared_By', 'Total_Qty', 'Total_Weight', 'Total_Volume', 'Cont_Fill', 'Est_Value', 'PDF_Link', 'Line_Items', 'created_at'];
+        headers = ['PI_Number', 'CI Number', 'Date', 'Mode', 'Prepared_By', 'Total_Qty', 'Total_Weight', 'Total_Volume', 'Cont_Fill', 'Est_Value', 'PDF_Link', 'Line_Items', 'created_at'];
       } else if (sheetName === 'Tracker') {
-        headers = ['Party Name', 'PI Number', 'Production', 'Loading', 'On Road to Port', 'Custom', 'Waiting for Vercel', 'Waiting for Vercel Link', 'Sailed', 'Sailed Manual Input', 'About to Arrive', 'Arrived', 'created_at'];
+        headers = ['Party Name', 'PI Number', 'Production', 'Loading', 'On Road to Port', 'Custom', 'Waiting for Vercel', 'Waiting for Vercel Link', 'Sailed', 'Put container no on the link', 'About to Arrive', 'Arrived', 'created_at'];
       }
       if (headers.length > 0) {
         await sheets.spreadsheets.values.update({
-            spreadsheetId,
-            range: `${sheetName}!A1:AZ1`,
-            valueInputOption: 'USER_ENTERED',
-            requestBody: { values: [headers] }
+          spreadsheetId,
+          range: `${sheetName}!A1:AZ1`,
+          valueInputOption: 'USER_ENTERED',
+          requestBody: { values: [headers] }
         });
       }
     }
 
-    const rowDataArray = Array.isArray(data) 
+    const rowDataArray = Array.isArray(data)
       ? data.map(item => objectToRow(headers, item))
       : [objectToRow(headers, data)];
 

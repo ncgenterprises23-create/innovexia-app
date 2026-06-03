@@ -29,6 +29,10 @@ export default function ClientInterfacePage() {
   const [formData, setFormData] = useState({ Username: '', Password: '' });
   const [showPassword, setShowPassword] = useState(false);
   const [viewLineItems, setViewLineItems] = useState<any[] | null>(null);
+
+  const [showOrderModal, setShowOrderModal] = useState(false);
+  const [orderEditItem, setOrderEditItem] = useState<any | null>(null);
+  const [orderForm, setOrderForm] = useState({ 'CI Number': '' });
   
   const [showInventoryModal, setShowInventoryModal] = useState(false);
   const [inventoryEditItem, setInventoryEditItem] = useState<any | null>(null);
@@ -61,7 +65,7 @@ export default function ClientInterfacePage() {
     'Waiting for Vercel': '',
     'Waiting for Vercel Link': '',
     'Sailed': '',
-    'Sailed Manual Input': '',
+    'Put container no on the link': '',
     'About to Arrive': '',
     'Arrived': '',
   };
@@ -156,7 +160,17 @@ export default function ClientInterfacePage() {
   const headers = useMemo(() => {
     if (activeTab === 'Client User') return ['Username', 'Password'];
     if (data.length === 0) return [];
-    return Object.keys(data[0]);
+    let keys = Object.keys(data[0]);
+    if (activeTab === 'Orders') {
+        keys = keys.filter(k => k !== 'CI Number' && k !== 'CI_Number');
+        const piIndex = keys.findIndex(k => k === 'PI Number' || k === 'PI_Number');
+        if (piIndex !== -1) {
+            keys.splice(piIndex + 1, 0, 'CI Number');
+        } else {
+            keys.push('CI Number');
+        }
+    }
+    return keys;
   }, [data, activeTab]);
 
   const handleSave = async (e: React.FormEvent) => {
@@ -192,6 +206,40 @@ export default function ClientInterfacePage() {
     } finally {
       hideLoader();
     }
+  };
+
+  const handleOrderSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    showLoader();
+    try {
+      const response = await fetch('/api/client-interface', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tab: 'Orders',
+          identifierKey: 'PI_Number',
+          identifierValue: orderEditItem?.PI_Number || orderEditItem?.['PI Number'],
+          updates: { 'CI Number': orderForm['CI Number'] }
+        }),
+      });
+      if (!response.ok) throw new Error('Failed to update CI Number');
+      addToast('CI Number updated successfully', 'success');
+      setShowOrderModal(false);
+      setOrderEditItem(null);
+      fetchData(activeTab);
+    } catch (error: any) {
+      addToast(error.message || 'Failed to save CI Number', 'error');
+    } finally {
+      hideLoader();
+    }
+  };
+
+  const handleOrderEdit = (row: any) => {
+    setOrderEditItem(row);
+    setOrderForm({
+      'CI Number': row['CI Number'] || '',
+    });
+    setShowOrderModal(true);
   };
 
   const handleInventorySubmit = async (e: React.FormEvent) => {
@@ -389,7 +437,7 @@ export default function ClientInterfacePage() {
       'Waiting for Vercel': row['Waiting for Vercel'] || '',
       'Waiting for Vercel Link': row['Waiting for Vercel Link'] || '',
       'Sailed': row['Sailed'] || '',
-      'Sailed Manual Input': row['Sailed Manual Input'] || '',
+      'Put container no on the link': row['Put container no on the link'] || '',
       'About to Arrive': row['About to Arrive'] || '',
       'Arrived': row['Arrived'] || '',
     });
@@ -810,7 +858,7 @@ export default function ClientInterfacePage() {
                 <table className="w-full text-left border-collapse table-auto">
                   <thead className="sticky top-0 z-10 bg-[var(--theme-primary)] shadow-sm">
                     <tr>
-                      {(activeTab === 'Client User' || activeTab === 'Inventory' || activeTab === 'Tracker' || activeTab === 'Documents') && (
+                      {(activeTab === 'Client User' || activeTab === 'Orders' || activeTab === 'Inventory' || activeTab === 'Tracker' || activeTab === 'Documents') && (
                           <th className="px-4 py-3 text-[10px] font-black text-gray-900 uppercase tracking-widest border-b border-gray-100/20 dark:border-gray-700/30">
                               Actions
                           </th>
@@ -850,6 +898,17 @@ export default function ClientInterfacePage() {
                                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                                     </button>
                                 </div>
+                            </td>
+                        )}
+                        {activeTab === 'Orders' && (
+                            <td className="px-4 py-2.5 text-xs whitespace-nowrap">
+                                <button 
+                                    onClick={() => handleOrderEdit(row)}
+                                    title="Add CI Number"
+                                    className="p-1.5 bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-lg hover:scale-110 transition-transform"
+                                >
+                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                                </button>
                             </td>
                         )}
                         {activeTab === 'Inventory' && (
@@ -1354,6 +1413,65 @@ export default function ClientInterfacePage() {
         )}
       </AnimatePresence>
 
+      {/* Order Modal */}
+      <AnimatePresence>
+        {showOrderModal && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white dark:bg-gray-800 w-full max-w-md flex flex-col rounded-2xl shadow-2xl overflow-hidden"
+            >
+              <div className="p-6 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center bg-[var(--theme-primary)]">
+                <h2 className="text-xl font-black text-gray-900">Add CI Number</h2>
+                <button onClick={() => { setShowOrderModal(false); setOrderEditItem(null); }} className="text-gray-900 hover:scale-110 transition-transform">
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+              </div>
+
+              <form onSubmit={handleOrderSubmit} className="p-6 space-y-4">
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">PI Number</label>
+                  <input
+                    type="text"
+                    disabled
+                    value={orderEditItem?.PI_Number || orderEditItem?.['PI Number'] || ''}
+                    className="w-full px-4 py-2 bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-xl outline-none text-gray-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">CI Number</label>
+                  <input
+                    type="text"
+                    required
+                    value={orderForm['CI Number']}
+                    onChange={(e) => setOrderForm({ ...orderForm, 'CI Number': e.target.value })}
+                    className="w-full px-4 py-2 bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-xl outline-none focus:ring-2 focus:ring-[var(--theme-primary)] dark:text-white"
+                    placeholder="Enter CI Number..."
+                  />
+                </div>
+                <div className="pt-4 flex gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setShowOrderModal(false)}
+                    className="flex-1 px-4 py-2 bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 font-bold rounded-xl hover:bg-gray-200 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="flex-1 px-4 py-2 bg-[var(--theme-primary)] text-gray-900 font-bold rounded-xl shadow-sm hover:scale-105 transition-transform"
+                  >
+                    Save
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
       {/* Tracker Modal */}
       <AnimatePresence>
         {showTrackerModal && (
@@ -1480,14 +1598,14 @@ export default function ClientInterfacePage() {
                         className="w-full px-4 py-2 bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-xl outline-none focus:ring-2 focus:ring-[var(--theme-primary)] dark:text-white text-xs"
                       />
                     </div>
-                    {/* Sailed Manual Input */}
+                    {/* Put container no on the link */}
                     <div>
-                      <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Sailed Manual Input (e.g. Vessel Info)</label>
+                      <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Put container no on the link</label>
                       <input
                         type="text"
-                        placeholder="Vessel name, voyage no., etc."
-                        value={trackerForm['Sailed Manual Input'] || ''}
-                        onChange={(e) => setTrackerForm({ ...trackerForm, 'Sailed Manual Input': e.target.value })}
+                        placeholder="Container no., link, etc."
+                        value={trackerForm['Put container no on the link'] || ''}
+                        onChange={(e) => setTrackerForm({ ...trackerForm, 'Put container no on the link': e.target.value })}
                         className="w-full px-4 py-2 bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-xl outline-none focus:ring-2 focus:ring-[var(--theme-primary)] dark:text-white text-xs"
                       />
                     </div>

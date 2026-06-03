@@ -11,6 +11,7 @@ const tabs = [
   { id: 'PreOrder', label: 'PRE-ORDER', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" /></svg> },
   { id: 'Orders', label: 'ORDERS', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" /></svg> },
   { id: 'Inventory', label: 'INVENTORY', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" /></svg> },
+  { id: 'Freshness', label: 'FRESHNESS', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3" /></svg> },
   { id: 'Tracker', label: 'TRACKER', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg> },
   { id: 'Documents', label: 'DOCUMENTS', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg> },
 ];
@@ -69,6 +70,7 @@ export default function WebsitePage() {
   const [ordersData, setOrdersData] = useState<any[]>([]);
   const [filterParty, setFilterParty] = useState('');
   const [filterPiNumber, setFilterPiNumber] = useState('');
+  const [editingOrderPi, setEditingOrderPi] = useState<string | null>(null);
 
   const { showLoader, hideLoader } = useLoader();
   const { addToast } = useToast();
@@ -97,13 +99,14 @@ export default function WebsitePage() {
     setLoading(true);
     showLoader();
     try {
-      const response = await fetch(`/api/client-interface?tab=${encodeURIComponent(tabName)}`);
+      const apiTabName = tabName === 'Freshness' ? 'Inventory' : tabName;
+      const response = await fetch(`/api/client-interface?tab=${encodeURIComponent(apiTabName)}`);
       if (!response.ok) throw new Error('Failed to fetch data');
       const result = await response.json();
       setData(Array.isArray(result) ? result : []);
       setCurrentPage(1);
-      // For Inventory tab, also fetch Orders to cross-reference
-      if (tabName === 'Inventory') {
+      // For Inventory or Freshness tab, also fetch Orders to cross-reference
+      if (tabName === 'Inventory' || tabName === 'Freshness') {
         const ordRes = await fetch('/api/client-interface?tab=Orders');
         if (ordRes.ok) {
           const ordData = await ordRes.json();
@@ -130,6 +133,20 @@ export default function WebsitePage() {
     setFilterParty('');
     setFilterPiNumber('');
   }, [activeTab]);
+
+  useEffect(() => {
+    const handleMessage = (e: MessageEvent) => {
+        if (e.data === 'order_saved') {
+            setCart([]);
+            setEditingOrderPi(null);
+            fetchData('Orders');
+            setActiveTab('Orders');
+            addToast('Order saved successfully', 'success');
+        }
+    };
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, []);
 
   const getRowPartyAndPi = (row: any) => {
     const party = row['Party Name'] || row.Party_Name || row['PARTY NAME'] || row.Prepared_By || row['Prepared By'] || '';
@@ -372,6 +389,20 @@ export default function WebsitePage() {
     }
   };
 
+  const handleEditOrder = (order: any) => {
+    let items: any[] = [];
+    try {
+        const raw = order.Line_Items || order['Line Items'] || '';
+        items = typeof raw === 'string' ? JSON.parse(raw) : (Array.isArray(raw) ? raw : []);
+    } catch {}
+
+    setCart(items);
+    setRateType(order.Mode === 'FOB 40FT' ? 'FOB 40FT' : 'FOB 20FT');
+    setEditingOrderPi(order.PI_Number || order['PI Number'] || order.PI_NUMBER || null);
+    setActiveTab('PreOrder');
+    addToast('Order loaded into cart for editing', 'success');
+  };
+
   const generateOrderPdf = async () => {
     showLoader();
     try {
@@ -389,7 +420,7 @@ export default function WebsitePage() {
           finYear = `${String(currentYear - 1).slice(2)}${String(currentYear).slice(2)}`;
       }
       const seq = existingOrdersCount + 1;
-      const piNumber = `INN/${finYear}/INNE/${seq}`;
+      const piNumber = editingOrderPi || `INN/${finYear}/INNE/${seq}`;
 
       const date = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'long', year: 'numeric' });
       const rows = cart.map(item => {
@@ -438,6 +469,7 @@ export default function WebsitePage() {
       const html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8" /><title>Innovexia Order Request</title>
         <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
         <script type="application/json" id="order-payload">${JSON.stringify(orderPayload).replace(/</g, '\\u003c')}</script>
+        <script type="application/json" id="editing-pi">${editingOrderPi ? JSON.stringify(editingOrderPi) : 'null'}</script>
         <style>
       @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&display=swap');
       :root {
@@ -729,16 +761,29 @@ export default function WebsitePage() {
               const orderPayload = JSON.parse(payloadRaw);
               orderPayload.PDF_Link = pdfLink;
 
-              const saveRes = await fetch('/api/client-interface', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ tab: 'Orders', data: orderPayload })
-              });
+              const editingPiRaw = document.getElementById('editing-pi').textContent;
+              const editingPi = JSON.parse(editingPiRaw);
+
+              let saveRes;
+              if (editingPi) {
+                  saveRes = await fetch('/api/client-interface', {
+                      method: 'PUT',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ tab: 'Orders', identifierKey: 'PI_Number', identifierValue: editingPi, updates: orderPayload })
+                  });
+              } else {
+                  saveRes = await fetch('/api/client-interface', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ tab: 'Orders', data: orderPayload })
+                  });
+              }
 
               if (!saveRes.ok) throw new Error('Failed to save order');
 
-              btn.innerHTML = 'Order Placed Successfully!';
+              btn.innerHTML = editingPi ? 'Order Updated Successfully!' : 'Order Placed Successfully!';
               btn.style.background = '#10b981';
+              if (window.opener) { window.opener.postMessage('order_saved', '*'); }
           } catch (error) {
               console.error(error);
               alert('Error placing order: ' + error.message);
@@ -1036,7 +1081,7 @@ export default function WebsitePage() {
                             className="bg-white rounded-xl shadow-md border border-slate-100 overflow-hidden hover:shadow-xl transition-all duration-300"
                           >
                             {/* Card Header */}
-                            <div className="bg-gradient-to-r from-[#2874f0] to-[#1d4ed8] px-6 py-4 flex flex-wrap justify-between items-center gap-3">
+                            <div className="bg-gradient-to-r from-[#2874f0] to-[#1d4ed8] px-6 py-3 flex flex-wrap justify-between items-center gap-3">
                               <div className="flex items-center gap-4">
                                 <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center">
                                   <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
@@ -1049,6 +1094,10 @@ export default function WebsitePage() {
                               <div className="flex items-center gap-3">
                                 <span className="px-3 py-1 bg-white/20 text-white text-[10px] font-black rounded-full uppercase tracking-widest">{mode}</span>
                                 <span className="px-3 py-1 bg-yellow-400/90 text-[#1d4ed8] text-[10px] font-black rounded-full">{date}</span>
+                                <button onClick={() => handleEditOrder(order)} className="px-3 py-1 bg-white text-[#2874f0] text-[10px] font-black rounded-full hover:bg-blue-50 transition-colors flex items-center gap-1">
+                                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                                  EDIT
+                                </button>
                                 {pdfLink && (
                                   <a href={pdfLink} target="_blank" rel="noopener noreferrer" className="px-3 py-1 bg-white text-[#2874f0] text-[10px] font-black rounded-full hover:bg-blue-50 transition-colors flex items-center gap-1">
                                     <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
@@ -1061,20 +1110,23 @@ export default function WebsitePage() {
                             {/* Stats Row */}
                             <div className="grid grid-cols-2 sm:grid-cols-4 gap-px bg-slate-100">
                               {[
-                                { label: 'Total Qty', value: totalQty, icon: '📦', color: 'text-blue-600' },
-                                { label: 'Total Weight', value: totalWeight, icon: '⚖️', color: 'text-slate-700' },
-                                { label: 'Total Volume', value: totalVolume, icon: '📐', color: 'text-emerald-600' },
-                                { label: 'Est. Value', value: estValue, icon: '💰', color: 'text-[#2874f0] font-black text-base' },
+                                { label: 'Total Qty', value: totalQty, icon: <svg className="w-4 h-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" /></svg>, color: 'text-blue-600' },
+                                { label: 'Total Weight', value: totalWeight, icon: <svg className="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3" /></svg>, color: 'text-slate-700' },
+                                { label: 'Total Volume', value: totalVolume, icon: <svg className="w-4 h-4 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" /></svg>, color: 'text-emerald-600' },
+                                { label: 'Est. Value', value: estValue, icon: <svg className="w-4 h-4 text-[#2874f0]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>, color: 'text-[#2874f0]' },
                               ].map((stat, si) => (
-                                <div key={si} className="bg-white px-5 py-3 flex flex-col">
-                                  <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">{stat.icon} {stat.label}</span>
-                                  <span className={`text-[13px] font-black ${stat.color}`}>{stat.value}</span>
+                                <div key={si} className="bg-white px-5 py-2.5 flex flex-col justify-center">
+                                  <div className="flex items-center gap-2 text-[11px] font-black text-slate-400 uppercase tracking-widest mb-0.5">
+                                    {stat.icon}
+                                    <span>{stat.label}</span>
+                                  </div>
+                                  <span className={`text-lg font-black tracking-tight ${stat.color}`}>{stat.value}</span>
                                 </div>
                               ))}
                             </div>
 
                             {/* Container Fill Bar */}
-                            <div className="px-6 py-3 bg-slate-50 border-b flex items-center gap-4">
+                            <div className="px-6 py-2 bg-slate-50 border-b flex items-center gap-4">
                               <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest whitespace-nowrap">Container Fill</span>
                               <div className="flex-grow h-3 bg-slate-200 rounded-full overflow-hidden">
                                 <div
@@ -1087,8 +1139,8 @@ export default function WebsitePage() {
 
                             {/* Line Items */}
                             {lineItems.length > 0 && (
-                              <div className="px-6 py-4">
-                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">📋 Line Items ({lineItems.length} products)</p>
+                              <div className="px-6 py-3">
+                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">📋 Line Items ({lineItems.length} products)</p>
                                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2">
                                   {lineItems.slice(0, 8).map((item: any, li: number) => {
                                     const prodName = item.PRODUCT || item.Product || item.product || item.name || '—';
@@ -1132,16 +1184,35 @@ export default function WebsitePage() {
                         );
                       })}
                     </div>
-                                ) : activeTab === 'Inventory' ? (
-                    // ─── Inventory Dashboard ───────────────────────────
+                                ) : (activeTab === 'Inventory' || activeTab === 'Freshness') ? (
+                    // ─── Inventory/Freshness Dashboard ───────────────────────────
                     (() => {
-                      // Filter orders to this user's
-                      const userFullName = (user?.full_name || '').toLowerCase();
-                      const userUsername = (user?.username || '').toLowerCase();
-                      const myOrders = ordersData.filter(ord => {
-                        const pb = String(ord.Prepared_By || ord['Prepared By'] || '').toLowerCase();
-                        return pb === userFullName || pb === userUsername || pb === 'client user';
-                      });
+                      // Filter orders based on role and dropdowns
+                      let myOrders = ordersData;
+                      const isClientUser = user?.role_name === 'Client';
+                      
+                      if (isClientUser && user) {
+                          const matchFullName = (user.full_name || '').toLowerCase();
+                          const matchUsername = (user.username || '').toLowerCase();
+                          myOrders = myOrders.filter(ord => {
+                              const pb = String(ord.Prepared_By || ord['Prepared By'] || '').toLowerCase();
+                              return pb === matchFullName || pb === matchUsername || pb === 'client user';
+                          });
+                      }
+
+                      if (!isClientUser && filterParty) {
+                          myOrders = myOrders.filter(ord => {
+                              const party = String(ord['Party Name'] || ord.Party_Name || ord['PARTY NAME'] || ord.Prepared_By || ord['Prepared By'] || '').trim().toLowerCase();
+                              return party === filterParty.toLowerCase();
+                          });
+                      }
+
+                      if (filterPiNumber) {
+                          myOrders = myOrders.filter(ord => {
+                              const pi = String(ord.PI_Number || ord['PI Number'] || '').trim().toLowerCase();
+                              return pi === filterPiNumber.toLowerCase();
+                          });
+                      }
 
                       // All line items across all orders
                       const allOrderedItems: any[] = [];
@@ -1158,67 +1229,102 @@ export default function WebsitePage() {
                       // Helpers to parse numeric values
                       const n = (v: any) => parseFloat(String(v || '0').replace(/[^0-9.]/g, '')) || 0;
 
-                      // Ordered totals from line items
+                      // Totals tracking
                       let ordQty = 0, ordCbm = 0, ordWt = 0, ordFob = 0;
-                      allOrderedItems.forEach(it => {
-                        const qty = n(it.quantity || it.Qty || it.QTY || it.QUANTITY);
-                        ordQty += qty;
-                        ordCbm += n(it.Cbm || it.CBM || it.cbm) * qty;
-                        ordWt += (n(it.Grm || it.GRM || it.grm) * qty) / 1000;
-                        ordFob += n(it['FOB 20FT'] || it.FOB_20FT || it['FOB 40FT'] || it.FOB_40FT || it.Price || it.price) * qty;
-                      });
-
-                      // Received totals from Inventory sheet
                       let recQty = 0, recCbm = 0, recWt = 0, recFob = 0;
-                      invData.forEach(inv => {
-                        const qty = n(inv['Received Qty'] || inv.Received_Qty);
-                        recQty += qty;
-                        recWt += n(inv['Weight/Size'] || inv.Weight_Size) * qty / 1000;
-                        recFob += n(inv.Price) * qty;
-                      });
 
-                      // Item completion: for each ordered product, check if inventory has a matching entry
-                      const invProducts = new Set(invData.map((inv: any) => String(inv['Product Name'] || inv.Product_Name || '').toLowerCase().trim()));
-                      const completedItems = allOrderedItems.filter(it => invProducts.has(String(it.PRODUCT || it.Product || it.product || '').toLowerCase().trim()));
-                      const pendingItems = allOrderedItems.filter(it => !invProducts.has(String(it.PRODUCT || it.Product || it.product || '').toLowerCase().trim()));
+                      // Item completion tracking
+                      const completedItems: any[] = [];
+                      const pendingItems: any[] = [];
+                      
+                      allOrderedItems.forEach(it => {
+                          // Ordered properties
+                          const prodName = String(it.PRODUCT || it.Product || it.product || '').toLowerCase().trim();
+                          const orderedQty = n(it.quantity || it.Qty || it.QTY || it.QUANTITY);
+                          const itemCbm = n(it.Cbm || it.CBM || it.cbm);
+                          const itemGrm = n(it.Grm || it.GRM || it.grm);
+                          const itemPrice = n(it['FOB 20FT'] || it.FOB_20FT || it['FOB 40FT'] || it.FOB_40FT || it.Price || it.price);
+                          
+                          // Add to Ordered totals
+                          ordQty += orderedQty;
+                          ordCbm += itemCbm * orderedQty;
+                          ordWt += (itemGrm * orderedQty) / 1000;
+                          ordFob += itemPrice * orderedQty;
+                          
+                          // Find matching inventory entries for this PI and Product
+                          const exactMatches = invData.filter((inv: any) =>
+                            String(inv['Product Name'] || inv.Product_Name || '').toLowerCase().trim() === prodName &&
+                            String(inv['PI Number'] || inv.PI_Number || '').toLowerCase() === String(it._piNum).toLowerCase()
+                          );
+                          const fallbackMatches = exactMatches.length === 0 ? invData.filter((inv: any) =>
+                            String(inv['Product Name'] || inv.Product_Name || '').toLowerCase().trim() === prodName && !(inv['PI Number'])
+                          ) : [];
+                          const invMatches = exactMatches.length > 0 ? exactMatches : fallbackMatches;
+
+                          const totalReceived = invMatches.reduce((sum: number, inv: any) => sum + n(inv['Received Qty'] || inv.Received_Qty), 0);
+                          
+                          // Add to Received totals proportionally using the ordered properties
+                          recQty += totalReceived;
+                          recCbm += itemCbm * totalReceived;
+                          recWt += (itemGrm * totalReceived) / 1000;
+                          recFob += itemPrice * totalReceived;
+
+                          if (totalReceived >= orderedQty && orderedQty > 0) {
+                              completedItems.push(it);
+                          } else {
+                              pendingItems.push(it);
+                          }
+                      });
 
                       const tiles = [
-                        { label: 'Total Qty', ordered: ordQty.toFixed(0), received: recQty.toFixed(0), unit: 'units', color: '#2874f0', icon: '📦' },
-                        { label: 'Total Weight', ordered: ordWt.toFixed(2), received: recWt.toFixed(2), unit: 'kg', color: '#7c3aed', icon: '⚖️' },
-                        { label: 'Total CBM', ordered: ordCbm.toFixed(3), received: recCbm.toFixed(3), unit: 'm³', color: '#0891b2', icon: '📐' },
-                        { label: 'Total FOB', ordered: `$${ordFob.toFixed(2)}`, received: `$${recFob.toFixed(2)}`, unit: '', color: '#059669', icon: '💰' },
-                        { label: 'Items Status', ordered: `${completedItems.length} Done`, received: `${pendingItems.length} Pending`, unit: '', color: pendingItems.length > 0 ? '#f59e0b' : '#10b981', icon: '✅' },
+                        { label: 'Total Qty', rawOrd: ordQty, rawRec: recQty, ordered: ordQty.toFixed(0), received: recQty.toFixed(0), unit: 'units', color: '#2874f0', icon: <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" /></svg> },
+                        { label: 'Total Weight', rawOrd: ordWt, rawRec: recWt, ordered: ordWt.toFixed(2), received: recWt.toFixed(2), unit: 'kg', color: '#7c3aed', icon: <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3" /></svg> },
+                        { label: 'Total CBM', rawOrd: ordCbm, rawRec: recCbm, ordered: ordCbm.toFixed(3), received: recCbm.toFixed(3), unit: 'm³', color: '#0891b2', icon: <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" /></svg> },
+                        { label: 'Total FOB', rawOrd: ordFob, rawRec: recFob, ordered: `$${ordFob.toFixed(2)}`, received: `$${recFob.toFixed(2)}`, unit: '', color: '#059669', icon: <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg> },
+                        { label: 'Items Status', rawOrd: completedItems.length + pendingItems.length, rawRec: completedItems.length, ordered: `${completedItems.length} Done`, received: `${pendingItems.length} Pending`, unit: '', color: pendingItems.length > 0 ? '#f59e0b' : '#10b981', icon: <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg> },
                       ];
 
                       return (
                         <div className="space-y-6">
                           {/* Summary Tiles */}
+                          {activeTab !== 'Freshness' && (
                           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-                            {tiles.map((tile, ti) => (
-                              <div key={ti} className="bg-white rounded-xl shadow-md border border-slate-100 p-4 flex flex-col gap-2 hover:shadow-lg transition-all">
+                            {tiles.map((tile, ti) => {
+                              const pct = tile.rawOrd > 0 ? (tile.rawRec / tile.rawOrd) * 100 : 0;
+                              return (
+                              <div key={ti} className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 flex flex-col gap-3 hover:shadow-md hover:border-slate-300 transition-all">
                                 <div className="flex items-center justify-between">
-                                  <span className="text-lg">{tile.icon}</span>
-                                  <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">{tile.label}</span>
+                                  <div className="w-8 h-8 rounded-full flex items-center justify-center bg-slate-50 text-slate-600 shadow-inner border border-slate-100" style={{ color: tile.color, backgroundColor: `${tile.color}15` }}>
+                                    {tile.icon}
+                                  </div>
+                                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{tile.label}</span>
                                 </div>
-                                <div className="space-y-1">
+                                <div className="space-y-1.5 mt-1">
                                   <div className="flex justify-between items-center">
-                                    <span className="text-[9px] font-black text-slate-400 uppercase">Ordered</span>
-                                    <span className="text-[13px] font-black" style={{ color: tile.color }}>{tile.ordered} <span className="text-[9px] text-slate-400">{tile.unit}</span></span>
+                                    <span className="text-[10px] font-bold text-slate-400 uppercase">Ordered</span>
+                                    <span className="text-[14px] font-black" style={{ color: tile.color }}>{tile.ordered} <span className="text-[10px] font-bold text-slate-400">{tile.unit}</span></span>
                                   </div>
                                   <div className="flex justify-between items-center">
-                                    <span className="text-[9px] font-black text-slate-400 uppercase">Received</span>
-                                    <span className="text-[13px] font-black text-slate-700">{tile.received} <span className="text-[9px] text-slate-400">{tile.unit}</span></span>
+                                    <span className="text-[10px] font-bold text-slate-400 uppercase">Received</span>
+                                    <span className="text-[14px] font-black text-slate-700">{tile.received} <span className="text-[10px] font-bold text-slate-400">{tile.unit}</span></span>
                                   </div>
                                 </div>
                                 {/* Mini progress bar */}
                                 {tile.label !== 'Items Status' && (
-                                  <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                                    <div className="h-full rounded-full transition-all" style={{ width: `${Math.min(100, (parseFloat(tile.received) / (parseFloat(tile.ordered) || 1)) * 100)}%`, background: tile.color }} />
+                                  <div className="mt-2 space-y-1.5">
+                                    <div className="flex justify-between items-center">
+                                      <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Progress</span>
+                                      <span className="text-[10px] font-black" style={{ color: tile.color }}>{pct.toFixed(1)}%</span>
+                                    </div>
+                                    <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                                      <div className="h-full rounded-full transition-all" style={{ width: `${Math.min(100, pct)}%`, background: tile.color }} />
+                                    </div>
                                   </div>
                                 )}
                               </div>
-                            ))}
+                            )})}
                           </div>
+                          )}
 
                           {/* PI-wise Order Table with Completion Status */}
                           {myOrders.length === 0 ? (
@@ -1241,110 +1347,166 @@ export default function WebsitePage() {
                                     </div>
                                   </div>
                                   <div className="flex items-center gap-2">
-                                    <span className="px-2 py-1 bg-white/20 text-white text-[9px] font-black rounded-full">{ord.Mode || '—'}</span>
-                                    <span className="px-2 py-1 bg-yellow-400/90 text-[#1d4ed8] text-[9px] font-black rounded-full">{ordDate}</span>
-                                    <span className="px-2 py-1 bg-emerald-400/90 text-white text-[9px] font-black rounded-full">{ord.Est_Value || ord['Est Value'] || '—'}</span>
+                                    <span className="px-3 py-1 bg-white/20 text-white text-[11px] font-black rounded-full shadow-sm">{ord.Mode || '—'}</span>
+                                    <span className="px-3 py-1 bg-yellow-400/90 text-[#1d4ed8] text-[11px] font-black rounded-full shadow-sm">{ordDate}</span>
+                                    <span className="px-3 py-1 bg-emerald-400/90 text-white text-[11px] font-black rounded-full shadow-sm">{ord.Est_Value || ord['Est Value'] || '—'}</span>
                                   </div>
                                 </div>
 
                                 {/* Line Items Table */}
                                 {items.length > 0 && (
                                   <div className="overflow-x-auto">
-                                    <table className="w-full text-left text-[11px] border-collapse min-w-[900px]">
-                                      <thead className="bg-slate-50 border-b border-slate-100">
+                                    <table className="w-full text-left text-[13px] border-collapse min-w-[900px]">
+                                      <thead className="bg-slate-50 border-b border-slate-100 text-[11px]">
                                         <tr>
-                                          <th className="px-4 py-2.5 font-black text-slate-500 uppercase tracking-wider w-[80px]">Image</th>
+                                          {activeTab === 'Freshness' && <th className="px-4 py-2.5 font-black text-slate-500 uppercase tracking-wider w-[80px]">Image</th>}
                                           <th className="px-4 py-2.5 font-black text-slate-500 uppercase tracking-wider w-[240px]">Product Name</th>
-                                          <th className="px-4 py-2.5 font-black text-slate-500 uppercase tracking-wider text-center w-[110px]">Weight/Size</th>
-                                          <th className="px-4 py-2.5 font-black text-slate-500 uppercase tracking-wider text-right w-[110px]">Price/FOB</th>
-                                          <th className="px-4 py-2.5 font-black text-slate-500 uppercase tracking-wider text-right w-[110px]">Ordered Qty</th>
-                                          <th className="px-4 py-2.5 font-black text-slate-500 uppercase tracking-wider text-right w-[110px]">Received Qty</th>
-                                          <th className="px-4 py-2.5 font-black text-slate-500 uppercase tracking-wider text-center w-[130px]">Mfg Date</th>
-                                          <th className="px-4 py-2.5 font-black text-slate-500 uppercase tracking-wider text-center w-[130px]">Expiry Date</th>
+                                          {activeTab !== 'Freshness' && (
+                                            <>
+                                              <th className="px-4 py-2.5 font-black text-slate-500 uppercase tracking-wider text-center w-[110px]">Weight/Size</th>
+                                              <th className="px-4 py-2.5 font-black text-slate-500 uppercase tracking-wider text-right w-[110px]">Price/FOB</th>
+                                              <th className="px-4 py-2.5 font-black text-slate-500 uppercase tracking-wider text-right w-[110px]">Ordered Qty</th>
+                                              <th className="px-4 py-2.5 font-black text-slate-500 uppercase tracking-wider text-right w-[110px]">Received Qty</th>
+                                            </>
+                                          )}
+                                          {activeTab === 'Freshness' && (
+                                            <>
+                                              <th className="px-4 py-2.5 font-black text-slate-500 uppercase tracking-wider text-center w-[130px]">Mfg Date</th>
+                                              <th className="px-4 py-2.5 font-black text-slate-500 uppercase tracking-wider text-center w-[130px]">Expiry Date</th>
+                                            </>
+                                          )}
                                           <th className="px-4 py-2.5 font-black text-slate-500 uppercase tracking-wider text-center w-[100px]">Status</th>
                                         </tr>
                                       </thead>
                                       <tbody className="divide-y divide-slate-50">
-                                         {items.map((item: any, ii: number) => {
+                                         {items.flatMap((item: any, ii: number) => {
                                            const prodName = item.PRODUCT || item.Product || item.product || item.name || '—';
                                            const orderedQty = item.quantity || item.Qty || item.QTY || item.QUANTITY || item.Quantity || 0;
-                                           
-                                           // Get weight/size and price/fob from ordered item
-                                           const weightSize = item.WEIGHT_SIZE || item.Weight_Size || item.Weight || item.Size || item['Weight/Size'] || item.weight || '—';
-                                           const priceVal = item.PRICE || item.Price || item.price || item.FOB || item.Fob || item.fob || '—';
+                                           const itemGrm = n(item.Grm || item.GRM || item.grm);
+                                           const itemPrice = n(item['FOB 20FT'] || item.FOB_20FT || item['FOB 40FT'] || item.FOB_40FT || item.Price || item.price);
 
-                                           // Find matching inventory entry
-                                           const invMatch = invData.find((inv: any) =>
+                                           // Find all matching inventory entries
+                                           const exactMatches = invData.filter((inv: any) =>
                                              String(inv['Product Name'] || inv.Product_Name || '').toLowerCase().trim() === String(prodName).toLowerCase().trim() &&
                                              (String(inv['PI Number'] || inv.PI_Number || '').toLowerCase() === String(piNum).toLowerCase())
-                                           ) || invData.find((inv: any) =>
-                                             String(inv['Product Name'] || inv.Product_Name || '').toLowerCase().trim() === String(prodName).toLowerCase().trim()
                                            );
+                                           const fallbackMatches = exactMatches.length === 0 ? invData.filter((inv: any) =>
+                                             String(inv['Product Name'] || inv.Product_Name || '').toLowerCase().trim() === String(prodName).toLowerCase().trim() && !(inv['PI Number'])
+                                           ) : [];
+                                           const invMatches = exactMatches.length > 0 ? exactMatches : fallbackMatches;
 
-                                           // From received: receivedQty, mfgDate, expiryDate, and image
-                                           const receivedQty = invMatch ? n(invMatch['Received Qty'] || invMatch.Received_Qty) : 0;
-                                           const mfgDate = invMatch ? (invMatch['Mfg Date'] || invMatch.Mfg_Date || '') : '';
-                                           const expiryDate = invMatch ? (invMatch['Expiry Date'] || invMatch.Expiry_Date || '') : '';
-                                           const img = invMatch ? formatImageUrl(invMatch.Image || invMatch.image || invMatch.IMAGE || invMatch['Product Image'] || '') : '';
-                                           
-                                           const isComplete = invMatch != null;
+                                           if (invMatches.length === 0) {
+                                               return [{
+                                                   key: `${ii}-pending`,
+                                                   prodName, 
+                                                   weightSize: itemGrm > 0 ? `${((itemGrm * orderedQty) / 1000).toFixed(2)} kg` : '—', 
+                                                   priceVal: itemPrice > 0 ? `$${(itemPrice * orderedQty).toFixed(2)}` : '—', 
+                                                   orderedQty,
+                                                   receivedQty: 0, mfgDate: '', expiryDate: '', img: '',
+                                                   isComplete: false
+                                               }];
+                                           }
 
+                                           const rows: any[] = [];
+                                           let totalReceived = 0;
+
+                                           invMatches.forEach((invMatch: any, mi: number) => {
+                                               const recQty = n(invMatch['Received Qty'] || invMatch.Received_Qty);
+                                               totalReceived += recQty;
+                                               rows.push({
+                                                   key: `${ii}-inv-${mi}`,
+                                                   prodName,
+                                                   weightSize: itemGrm > 0 ? `${((itemGrm * recQty) / 1000).toFixed(2)} kg` : '—',
+                                                   priceVal: itemPrice > 0 ? `$${(itemPrice * recQty).toFixed(2)}` : '—',
+                                                   orderedQty: invMatch['Order Qty'] || invMatch.Order_Qty || orderedQty,
+                                                   receivedQty: recQty,
+                                                   mfgDate: invMatch['Mfg Date'] || invMatch.Mfg_Date || '',
+                                                   expiryDate: invMatch['Expiry Date'] || invMatch.Expiry_Date || '',
+                                                   img: formatImageUrl(invMatch.Image || invMatch.image || invMatch.IMAGE || invMatch['Product Image'] || ''),
+                                                   isComplete: true
+                                               });
+                                           });
+
+                                           if (totalReceived < n(orderedQty)) {
+                                               const pendingQty = n(orderedQty) - totalReceived;
+                                               rows.push({
+                                                   key: `${ii}-remainder`,
+                                                   prodName, 
+                                                   weightSize: itemGrm > 0 ? `${((itemGrm * pendingQty) / 1000).toFixed(2)} kg` : '—', 
+                                                   priceVal: itemPrice > 0 ? `$${(itemPrice * pendingQty).toFixed(2)}` : '—',
+                                                   orderedQty: pendingQty,
+                                                   receivedQty: 0, mfgDate: '', expiryDate: '', img: '',
+                                                   isComplete: false
+                                               });
+                                           }
+                                           return rows;
+                                         }).map((rowObj: any) => {
                                            return (
-                                             <tr key={ii} className={`hover:bg-slate-50 transition-colors border-b border-slate-100 ${isComplete ? '' : 'bg-orange-50/30'}`}>
+                                             <tr key={rowObj.key} className={`hover:bg-slate-50 transition-colors border-b border-slate-100 ${rowObj.isComplete ? '' : 'bg-orange-50/30'}`}>
                                                {/* Image Preview Column */}
+                                               {activeTab === 'Freshness' && (
                                                <td className="px-4 py-2.5">
                                                  <div className="w-12 h-12 bg-white rounded-lg border border-slate-100 flex items-center justify-center overflow-hidden shrink-0 shadow-sm animate-fade-in">
-                                                   {img ? (
-                                                     <img src={img} referrerPolicy="no-referrer" className="max-w-full max-h-full object-contain hover:scale-110 transition-transform cursor-pointer" alt={prodName} />
+                                                   {rowObj.img ? (
+                                                     <img src={rowObj.img} referrerPolicy="no-referrer" className="max-w-full max-h-full object-contain hover:scale-110 transition-transform cursor-pointer" alt={rowObj.prodName} />
                                                    ) : (
                                                      <span className="text-lg">📦</span>
                                                    )}
                                                  </div>
                                                </td>
+                                               )}
 
                                                {/* Product Name Column */}
                                                <td className="px-4 py-2.5">
-                                                 <span className="font-bold text-slate-700 block max-w-[220px] truncate" title={prodName}>
-                                                   {prodName}
+                                                 <span className="font-bold text-slate-700 block" title={rowObj.prodName}>
+                                                   {rowObj.prodName}
                                                  </span>
                                                </td>
 
-                                               {/* Weight/Size Column */}
-                                               <td className="px-4 py-2.5 text-center font-bold text-slate-600">
-                                                 {weightSize}
-                                               </td>
+                                               {activeTab !== 'Freshness' && (
+                                                 <>
+                                                   {/* Weight/Size Column */}
+                                                   <td className="px-4 py-2.5 text-center font-bold text-slate-600">
+                                                     {rowObj.weightSize}
+                                                   </td>
 
-                                               {/* Price/FOB Column */}
-                                               <td className="px-4 py-2.5 text-right font-black text-slate-700">
-                                                 {priceVal !== '—' ? `${parseFloat(String(priceVal).replace(/[^0-9.]/g, '')).toFixed(2)}` : '—'}
-                                               </td>
+                                                   {/* Price/FOB Column */}
+                                                   <td className="px-4 py-2.5 text-right font-black text-slate-700">
+                                                     {rowObj.priceVal}
+                                                   </td>
 
-                                               {/* Ordered Qty Column */}
-                                               <td className="px-4 py-2.5 text-right font-black text-[#2874f0]">
-                                                 {orderedQty}
-                                               </td>
+                                                   {/* Ordered Qty Column */}
+                                                   <td className="px-4 py-2.5 text-right font-black text-[#2874f0]">
+                                                     {rowObj.orderedQty}
+                                                   </td>
 
-                                               {/* Received Qty Column */}
-                                               <td className="px-4 py-2.5 text-right font-black text-emerald-600">
-                                                 {isComplete ? receivedQty : '—'}
-                                               </td>
+                                                   {/* Received Qty Column */}
+                                                   <td className="px-4 py-2.5 text-right font-black text-emerald-600">
+                                                     {rowObj.isComplete ? rowObj.receivedQty : '—'}
+                                                   </td>
+                                                 </>
+                                               )}
 
-                                               {/* Mfg Date Column */}
-                                               <td className="px-4 py-2.5 text-center font-semibold text-slate-500">
-                                                 {mfgDate ? formatDateValue(String(mfgDate), 'Mfg Date') : '—'}
-                                               </td>
+                                               {activeTab === 'Freshness' && (
+                                                 <>
+                                                   {/* Mfg Date Column */}
+                                                   <td className="px-4 py-2.5 text-center font-semibold text-slate-500">
+                                                     {rowObj.mfgDate ? formatDateValue(String(rowObj.mfgDate), 'Mfg Date') : '—'}
+                                                   </td>
 
-                                               {/* Expiry Date Column */}
-                                               <td className="px-4 py-2.5 text-center font-semibold text-slate-500">
-                                                 {expiryDate ? formatDateValue(String(expiryDate), 'Expiry Date') : '—'}
-                                               </td>
+                                                   {/* Expiry Date Column */}
+                                                   <td className="px-4 py-2.5 text-center font-semibold text-slate-500">
+                                                     {rowObj.expiryDate ? formatDateValue(String(rowObj.expiryDate), 'Expiry Date') : '—'}
+                                                   </td>
+                                                 </>
+                                               )}
 
                                                {/* Status Column */}
                                                <td className="px-4 py-2.5 text-center">
-                                                 {isComplete ? (
+                                                 {rowObj.isComplete ? (
                                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-100 text-emerald-700 text-[10px] font-black rounded-full shadow-sm">
                                                      <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>
-                                                     Received
+                                                     Completed
                                                    </span>
                                                  ) : (
                                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-orange-100 text-orange-700 text-[10px] font-black rounded-full shadow-sm animate-pulse">
@@ -1381,7 +1543,7 @@ export default function WebsitePage() {
                             { name: 'On Road to Port', field: 'On Road to Port', icon: '🚛', desc: 'Transit to port', direction: 'up', rx: 350, ry: 330, px: 350, py: 240, tx: 280, ty: 125 },
                             { name: 'Custom', field: 'Custom', icon: '🛃', desc: 'Customs clearance', direction: 'down', rx: 495, ry: 110, px: 495, py: 200, tx: 425, ty: 230 },
                             { name: 'Waiting for Vercel', field: 'Waiting for Vercel', icon: '🌐', desc: 'Vercel setup', direction: 'up', rx: 640, ry: 330, px: 640, py: 240, tx: 570, ty: 125, extraField: 'Waiting for Vercel Link' },
-                            { name: 'Sailed', field: 'Sailed', icon: '🚢', desc: 'Vessel sailed', direction: 'down', rx: 785, ry: 110, px: 785, py: 200, tx: 715, ty: 230, extraField: 'Sailed Manual Input' },
+                            { name: 'Sailed', field: 'Sailed', icon: '🚢', desc: 'Vessel sailed', direction: 'down', rx: 785, ry: 110, px: 785, py: 200, tx: 715, ty: 230, extraField: 'Put container no on the link' },
                             { name: 'About to Arrive', field: 'About to Arrive', icon: '⚓', desc: 'Vessel approaching', direction: 'up', rx: 930, ry: 330, px: 930, py: 240, tx: 860, ty: 125 },
                             { name: 'Arrived', field: 'Arrived', icon: '🏁', desc: 'Cargo arrived', direction: 'down', rx: 1075, ry: 220, px: 1075, py: 290, tx: 1005, ty: 320 }
                           ];
@@ -1687,15 +1849,20 @@ export default function WebsitePage() {
                     </div>
 
                     <div className="p-6 bg-slate-50 border-t shadow-[0_-4px_10px_rgba(0,0,0,0.05)]">
-                        <div className="flex justify-between items-center mb-4">
+                        <div className="flex justify-between items-end mb-4">
                             <div>
                                 <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">Total Estimated</span>
                                 <span className="text-3xl font-black text-[#2874f0] tracking-tighter">${cartTotalPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                             </div>
-                            <div className="text-right">
-                                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">Total Volume</span>
-                                <span className="text-xl font-black text-emerald-600 tracking-tighter">{cartTotalCbm.toFixed(3)} m³</span>
-                                <span className="text-[10px] font-black text-slate-400 block mt-0.5">{cartTotalGrm.toFixed(0)} g total</span>
+                            <div className="text-right flex gap-6">
+                                <div>
+                                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">Grand Total Weight</span>
+                                    <span className="text-xl font-black text-slate-700 tracking-tighter">{(cartTotalGrm / 1000).toFixed(2)} kg</span>
+                                </div>
+                                <div>
+                                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">Total Volume</span>
+                                    <span className="text-xl font-black text-emerald-600 tracking-tighter">{cartTotalCbm.toFixed(3)} m³</span>
+                                </div>
                             </div>
                         </div>
                         <button disabled={cart.length === 0} onClick={generateOrderPdf} className="w-full py-4 bg-[#ff9f00] text-white font-black rounded-sm shadow-xl hover:bg-[#fb641b] transition-all uppercase tracking-[0.2em] text-[12px] disabled:opacity-30 active:scale-95 flex items-center justify-center gap-3">
