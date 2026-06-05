@@ -27,14 +27,69 @@ export function calculateDistance(lat1: number, lon1: number, lat2: number, lon2
  * @param latLongStr "latitude, longitude" string
  * @returns { lat: number, long: number } | null
  */
-export function parseLatLong(latLongStr: string | undefined): { lat: number; long: number } | null {
+export function parseLatLong(latLongStr: any): { lat: number; long: number } | null {
     if (!latLongStr) return null;
+
+    let locStr = typeof latLongStr === 'string' ? latLongStr : '';
+    
+    if (typeof latLongStr === 'object') {
+        locStr = latLongStr.location1 || '';
+    } else if (typeof latLongStr === 'string' && latLongStr.startsWith('{')) {
+        try {
+            const parsed = JSON.parse(latLongStr);
+            locStr = parsed.location1 || '';
+        } catch(e) {}
+    }
+
+    if (!locStr) return null;
+
     // Split by comma, slash or space
-    const parts = latLongStr.split(/[,\/ ]+/).map((p) => parseFloat(p.trim())).filter(p => !isNaN(p));
-    if (parts.length === 2) {
+    const parts = locStr.split(/[,\/ ]+/).map((p) => parseFloat(p.trim())).filter(p => !isNaN(p));
+    if (parts.length >= 2) {
         return { lat: parts[0], long: parts[1] };
     }
     return null;
+}
+
+/**
+ * Parses all valid "lat, long" strings from an object or JSON string.
+ * @returns Array of { lat: number, long: number }
+ */
+export function parseAllLatLongs(latLongStr: any): { lat: number; long: number }[] {
+    if (!latLongStr) return [];
+
+    let loc1 = '';
+    let loc2 = '';
+    
+    if (typeof latLongStr === 'object') {
+        loc1 = latLongStr.location1 || '';
+        loc2 = latLongStr.location2 || '';
+    } else if (typeof latLongStr === 'string') {
+        if (latLongStr.startsWith('{')) {
+            try {
+                const parsed = JSON.parse(latLongStr);
+                loc1 = parsed.location1 || '';
+                loc2 = parsed.location2 || '';
+            } catch(e) {}
+        } else {
+            loc1 = latLongStr;
+        }
+    }
+
+    const parseSingle = (str: string) => {
+        if (!str) return null;
+        const parts = str.split(/[,\/ ]+/).map((p) => parseFloat(p.trim())).filter(p => !isNaN(p));
+        if (parts.length >= 2) return { lat: parts[0], long: parts[1] };
+        return null;
+    };
+
+    const results = [];
+    const p1 = parseSingle(loc1);
+    if (p1) results.push(p1);
+    const p2 = parseSingle(loc2);
+    if (p2) results.push(p2);
+
+    return results;
 }
 
 /**

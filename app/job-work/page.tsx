@@ -58,7 +58,11 @@ const JOB_STAGES = [
 ];
 
 const ITEMS_PER_PAGE = 15;
-const emptyCommonFields = { jobWorkName: '', vendorName: '' };
+const STANDARD_JOB_WORKS = [
+    "POWDER COATING", "ANODISING", "CARTON CHANGE", "ZINC PLATING",
+    "LEG RIBIT TOOL", "CUBE HOLE DIE", "NORML HOLE DIE", "NORMAL STANDEE SIDE PLATE TOOL"
+];
+const emptyCommonFields = { jobWorkName: '', vendorName: '', customJobWorkName: '' };
 const emptyItemRow = { itemName: '', qtyKg: '', qtyPcs: '' };
 type ViewMode = 'data' | 'cancelled' | 'setup';
 
@@ -324,22 +328,33 @@ export default function JobWorkPage() {
     const handleSave = async (e: React.FormEvent) => {
         e.preventDefault();
         const validRows = rows.filter(r => r.itemName.trim() || r.qtyKg || r.qtyPcs);
-        if (!commonFields.jobWorkName.trim()) return toast.error('Job Work Name is required');
+        
+        const finalJobWorkName = commonFields.jobWorkName === 'Other' 
+            ? commonFields.customJobWorkName?.trim() 
+            : commonFields.jobWorkName?.trim();
+
+        if (!finalJobWorkName) return toast.error('Job Work Name is required');
         if (validRows.length === 0) return toast.error('At least one item is required');
 
         setIsSaving(true);
         try {
             const method = editingItem ? 'PUT' : 'POST';
+            const { customJobWorkName, ...restCommonFields } = commonFields;
+            const payloadCommonFields = {
+                ...restCommonFields,
+                jobWorkName: finalJobWorkName
+            };
+
             const payload = editingItem
                 ? {
                     id: editingItem.id,
-                    ...commonFields,
+                    ...payloadCommonFields,
                     'Item Name': validRows[0].itemName,
                     'Qty Of Material To Be Sent In Kg': validRows[0].qtyKg,
                     'Qty Material To Be Sent In Pcs': validRows[0].qtyPcs
                 }
                 : validRows.map(row => ({
-                    ...commonFields,
+                    ...payloadCommonFields,
                     'Item Name': row.itemName,
                     'Qty Of Material To Be Sent In Kg': row.qtyKg,
                     'Qty Material To Be Sent In Pcs': row.qtyPcs
@@ -839,9 +854,11 @@ export default function JobWorkPage() {
                                                                 <button
                                                                     onClick={() => {
                                                                         setEditingItem(item);
+                                                                        const isStandard = STANDARD_JOB_WORKS.includes(item['Job Work Name']);
                                                                         setCommonFields({
-                                                                            jobWorkName: item['Job Work Name'],
-                                                                            vendorName: item['Vendor Name']
+                                                                            jobWorkName: isStandard ? item['Job Work Name'] : 'Other',
+                                                                            vendorName: item['Vendor Name'],
+                                                                            customJobWorkName: isStandard ? '' : item['Job Work Name']
                                                                         });
                                                                         setRows([{
                                                                             itemName: item['Item Name'],
@@ -1102,22 +1119,39 @@ export default function JobWorkPage() {
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 bg-slate-50 dark:bg-slate-800/50 p-6 rounded-[2rem] border border-slate-100 dark:border-slate-700/50">
                                     <div className="space-y-2">
                                         <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Job Work Name</label>
-                                        <select
-                                            required
-                                            value={commonFields.jobWorkName}
-                                            onChange={(e) => setCommonFields({ ...commonFields, jobWorkName: e.target.value })}
-                                            className="w-full px-5 py-3.5 bg-white dark:bg-slate-800 rounded-2xl border-none font-bold focus:ring-2 focus:ring-[var(--theme-primary)] transition-all appearance-none"
-                                        >
-                                            <option value="">Select Job Work Type</option>
-                                            <option value="POWDER COATING">POWDER COATING</option>
-                                            <option value="ANODISING">ANODISING</option>
-                                            <option value="CARTON CHANGE">CARTON CHANGE</option>
-                                            <option value="ZINC PLATING">ZINC PLATING</option>
-                                            <option value="LEG RIBIT TOOL">LEG RIBIT TOOL</option>
-                                            <option value="CUBE HOLE DIE">CUBE HOLE DIE</option>
-                                            <option value="NORML HOLE DIE">NORML HOLE DIE</option>
-                                            <option value="NORMAL STANDEE SIDE PLATE TOOL">NORMAL STANDEE SIDE PLATE TOOL</option>
-                                        </select>
+                                        {commonFields.jobWorkName === 'Other' ? (
+                                            <div className="flex items-center gap-2">
+                                                <input
+                                                    autoFocus
+                                                    required
+                                                    value={commonFields.customJobWorkName || ''}
+                                                    onChange={(e) => setCommonFields({ ...commonFields, customJobWorkName: e.target.value })}
+                                                    className="w-full px-5 py-3.5 bg-white dark:bg-slate-800 rounded-2xl border-none font-bold focus:ring-2 focus:ring-[var(--theme-primary)] transition-all"
+                                                    placeholder="Enter custom job work name"
+                                                />
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setCommonFields({ ...commonFields, jobWorkName: '', customJobWorkName: '' })}
+                                                    className="p-3 text-slate-400 hover:text-red-500 bg-white dark:bg-slate-800 rounded-2xl transition-all shadow-sm"
+                                                    title="Cancel custom input"
+                                                >
+                                                    <X size={20} />
+                                                </button>
+                                            </div>
+                                        ) : (
+                                            <select
+                                                required
+                                                value={commonFields.jobWorkName}
+                                                onChange={(e) => setCommonFields({ ...commonFields, jobWorkName: e.target.value })}
+                                                className="w-full px-5 py-3.5 bg-white dark:bg-slate-800 rounded-2xl border-none font-bold focus:ring-2 focus:ring-[var(--theme-primary)] transition-all appearance-none"
+                                            >
+                                                <option value="">Select Job Work Type</option>
+                                                {STANDARD_JOB_WORKS.map(work => (
+                                                    <option key={work} value={work}>{work}</option>
+                                                ))}
+                                                <option value="Other">Other (Custom)</option>
+                                            </select>
+                                        )}
                                     </div>
                                     <div className="space-y-2">
                                         <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Vendor Name</label>

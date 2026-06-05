@@ -30,6 +30,8 @@ export default function PCDashboardPage() {
     const [activeTab, setActiveTab] = useState<'overview' | 'charts'>('overview');
     const [selectedUsers, setSelectedUsers] = useState<string[]>([]);
     const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+    const [selectedSystems, setSelectedSystems] = useState<string[]>([]);
+    const [isSystemDropdownOpen, setIsSystemDropdownOpen] = useState(false);
 
     const [modalConfig, setModalConfig] = useState<{
         isOpen: boolean;
@@ -58,7 +60,11 @@ export default function PCDashboardPage() {
                 '/api/purchase-fms', '/api/purchase-fms-config',
                 '/api/factory-requirements', '/api/factory-requirements-config',
                 '/api/job-work', '/api/job-work-config',
-                '/api/rm-defects', '/api/rm-defects-config'
+                '/api/rm-defects', '/api/rm-defects-config',
+                '/api/fms-product-search', '/api/fms-product-search-config',
+                '/api/export-fms', '/api/export-fms-config',
+                '/api/sales-export-purchase-enquiry-fms', '/api/sales-export-purchase-enquiry-fms-config',
+                '/api/igst-refund', '/api/igst-refund-config'
             ];
 
             const responses = await Promise.allSettled(
@@ -126,7 +132,7 @@ export default function PCDashboardPage() {
             // FMS Helper
             const parseFms = (moduleName: string, fmsData: any, fmsConfig: any, maxSteps: number = 11, typeStr: string) => {
                 if (!fmsData || !fmsConfig?.config) return;
-                const dList = Array.isArray(fmsData) ? fmsData : [];
+                const dList = Array.isArray(fmsData) ? fmsData : (fmsData?.data && Array.isArray(fmsData.data) ? fmsData.data : []);
                 const cList = Array.isArray(fmsConfig.config) ? fmsConfig.config : [];
 
                 dList.forEach((order: any) => {
@@ -148,7 +154,7 @@ export default function PCDashboardPage() {
                                 if (plannedDate || actualDate) {
                                     allTasks.push({
                                         id: `${typeStr}-${item.id || order.id}-${i}`,
-                                        title: `${order.party_name || item.party_name || order.client_name || item.clientName || order.vendor_name || item.vendorName || item.materialName || 'Item'} - ${stepConfig.stepName}`,
+                                        title: `${order.party_name || item.party_name || order.client_name || order.clientName || item.clientName || order.vendor_name || order.vendorName || item.vendorName || order['Vendor Name'] || item['Vendor Name'] || order.materialName || item.materialName || order.Product || item.Product || order.piNumber || order.PI_Number || item.piNumber || order.invoice_number || order.Invoice_Number || item.invoice_number || order['Job Work Name'] || item['Job Work Name'] || order['Party Name'] || item['Party Name'] || 'Item'} - ${stepConfig.stepName}`,
                                         sourceModule: moduleName,
                                         status: actualDate ? 'Completed' : 'Pending',
                                         dueDate: plannedDate ? new Date(plannedDate) : null,
@@ -170,6 +176,10 @@ export default function PCDashboardPage() {
             parseFms('Factory Req.', data[11], data[12], 11, 'factory');
             parseFms('Job Work', data[13], data[14], 11, 'jobwork');
             parseFms('RM Defects', data[15], data[16], 11, 'rmdefect');
+            parseFms('New Product Search', data[17], data[18], 11, 'productsearch');
+            parseFms('Export FMS', data[19], data[20], 11, 'exportfms');
+            parseFms('Sales Export FMS', data[21], data[22], 11, 'salesexportfms');
+            parseFms('IGST Refund', data[23], data[24], 11, 'igstrefund');
 
             setTasks(allTasks);
             categorizeTasks(allTasks);
@@ -219,9 +229,18 @@ export default function PCDashboardPage() {
         fetchAllData();
     }, []);
 
-    const displayedDailyJobs = dailyJobs.filter(t => selectedUsers.length === 0 || selectedUsers.includes(t.doerName.trim() || 'Missing Assignee'));
-    const displayedDelayedJobs = delayedJobs.filter(t => selectedUsers.length === 0 || selectedUsers.includes(t.doerName.trim() || 'Missing Assignee'));
-    const displayedPendingJobs = pendingJobs.filter(t => selectedUsers.length === 0 || selectedUsers.includes(t.doerName.trim() || 'Missing Assignee'));
+    const displayedDailyJobs = dailyJobs.filter(t => 
+        (selectedUsers.length === 0 || selectedUsers.includes(t.doerName.trim() || 'Missing Assignee')) &&
+        (selectedSystems.length === 0 || selectedSystems.includes(t.sourceModule))
+    );
+    const displayedDelayedJobs = delayedJobs.filter(t => 
+        (selectedUsers.length === 0 || selectedUsers.includes(t.doerName.trim() || 'Missing Assignee')) &&
+        (selectedSystems.length === 0 || selectedSystems.includes(t.sourceModule))
+    );
+    const displayedPendingJobs = pendingJobs.filter(t => 
+        (selectedUsers.length === 0 || selectedUsers.includes(t.doerName.trim() || 'Missing Assignee')) &&
+        (selectedSystems.length === 0 || selectedSystems.includes(t.sourceModule))
+    );
 
     const getFilterDropdownUsers = () => {
         const statsMap = new Map<string, { daily: number, delayed: number, pending: number }>();
@@ -243,6 +262,27 @@ export default function PCDashboardPage() {
         })).sort((a, b) => b.total - a.total); 
     };
     const filterOptions = getFilterDropdownUsers();
+
+    const getFilterDropdownSystems = () => {
+        const statsMap = new Map<string, { daily: number, delayed: number, pending: number }>();
+        const initSystem = (name: string) => {
+            if (!statsMap.has(name)) {
+                statsMap.set(name, { daily: 0, delayed: 0, pending: 0 });
+            }
+        };
+        dailyJobs.forEach(t => { const n = t.sourceModule; initSystem(n); statsMap.get(n)!.daily += 1; });
+        delayedJobs.forEach(t => { const n = t.sourceModule; initSystem(n); statsMap.get(n)!.delayed += 1; });
+        pendingJobs.forEach(t => { const n = t.sourceModule; initSystem(n); statsMap.get(n)!.pending += 1; });
+        
+        return Array.from(statsMap.entries()).map(([name, counts]) => ({
+            systemName: name,
+            daily: counts.daily,
+            delayed: counts.delayed,
+            pending: counts.pending,
+            total: counts.daily + counts.delayed + counts.pending
+        })).sort((a, b) => b.total - a.total); 
+    };
+    const systemFilterOptions = getFilterDropdownSystems();
 
     const handleOpenTask = (task: UnifiedTask) => {
         let modalType = task.rawTaskData?.type || 'delegation';
@@ -461,7 +501,67 @@ export default function PCDashboardPage() {
                         </div>
                         
                         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 w-full xl:w-auto">
-                            {/* Search Dropdown */}
+                            {/* System Filter Dropdown */}
+                            <div className="relative w-full sm:w-64">
+                                <button 
+                                    onClick={() => setIsSystemDropdownOpen(!isSystemDropdownOpen)}
+                                    className="w-full flex items-center justify-between px-4 py-2 border border-gray-100 dark:border-gray-700 rounded-xl leading-5 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none hover:border-gray-200 dark:hover:border-gray-600 sm:text-sm transition-colors shadow-sm"
+                                >
+                                    <div className="flex items-center gap-2 truncate pr-2">
+                                        <svg className="h-5 w-5 text-gray-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                                        </svg>
+                                        <span className="truncate font-medium text-gray-600 dark:text-gray-300">
+                                            {selectedSystems.length === 0 ? "Filter purely by system..." : `${selectedSystems.length} system${selectedSystems.length > 1 ? 's' : ''} selected`}
+                                        </span>
+                                    </div>
+                                    <svg className={`h-5 w-5 text-gray-400 shrink-0 transition-transform ${isSystemDropdownOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                    </svg>
+                                </button>
+                                
+                                <AnimatePresence>
+                                    {isSystemDropdownOpen && (
+                                        <>
+                                            <div className="fixed inset-0 z-40" onClick={() => setIsSystemDropdownOpen(false)}></div>
+                                            <motion.div 
+                                                initial={{ opacity: 0, y: -10 }}
+                                                animate={{ opacity: 1, y: 0 }}
+                                                exit={{ opacity: 0, y: -10 }}
+                                                className="absolute z-50 mt-2 w-full sm:min-w-[320px] max-w-md right-0 sm:left-0 max-h-96 overflow-y-auto bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl shadow-[0_10px_40px_-10px_rgba(0,0,0,0.1)] dark:shadow-[0_10px_40px_-10px_rgba(0,0,0,0.3)] ring-1 ring-black ring-opacity-5"
+                                            >
+                                                <div className="p-2 space-y-1">
+                                                    {systemFilterOptions.length === 0 ? (
+                                                        <div className="text-center p-4 text-sm text-gray-500">No systems found</div>
+                                                    ) : systemFilterOptions.map((opt) => (
+                                                        <label key={opt.systemName} className="flex items-center p-2.5 hover:bg-gray-50 dark:hover:bg-gray-700/50 rounded-lg cursor-pointer transition-colors group">
+                                                            <input 
+                                                                type="checkbox" 
+                                                                checked={selectedSystems.includes(opt.systemName)}
+                                                                onChange={(e) => {
+                                                                    if(e.target.checked) setSelectedSystems(prev => [...prev, opt.systemName]);
+                                                                    else setSelectedSystems(prev => prev.filter(name => name !== opt.systemName));
+                                                                }}
+                                                                className="w-4 h-4 text-[var(--theme-primary)] rounded border-gray-300 dark:border-gray-600 dark:bg-gray-700 focus:ring-[var(--theme-primary)]/50 shrink-0"
+                                                            />
+                                                            <div className="ml-3 flex-1 flex flex-col sm:flex-row sm:items-center justify-between gap-1 overflow-hidden">
+                                                                <span className="text-sm font-bold text-gray-700 dark:text-gray-200 truncate" title={opt.systemName}>{opt.systemName}</span>
+                                                                <div className="flex items-center gap-1.5 text-[10px] font-bold shrink-0">
+                                                                    {opt.daily > 0 && <span className="text-green-700 bg-green-100/80 dark:bg-green-900/40 dark:text-green-400 px-1.5 py-0.5 rounded-md">Daily: {opt.daily}</span>}
+                                                                    {opt.delayed > 0 && <span className="text-red-700 bg-red-100/80 dark:bg-red-900/40 dark:text-red-400 px-1.5 py-0.5 rounded-md">Del: {opt.delayed}</span>}
+                                                                    {opt.pending > 0 && <span className="text-blue-700 bg-blue-100/80 dark:bg-blue-900/40 dark:text-blue-400 px-1.5 py-0.5 rounded-md">Pend: {opt.pending}</span>}
+                                                                </div>
+                                                            </div>
+                                                        </label>
+                                                    ))}
+                                                </div>
+                                            </motion.div>
+                                        </>
+                                    )}
+                                </AnimatePresence>
+                            </div>
+
+                            {/* User Filter Dropdown */}
                             <div className="relative w-full sm:w-80">
                                 <button 
                                     onClick={() => setIsDropdownOpen(!isDropdownOpen)}

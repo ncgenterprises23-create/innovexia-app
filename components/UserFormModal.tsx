@@ -116,6 +116,36 @@ export default function UserFormModal({
     }
   };
 
+  const parseLatLong = (val: any) => {
+    if (!val) return { location1: '', location2: '' };
+
+    if (typeof val === 'object') {
+      return {
+        location1: val.location1 || '',
+        location2: val.location2 || ''
+      };
+    }
+
+    try {
+      const parsed = JSON.parse(val);
+      if (typeof parsed === 'object' && parsed !== null) {
+        return {
+          location1: parsed.location1 || '',
+          location2: parsed.location2 || ''
+        };
+      }
+    } catch(e) {}
+    // fallback for legacy strings
+    return { location1: typeof val === 'string' ? val : String(val), location2: '' };
+  };
+
+  const currentLatLong = parseLatLong(formData.late_long);
+
+  const handleLatLongChange = (field: 'location1' | 'location2', val: string) => {
+    const newVal = { ...currentLatLong, [field]: val };
+    setFormData({ ...formData, late_long: JSON.stringify(newVal) });
+  };
+
   return (
     <AnimatePresence>
       {showModal && (
@@ -276,15 +306,24 @@ export default function UserFormModal({
 
                       <div className="flex-1">
                         <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                          Late/Long
+                          Late/Long (Locations)
                         </label>
-                        <input
-                          type="text"
-                          value={formData.late_long || ''}
-                          onChange={(e) => setFormData({ ...formData, late_long: e.target.value })}
-                          className="w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-xl dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-[var(--theme-primary)] focus:border-transparent"
-                          placeholder="e.g., 28.6139, 77.2090"
-                        />
+                        <div className="space-y-3">
+                          <input
+                            type="text"
+                            value={currentLatLong.location1}
+                            onChange={(e) => handleLatLongChange('location1', e.target.value)}
+                            className="w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-xl dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-[var(--theme-primary)] focus:border-transparent"
+                            placeholder="Location 1 (e.g., 28.6139, 77.2090)"
+                          />
+                          <input
+                            type="text"
+                            value={currentLatLong.location2}
+                            onChange={(e) => handleLatLongChange('location2', e.target.value)}
+                            className="w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-xl dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-[var(--theme-primary)] focus:border-transparent"
+                            placeholder="Location 2 (e.g., 28.6139, 77.2090)"
+                          />
+                        </div>
                       </div>
                     </div>
 

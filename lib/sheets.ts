@@ -1108,246 +1108,34 @@ export async function deleteUser(id: number) {
 const NOTIFICATIONS_SHEET = 'notification'; // Default sheet name in new spreadsheet
 
 async function ensureNotificationSheetExists(sheets: any) {
-  try {
-    const cacheKey = `${NOTIFICATIONS_SPREADSHEET_ID}_${NOTIFICATIONS_SHEET}`;
-    if (ensuredSheets.has(cacheKey)) return;
-
-    const headerCheck = await sheets.spreadsheets.values.get({
-      spreadsheetId: NOTIFICATIONS_SPREADSHEET_ID,
-      range: `${NOTIFICATIONS_SHEET}!A1:I1`,
-      valueRenderOption: 'UNFORMATTED_VALUE',
-    });
-
-    if (!headerCheck.data.values || headerCheck.data.values.length === 0) {
-      await sheets.spreadsheets.values.update({
-        spreadsheetId: NOTIFICATIONS_SPREADSHEET_ID,
-        range: `${NOTIFICATIONS_SHEET}!A1:I1`,
-        valueInputOption: 'RAW',
-        requestBody: {
-          values: [['id', 'user_id', 'user_role', 'type', 'title', 'message', 'resource_id', 'target_page', 'action_by', 'is_read', 'created_at']],
-        },
-      });
-    }
-    ensuredSheets.add(cacheKey);
-  } catch (error) {
-    console.error('❌ Error ensuring notification sheet:', error);
-    throw error;
-  }
+  // Connection removed as requested
+  return;
 }
 
-// Role-based notification system - Admin sees all, TL and Doer see their specific notifications
 export async function getNotifications(userId: number, userRole: string, unreadOnly: boolean = false) {
-  try {
-    const sheets = await getGoogleSheetsClient();
-
-    await ensureNotificationSheetExists(sheets);
-
-    // Read all data
-    const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: NOTIFICATIONS_SPREADSHEET_ID,
-      range: `${NOTIFICATIONS_SHEET}!A:K`,
-      valueRenderOption: 'UNFORMATTED_VALUE',
-    });
-
-    const rows = response.data.values;
-
-    if (!rows || rows.length <= 1) {
-      return [];
-    }
-
-    const headers = rows[0];
-    const dataRows = rows.slice(1);
-
-    let notifications = dataRows
-      .map(row => {
-        const notif = rowToObject(headers, row);
-        // Parse is_read properly
-        if (typeof notif.is_read === 'string') {
-          notif.is_read = notif.is_read.toUpperCase() === 'TRUE';
-        }
-        return notif;
-      })
-      .filter(notif => {
-        const hasId = notif.id;
-
-        // Admin sees ALL notifications
-        if (userRole?.toLowerCase() === 'admin') {
-          return hasId;
-        }
-
-        // TL and Doer see their specific notifications
-        const matchesUser = String(notif.user_id) === String(userId);
-        return hasId && matchesUser;
-      });
-
-    // Filter unread if requested
-    if (unreadOnly) {
-      notifications = notifications.filter(n => !n.is_read);
-    }
-
-    // Sort by created_at descending
-    notifications.sort((a, b) => {
-      const dateA = new Date(a.created_at).getTime();
-      const dateB = new Date(b.created_at).getTime();
-      return dateB - dateA;
-    });
-
-    return notifications;
-  } catch (error) {
-    console.error('❌ Error fetching notifications:', error);
-    throw error;
-  }
+  // Connection removed as requested
+  return [];
 }
 
 export async function createNotification(notificationData: any) {
-  try {
-    const sheets = await getGoogleSheetsClient();
-
-    // Get the last ID
-    const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: NOTIFICATIONS_SPREADSHEET_ID,
-      range: `${NOTIFICATIONS_SHEET}!A:A`,
-      valueRenderOption: 'UNFORMATTED_VALUE',
-    });
-
-    const rows = response.data.values || [];
-    const lastId = rows.length > 1 ? Math.max(...rows.slice(1).map(row => parseInt(row[0]) || 0)) : 0;
-    const newId = lastId + 1;
-
-    const now = formatToSheetDate(new Date());
-
-    const newRow = [
-      newId,
-      notificationData.user_id || '',
-      notificationData.user_role || '',
-      notificationData.type || 'info',
-      notificationData.title || '',
-      notificationData.message || '',
-      notificationData.resource_id || notificationData.delegation_id || notificationData.resourceId || '',
-      notificationData.target_page || '',
-      notificationData.action_by || '',
-      'FALSE',
-      now,
-    ];
-    await sheets.spreadsheets.values.append({
-      spreadsheetId: NOTIFICATIONS_SPREADSHEET_ID,
-      range: `${NOTIFICATIONS_SHEET}!A:K`,
-      valueInputOption: 'RAW',
-      requestBody: {
-        values: [newRow],
-      },
-    });
-    return {
-      id: newId,
-      ...notificationData,
-      is_read: false,
-      created_at: now,
-    };
-  } catch (error) {
-    console.error('❌ Error creating notification:', error);
-    throw error;
-  }
+  // Connection removed as requested
+  const now = formatToSheetDate(new Date());
+  return {
+    id: Date.now(),
+    ...notificationData,
+    is_read: false,
+    created_at: now,
+  };
 }
 
 export async function markNotificationAsRead(id: number) {
-  try {
-    const sheets = await getGoogleSheetsClient();
-
-    const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: NOTIFICATIONS_SPREADSHEET_ID,
-      range: `${NOTIFICATIONS_SHEET}!A:I`,
-      valueRenderOption: 'UNFORMATTED_VALUE',
-    });
-
-    const rows = response.data.values;
-    if (!rows || rows.length === 0) {
-      throw new Error('Notification not found');
-    }
-
-    const headers = rows[0];
-    const dataRows = rows.slice(1);
-    const rowIndex = dataRows.findIndex(row => parseInt(row[0]) === id);
-
-    if (rowIndex === -1) {
-      throw new Error('Notification not found');
-    }
-
-    // Update is_read to TRUE
-    const isReadColIndex = headers.indexOf('is_read');
-    if (isReadColIndex === -1) {
-      throw new Error('is_read column not found');
-    }
-
-    const cellAddress = `${NOTIFICATIONS_SHEET}!${String.fromCharCode(65 + isReadColIndex)}${rowIndex + 2}`;
-    await sheets.spreadsheets.values.update({
-      spreadsheetId: NOTIFICATIONS_SPREADSHEET_ID,
-      range: cellAddress,
-      valueInputOption: 'RAW',
-      requestBody: {
-        values: [['TRUE']],
-      },
-    });
-
-    return { success: true };
-  } catch (error) {
-    console.error('Error marking notification as read:', error);
-    throw error;
-  }
+  // Connection removed as requested
+  return { success: true };
 }
 
 export async function deleteNotification(id: number) {
-  try {
-    const sheets = await getGoogleSheetsClient();
-
-    const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: NOTIFICATIONS_SPREADSHEET_ID,
-      range: `${NOTIFICATIONS_SHEET}!A:A`,
-      valueRenderOption: 'UNFORMATTED_VALUE',
-    });
-
-    const rows = response.data.values;
-    if (!rows || rows.length === 0) {
-      throw new Error('Notification not found');
-    }
-
-    const rowIndex = rows.slice(1).findIndex(row => parseInt(row[0]) === id);
-    if (rowIndex === -1) {
-      throw new Error('Notification not found');
-    }
-
-    // Get sheet ID
-    const sheetInfo = await sheets.spreadsheets.get({
-      spreadsheetId: NOTIFICATIONS_SPREADSHEET_ID,
-    });
-
-    const sheet = sheetInfo.data.sheets?.find(s => s.properties?.title === NOTIFICATIONS_SHEET);
-    if (!sheet || !sheet.properties) {
-      throw new Error('Notifications sheet not found');
-    }
-
-    await sheets.spreadsheets.batchUpdate({
-      spreadsheetId: NOTIFICATIONS_SPREADSHEET_ID,
-      requestBody: {
-        requests: [
-          {
-            deleteDimension: {
-              range: {
-                sheetId: sheet.properties.sheetId,
-                dimension: 'ROWS',
-                startIndex: rowIndex + 1,
-                endIndex: rowIndex + 2,
-              },
-            },
-          },
-        ],
-      },
-    });
-
-    return { success: true };
-  } catch (error) {
-    console.error('Error deleting notification:', error);
-    throw error;
-  }
+  // Connection removed as requested
+  return { success: true };
 }
 
 // DEPARTMENT OPERATIONS

@@ -7,7 +7,7 @@ import { useToast } from '@/components/ToastProvider';
 import { useLoader } from '@/components/LoaderProvider';
 import CustomDateTimePicker from '@/components/CustomDateTimePicker';
 import { getIstDateString } from '@/lib/dateUtils';
-import { calculateDistance, calculateBearing, getCompassDirection, parseLatLong } from '@/lib/locationUtils';
+import { calculateDistance, calculateBearing, getCompassDirection, parseAllLatLongs } from '@/lib/locationUtils';
 
 
 interface Leave {
@@ -86,18 +86,31 @@ export default function AttendancePage() {
     }, []);
 
     // Derived Location Metrics
-    const registered = parseLatLong(user?.late_long);
-    const distance = liveLocation && registered
-        ? calculateDistance(liveLocation.lat, liveLocation.lng, registered.lat, registered.long)
-        : null;
+    const registeredLocations = parseAllLatLongs(user?.late_long);
+    
+    let nearestRegistered: { lat: number; long: number } | null = null;
+    let minDistance: number | null = null;
+    let minBearing: number | null = null;
+
+    if (liveLocation && registeredLocations.length > 0) {
+        registeredLocations.forEach(reg => {
+            const dist = calculateDistance(liveLocation.lat, liveLocation.lng, reg.lat, reg.long);
+            if (minDistance === null || dist < minDistance) {
+                minDistance = dist;
+                nearestRegistered = reg;
+                minBearing = calculateBearing(liveLocation.lat, liveLocation.lng, reg.lat, reg.long);
+            }
+        });
+    }
+
+    // Default to the first location if we don't have a live location yet (just for display)
+    const registered = nearestRegistered || (registeredLocations.length > 0 ? registeredLocations[0] : null);
+    const distance = minDistance;
+    const bearing = minBearing;
 
     // Dynamic Range: 10m for mobile, 20m for desktop
     const rangeThreshold = isMobile ? 10 : 20;
     const isInRange = distance !== null && distance <= rangeThreshold;
-
-    const bearing = liveLocation && registered
-        ? calculateBearing(liveLocation.lat, liveLocation.lng, registered.lat, registered.long)
-        : null;
 
     const refreshLocationManual = () => {
         showLoader();
@@ -550,9 +563,17 @@ export default function AttendancePage() {
                                             {/* Coordinates Comparison */}
                                             <div className="grid grid-cols-1 gap-4">
                                                 <div className="p-4 bg-gray-50 dark:bg-slate-900/50 rounded-2xl border border-gray-100 dark:border-slate-700">
-                                                    <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Registered Base</div>
-                                                    <div className="text-sm font-black text-gray-800 dark:text-gray-200 font-mono">
-                                                        {registered.lat.toFixed(6)}, {registered.long.toFixed(6)}
+                                                    <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Registered Bases</div>
+                                                    <div className="space-y-2">
+                                                        {registeredLocations.map((loc, idx) => {
+                                                            const isNearest = registered && loc.lat === registered.lat && loc.long === registered.long;
+                                                            return (
+                                                                <div key={idx} className={`flex flex-col md:flex-row md:items-center justify-between text-sm font-black font-mono transition-all ${isNearest ? 'text-[var(--theme-primary)] bg-[var(--theme-primary)]/10 p-2 rounded-lg border border-[var(--theme-primary)]/20' : 'text-gray-800 dark:text-gray-200 p-2 border border-transparent'}`}>
+                                                                    <span>Loc {idx + 1}: {loc.lat.toFixed(6)}, {loc.long.toFixed(6)}</span>
+                                                                    {isNearest && <span className="text-[10px] bg-[var(--theme-primary)] text-white px-2 py-0.5 rounded-full w-fit mt-1 md:mt-0">NEAREST TARGET</span>}
+                                                                </div>
+                                                            );
+                                                        })}
                                                     </div>
                                                 </div>
 
