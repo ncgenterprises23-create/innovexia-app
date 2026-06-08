@@ -1367,6 +1367,7 @@ export default function WebsitePage() {
                                               <th className="px-4 py-2.5 font-black text-slate-500 uppercase tracking-wider text-right w-[110px]">Price/FOB</th>
                                               <th className="px-4 py-2.5 font-black text-slate-500 uppercase tracking-wider text-right w-[110px]">Ordered Qty</th>
                                               <th className="px-4 py-2.5 font-black text-slate-500 uppercase tracking-wider text-right w-[110px]">Received Qty</th>
+                                              <th className="px-4 py-2.5 font-black text-slate-500 uppercase tracking-wider text-right w-[110px]">Pending Qty</th>
                                             </>
                                           )}
                                           {activeTab === 'Freshness' && (
@@ -1402,7 +1403,9 @@ export default function WebsitePage() {
                                                    weightSize: itemGrm > 0 ? `${((itemGrm * orderedQty) / 1000).toFixed(2)} kg` : '—', 
                                                    priceVal: itemPrice > 0 ? `$${(itemPrice * orderedQty).toFixed(2)}` : '—', 
                                                    orderedQty,
-                                                   receivedQty: 0, mfgDate: '', expiryDate: '', img: '',
+                                                   receivedQty: 0,
+                                                   pendingQty: n(orderedQty),
+                                                   mfgDate: '', expiryDate: '', img: '',
                                                    isComplete: false
                                                }];
                                            }
@@ -1410,9 +1413,14 @@ export default function WebsitePage() {
                                            const rows: any[] = [];
                                            let totalReceived = 0;
 
+                                           invMatches.forEach((invMatch: any) => {
+                                               totalReceived += n(invMatch['Received Qty'] || invMatch.Received_Qty);
+                                           });
+                                           const pendingQty = Math.max(0, n(orderedQty) - totalReceived);
+                                           const isComplete = pendingQty <= 0;
+
                                            invMatches.forEach((invMatch: any, mi: number) => {
                                                const recQty = n(invMatch['Received Qty'] || invMatch.Received_Qty);
-                                               totalReceived += recQty;
                                                rows.push({
                                                    key: `${ii}-inv-${mi}`,
                                                    prodName,
@@ -1420,25 +1428,14 @@ export default function WebsitePage() {
                                                    priceVal: itemPrice > 0 ? `$${(itemPrice * recQty).toFixed(2)}` : '—',
                                                    orderedQty: invMatch['Order Qty'] || invMatch.Order_Qty || orderedQty,
                                                    receivedQty: recQty,
+                                                   pendingQty: pendingQty,
                                                    mfgDate: invMatch['Mfg Date'] || invMatch.Mfg_Date || '',
                                                    expiryDate: invMatch['Expiry Date'] || invMatch.Expiry_Date || '',
                                                    img: formatImageUrl(invMatch.Image || invMatch.image || invMatch.IMAGE || invMatch['Product Image'] || ''),
-                                                   isComplete: true
+                                                   isComplete: isComplete
                                                });
                                            });
 
-                                           if (totalReceived < n(orderedQty)) {
-                                               const pendingQty = n(orderedQty) - totalReceived;
-                                               rows.push({
-                                                   key: `${ii}-remainder`,
-                                                   prodName, 
-                                                   weightSize: itemGrm > 0 ? `${((itemGrm * pendingQty) / 1000).toFixed(2)} kg` : '—', 
-                                                   priceVal: itemPrice > 0 ? `$${(itemPrice * pendingQty).toFixed(2)}` : '—',
-                                                   orderedQty: pendingQty,
-                                                   receivedQty: 0, mfgDate: '', expiryDate: '', img: '',
-                                                   isComplete: false
-                                               });
-                                           }
                                            return rows;
                                          }).map((rowObj: any) => {
                                            return (
@@ -1482,7 +1479,12 @@ export default function WebsitePage() {
 
                                                    {/* Received Qty Column */}
                                                    <td className="px-4 py-2.5 text-right font-black text-emerald-600">
-                                                     {rowObj.isComplete ? rowObj.receivedQty : '—'}
+                                                     {rowObj.receivedQty === 0 && !rowObj.isComplete ? '—' : rowObj.receivedQty}
+                                                   </td>
+
+                                                   {/* Pending Qty Column */}
+                                                   <td className="px-4 py-2.5 text-right font-black text-orange-500">
+                                                     {rowObj.pendingQty > 0 ? rowObj.pendingQty : '—'}
                                                    </td>
                                                  </>
                                                )}
