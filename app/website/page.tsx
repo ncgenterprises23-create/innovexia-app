@@ -1248,8 +1248,6 @@ export default function WebsitePage() {
                           // Add to Ordered totals
                           ordQty += orderedQty;
                           ordCbm += itemCbm * orderedQty;
-                          ordWt += (itemGrm * orderedQty) / 1000;
-                          ordFob += itemPrice * orderedQty;
                           
                           // Find matching inventory entries for this PI and Product
                           const exactMatches = invData.filter((inv: any) =>
@@ -1266,8 +1264,46 @@ export default function WebsitePage() {
                           // Add to Received totals proportionally using the ordered properties
                           recQty += totalReceived;
                           recCbm += itemCbm * totalReceived;
-                          recWt += (itemGrm * totalReceived) / 1000;
-                          recFob += itemPrice * totalReceived;
+
+                          let lineRecWt = 0;
+                          let lineRecFob = 0;
+
+                          if (invMatches.length > 0) {
+                              let totalRowRecQty = 0;
+                              let sumW = 0;
+                              let sumP = 0;
+                              invMatches.forEach((invMatch: any) => {
+                                  const rowRecQty = n(invMatch['Received Qty'] || invMatch.Received_Qty);
+                                  totalRowRecQty += rowRecQty;
+                                  const wVal = invMatch['Weight/Size'] || invMatch.Weight_Size || invMatch.Weight || '';
+                                  const pVal = invMatch.Price || invMatch.PRICE || '';
+
+                                  const parsedW = wVal !== '' ? n(wVal) : (itemGrm > 0 ? (itemGrm * rowRecQty) / 1000 : 0);
+                                  const parsedP = pVal !== '' ? n(pVal) : (itemPrice > 0 ? itemPrice * rowRecQty : 0);
+
+                                  lineRecWt += parsedW;
+                                  lineRecFob += parsedP;
+                                  sumW += parsedW;
+                                  sumP += parsedP;
+                              });
+                              
+                              if (totalRowRecQty > 0) {
+                                  ordWt += (sumW / totalRowRecQty) * orderedQty;
+                                  ordFob += (sumP / totalRowRecQty) * orderedQty;
+                              } else {
+                                  ordWt += (itemGrm * orderedQty) / 1000;
+                                  ordFob += itemPrice * orderedQty;
+                              }
+                          } else {
+                              lineRecWt = (itemGrm * totalReceived) / 1000;
+                              lineRecFob = itemPrice * totalReceived;
+                              
+                              ordWt += (itemGrm * orderedQty) / 1000;
+                              ordFob += itemPrice * orderedQty;
+                          }
+
+                          recWt += lineRecWt;
+                          recFob += lineRecFob;
 
                           if (totalReceived >= orderedQty && orderedQty > 0) {
                               completedItems.push(it);
@@ -1421,11 +1457,14 @@ export default function WebsitePage() {
 
                                            invMatches.forEach((invMatch: any, mi: number) => {
                                                const recQty = n(invMatch['Received Qty'] || invMatch.Received_Qty);
+                                               const wVal = invMatch['Weight/Size'] || invMatch.Weight_Size || invMatch.Weight || '';
+                                               const pVal = invMatch.Price || invMatch.PRICE || '';
+
                                                rows.push({
                                                    key: `${ii}-inv-${mi}`,
                                                    prodName,
-                                                   weightSize: itemGrm > 0 ? `${((itemGrm * recQty) / 1000).toFixed(2)} kg` : '—',
-                                                   priceVal: itemPrice > 0 ? `$${(itemPrice * recQty).toFixed(2)}` : '—',
+                                                   weightSize: wVal !== '' ? (String(wVal).toLowerCase().includes('kg') ? String(wVal) : `${wVal} kg`) : (itemGrm > 0 ? `${((itemGrm * recQty) / 1000).toFixed(2)} kg` : '—'),
+                                                   priceVal: pVal !== '' ? (String(pVal).includes('$') ? String(pVal) : `$${pVal}`) : (itemPrice > 0 ? `$${(itemPrice * recQty).toFixed(2)}` : '—'),
                                                    orderedQty: invMatch['Order Qty'] || invMatch.Order_Qty || orderedQty,
                                                    receivedQty: recQty,
                                                    pendingQty: pendingQty,
