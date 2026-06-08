@@ -1371,6 +1371,75 @@ export default function WebsitePage() {
                             let items: any[] = [];
                             try { const r = ord.Line_Items || ord['Line Items'] || ''; items = typeof r === 'string' ? JSON.parse(r) : (Array.isArray(r) ? r : []); } catch {}
 
+                            const piRows = items.flatMap((item: any, ii: number) => {
+                              const prodName = item.PRODUCT || item.Product || item.product || item.name || '—';
+                              const orderedQty = item.quantity || item.Qty || item.QTY || item.QUANTITY || item.Quantity || 0;
+                              const itemGrm = n(item.Grm || item.GRM || item.grm);
+                              const itemPrice = n(item['FOB 20FT'] || item.FOB_20FT || item['FOB 40FT'] || item.FOB_40FT || item.Price || item.price);
+
+                              // Find all matching inventory entries
+                              const exactMatches = invData.filter((inv: any) =>
+                                String(inv['Product Name'] || inv.Product_Name || '').toLowerCase().trim() === String(prodName).toLowerCase().trim() &&
+                                (String(inv['PI Number'] || inv.PI_Number || '').toLowerCase() === String(piNum).toLowerCase())
+                              );
+                              const fallbackMatches = exactMatches.length === 0 ? invData.filter((inv: any) =>
+                                String(inv['Product Name'] || inv.Product_Name || '').toLowerCase().trim() === String(prodName).toLowerCase().trim() && !(inv['PI Number'])
+                              ) : [];
+                              const invMatches = exactMatches.length > 0 ? exactMatches : fallbackMatches;
+
+                              if (invMatches.length === 0) {
+                                  return [{
+                                      key: `${ii}-pending`,
+                                      prodName, 
+                                      weightSize: itemGrm > 0 ? `${((itemGrm * orderedQty) / 1000).toFixed(2)} kg` : '—', 
+                                      priceVal: itemPrice > 0 ? `$${(itemPrice * orderedQty).toFixed(2)}` : '—', 
+                                      orderedQty,
+                                      receivedQty: 0,
+                                      pendingQty: n(orderedQty),
+                                      mfgDate: '', expiryDate: '', img: '',
+                                      isComplete: false
+                                  }];
+                              }
+
+                              const rows: any[] = [];
+                              let totalReceived = 0;
+
+                              invMatches.forEach((invMatch: any) => {
+                                  totalReceived += n(invMatch['Received Qty'] || invMatch.Received_Qty);
+                              });
+                              const pendingQty = Math.max(0, n(orderedQty) - totalReceived);
+                              const isComplete = pendingQty <= 0;
+
+                              invMatches.forEach((invMatch: any, mi: number) => {
+                                  const recQty = n(invMatch['Received Qty'] || invMatch.Received_Qty);
+                                  const wVal = invMatch['Weight/Size'] || invMatch.Weight_Size || invMatch.Weight || '';
+                                  const pVal = invMatch.Price || invMatch.PRICE || '';
+
+                                  rows.push({
+                                      key: `${ii}-inv-${mi}`,
+                                      prodName,
+                                      weightSize: wVal !== '' ? (String(wVal).toLowerCase().includes('kg') ? String(wVal) : `${wVal} kg`) : (itemGrm > 0 ? `${((itemGrm * recQty) / 1000).toFixed(2)} kg` : '—'),
+                                      priceVal: pVal !== '' ? (String(pVal).includes('$') ? String(pVal) : `$${pVal}`) : (itemPrice > 0 ? `$${(itemPrice * recQty).toFixed(2)}` : '—'),
+                                      orderedQty: invMatch['Order Qty'] || invMatch.Order_Qty || orderedQty,
+                                      receivedQty: recQty,
+                                      pendingQty: pendingQty,
+                                      mfgDate: invMatch['Mfg Date'] || invMatch.Mfg_Date || '',
+                                      expiryDate: invMatch['Expiry Date'] || invMatch.Expiry_Date || '',
+                                      img: formatImageUrl(invMatch.Image || invMatch.image || invMatch.IMAGE || invMatch['Product Image'] || ''),
+                                      isComplete: isComplete
+                                  });
+                              });
+
+                              return rows;
+                            });
+
+                            const calculatedPiTotal = piRows.reduce((sum, row) => {
+                                const pStr = String(row.priceVal).replace(/[^0-9.]/g, '');
+                                return sum + (parseFloat(pStr) || 0);
+                            }, 0);
+
+                            const displayTotal = calculatedPiTotal > 0 ? '$' + calculatedPiTotal.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : (ord.Est_Value || ord['Est Value'] || '—');
+
                             return (
                               <motion.div key={oi} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: oi * 0.05 }} className="bg-white rounded-xl shadow-md border border-slate-100 overflow-hidden">
                                 {/* PI Header */}
@@ -1385,7 +1454,7 @@ export default function WebsitePage() {
                                   <div className="flex items-center gap-2">
                                     <span className="px-3 py-1 bg-white/20 text-white text-[11px] font-black rounded-full shadow-sm">{ord.Mode || '—'}</span>
                                     <span className="px-3 py-1 bg-yellow-400/90 text-[#1d4ed8] text-[11px] font-black rounded-full shadow-sm">{ordDate}</span>
-                                    <span className="px-3 py-1 bg-emerald-400/90 text-white text-[11px] font-black rounded-full shadow-sm">{ord.Est_Value || ord['Est Value'] || '—'}</span>
+                                    <span className="px-3 py-1 bg-emerald-400/90 text-white text-[11px] font-black rounded-full shadow-sm">{displayTotal}</span>
                                   </div>
                                 </div>
 
@@ -1416,67 +1485,7 @@ export default function WebsitePage() {
                                         </tr>
                                       </thead>
                                       <tbody className="divide-y divide-slate-50">
-                                         {items.flatMap((item: any, ii: number) => {
-                                           const prodName = item.PRODUCT || item.Product || item.product || item.name || '—';
-                                           const orderedQty = item.quantity || item.Qty || item.QTY || item.QUANTITY || item.Quantity || 0;
-                                           const itemGrm = n(item.Grm || item.GRM || item.grm);
-                                           const itemPrice = n(item['FOB 20FT'] || item.FOB_20FT || item['FOB 40FT'] || item.FOB_40FT || item.Price || item.price);
-
-                                           // Find all matching inventory entries
-                                           const exactMatches = invData.filter((inv: any) =>
-                                             String(inv['Product Name'] || inv.Product_Name || '').toLowerCase().trim() === String(prodName).toLowerCase().trim() &&
-                                             (String(inv['PI Number'] || inv.PI_Number || '').toLowerCase() === String(piNum).toLowerCase())
-                                           );
-                                           const fallbackMatches = exactMatches.length === 0 ? invData.filter((inv: any) =>
-                                             String(inv['Product Name'] || inv.Product_Name || '').toLowerCase().trim() === String(prodName).toLowerCase().trim() && !(inv['PI Number'])
-                                           ) : [];
-                                           const invMatches = exactMatches.length > 0 ? exactMatches : fallbackMatches;
-
-                                           if (invMatches.length === 0) {
-                                               return [{
-                                                   key: `${ii}-pending`,
-                                                   prodName, 
-                                                   weightSize: itemGrm > 0 ? `${((itemGrm * orderedQty) / 1000).toFixed(2)} kg` : '—', 
-                                                   priceVal: itemPrice > 0 ? `$${(itemPrice * orderedQty).toFixed(2)}` : '—', 
-                                                   orderedQty,
-                                                   receivedQty: 0,
-                                                   pendingQty: n(orderedQty),
-                                                   mfgDate: '', expiryDate: '', img: '',
-                                                   isComplete: false
-                                               }];
-                                           }
-
-                                           const rows: any[] = [];
-                                           let totalReceived = 0;
-
-                                           invMatches.forEach((invMatch: any) => {
-                                               totalReceived += n(invMatch['Received Qty'] || invMatch.Received_Qty);
-                                           });
-                                           const pendingQty = Math.max(0, n(orderedQty) - totalReceived);
-                                           const isComplete = pendingQty <= 0;
-
-                                           invMatches.forEach((invMatch: any, mi: number) => {
-                                               const recQty = n(invMatch['Received Qty'] || invMatch.Received_Qty);
-                                               const wVal = invMatch['Weight/Size'] || invMatch.Weight_Size || invMatch.Weight || '';
-                                               const pVal = invMatch.Price || invMatch.PRICE || '';
-
-                                               rows.push({
-                                                   key: `${ii}-inv-${mi}`,
-                                                   prodName,
-                                                   weightSize: wVal !== '' ? (String(wVal).toLowerCase().includes('kg') ? String(wVal) : `${wVal} kg`) : (itemGrm > 0 ? `${((itemGrm * recQty) / 1000).toFixed(2)} kg` : '—'),
-                                                   priceVal: pVal !== '' ? (String(pVal).includes('$') ? String(pVal) : `$${pVal}`) : (itemPrice > 0 ? `$${(itemPrice * recQty).toFixed(2)}` : '—'),
-                                                   orderedQty: invMatch['Order Qty'] || invMatch.Order_Qty || orderedQty,
-                                                   receivedQty: recQty,
-                                                   pendingQty: pendingQty,
-                                                   mfgDate: invMatch['Mfg Date'] || invMatch.Mfg_Date || '',
-                                                   expiryDate: invMatch['Expiry Date'] || invMatch.Expiry_Date || '',
-                                                   img: formatImageUrl(invMatch.Image || invMatch.image || invMatch.IMAGE || invMatch['Product Image'] || ''),
-                                                   isComplete: isComplete
-                                               });
-                                           });
-
-                                           return rows;
-                                         }).map((rowObj: any) => {
+                                         {piRows.map((rowObj: any) => {
                                            return (
                                              <tr key={rowObj.key} className={`hover:bg-slate-50 transition-colors border-b border-slate-100 ${rowObj.isComplete ? '' : 'bg-orange-50/30'}`}>
                                                {/* Image Preview Column */}
