@@ -292,8 +292,13 @@ export default function ClientInterfacePage() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             tab: 'Inventory',
-            identifierKey: 'Product Name',
-            identifierValue: inventoryEditItem['Product Name'],
+            identifierKey: 'compound',
+            identifierValue: JSON.stringify({
+              'Party Name': inventoryEditItem['Party Name'] || '',
+              'PI Number': inventoryEditItem['PI Number'] || '',
+              'Product Name': inventoryEditItem['Product Name'] || '',
+              'created_at': inventoryEditItem['created_at'] || ''
+            }),
             updates: submitDataArray[0],
           }),
         });
@@ -344,8 +349,13 @@ export default function ClientInterfacePage() {
     if (!confirm('Delete this inventory record?')) return;
     showLoader();
     try {
-      const identifierKey = 'Product Name';
-      const identifierValue = row['Product Name'];
+      const identifierKey = 'compound';
+      const identifierValue = JSON.stringify({
+        'Party Name': row['Party Name'] || '',
+        'PI Number': row['PI Number'] || '',
+        'Product Name': row['Product Name'] || '',
+        'created_at': row['created_at'] || ''
+      });
       const response = await fetch(
         `/api/client-interface?tab=Inventory&identifierKey=${encodeURIComponent(identifierKey)}&identifierValue=${encodeURIComponent(identifierValue)}`,
         { method: 'DELETE' }
@@ -372,8 +382,8 @@ export default function ClientInterfacePage() {
       'Order Qty': row['Order Qty'] || '',
       'Price': row['Price'] || '',
       'Received Qty': row['Received Qty'] || '',
-      'Mfg Date': row['Mfg Date'] || '',
-      'Expiry Date': row['Expiry Date'] || '',
+      'Mfg Date': formatDateForLocalInput(row['Mfg Date']).split('T')[0] || '',
+      'Expiry Date': formatDateForLocalInput(row['Expiry Date']).split('T')[0] || '',
       'Product Image': null,
     }]);
     setShowInventoryModal(true);
@@ -694,6 +704,7 @@ export default function ClientInterfacePage() {
                             setShowPassword(false);
                             setShowModal(true);
                         } else if (activeTab === 'Inventory') {
+                            setInventoryEditItem(null);
                             setInventoryGlobal({ 'Party Name': '', 'PI Number': '' });
                             setInventoryItems([{...defaultInventoryItem}]);
                             setShowInventoryModal(true);
@@ -1356,17 +1367,22 @@ export default function ClientInterfacePage() {
                               className="w-full px-2 py-2 text-xs bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg outline-none focus:ring-2 focus:ring-[var(--theme-primary)] dark:text-white"
                             />
                             
-                            <input
-                              type="file"
-                              required
-                              accept="image/*"
-                              onChange={(e) => {
-                                const newItems = [...inventoryItems];
-                                newItems[index]['Product Image'] = e.target.files?.[0] || null;
-                                setInventoryItems(newItems);
-                              }}
-                              className="w-full text-xs text-gray-500 file:mr-2 file:py-1 file:px-2 file:rounded-lg file:border-0 file:text-xs file:font-bold file:bg-[var(--theme-primary)]/10 file:text-[var(--theme-primary)] hover:file:bg-[var(--theme-primary)]/20"
-                            />
+                            <div className="flex flex-col">
+                              <input
+                                type="file"
+                                required={!inventoryEditItem}
+                                accept="image/*"
+                                onChange={(e) => {
+                                  const newItems = [...inventoryItems];
+                                  newItems[index]['Product Image'] = e.target.files?.[0] || null;
+                                  setInventoryItems(newItems);
+                                }}
+                                className="w-full text-xs text-gray-500 file:mr-2 file:py-1 file:px-2 file:rounded-lg file:border-0 file:text-xs file:font-bold file:bg-[var(--theme-primary)]/10 file:text-[var(--theme-primary)] hover:file:bg-[var(--theme-primary)]/20"
+                              />
+                              {inventoryEditItem && inventoryEditItem['Product Image'] && !item['Product Image'] && (
+                                <a href={inventoryEditItem['Product Image']} target="_blank" rel="noopener noreferrer" className="text-[10px] text-blue-600 dark:text-blue-400 mt-1 hover:underline">View existing image</a>
+                              )}
+                            </div>
                             
                             <button
                               type="button"

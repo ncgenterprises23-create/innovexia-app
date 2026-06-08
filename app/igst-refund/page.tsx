@@ -23,12 +23,13 @@ interface IgstRefund {
     Company_Name: string;
     Shipping_Bill_No: string;
     Shipping_Bill_Date: string;
+    Invoice_No: string;
     Igst_Amt: string | number;
     Drawback_Amt: string | number;
     Rod_Tep_Amt: string | number;
-    
-    
-    
+
+
+
     'Timestamp'?: string;
     'Cancelled'?: string;
     _rowIndex: number;
@@ -37,7 +38,7 @@ interface IgstRefund {
 
 const CONTAINER_TYPES = ["20'", "40'"];
 const ITEMS_PER_PAGE = 15;
-const emptyForm = { id: '', Company_Name: '', Shipping_Bill_No: '', Shipping_Bill_Date: '', Igst_Amt: '', Drawback_Amt: '', Rod_Tep_Amt: '' };
+const emptyForm = { id: '', Company_Name: '', Shipping_Bill_No: '', Shipping_Bill_Date: '', Invoice_No: '', Igst_Amt: '', Drawback_Amt: '', Rod_Tep_Amt: '' };
 
 const EXPORT_STAGES = [
     { step: 1, name: 'CHECK DRAWBACK CREDIT', short: 'DRAWBACK CREDIT' },
@@ -112,7 +113,7 @@ export default function IgstRefundPage() {
     const loader = useLoader();
 
     const [form, setForm] = useState<typeof emptyForm>(emptyForm);
-    
+
     const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
     const [itemsToMarkDone, setItemsToMarkDone] = useState<Set<string>>(new Set());
     const [isBulkUpdateModalOpen, setIsBulkUpdateModalOpen] = useState(false);
@@ -418,6 +419,7 @@ export default function IgstRefundPage() {
                 Company_Name: form.Company_Name,
                 Shipping_Bill_No: form.Shipping_Bill_No,
                 Shipping_Bill_Date: form.Shipping_Bill_Date,
+                Invoice_No: form.Invoice_No,
                 Igst_Amt: form.Igst_Amt,
                 Drawback_Amt: form.Drawback_Amt,
                 Rod_Tep_Amt: form.Rod_Tep_Amt,
@@ -431,12 +433,12 @@ export default function IgstRefundPage() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
             });
-            
+
             const result = await res.json();
             if (res.ok) {
                 setIsModalOpen(false);
                 setForm(emptyForm);
-                
+
                 fetchData();
                 toast.success(editingItem ? 'Updated successfully' : 'Added successfully');
             } else {
@@ -558,7 +560,7 @@ export default function IgstRefundPage() {
         const checklistKey = `Checklist_${step}` as keyof IgstRefund;
         const checklistData = item[checklistKey] as any;
         let submittedItems: string[] = [];
-        
+
         if (checklistData) {
             try {
                 // Handle both string and array formats
@@ -572,7 +574,7 @@ export default function IgstRefundPage() {
                 submittedItems = [];
             }
         }
-        
+
         setChecklistViewItem(item);
         setChecklistViewStep(step);
         setSavedChecklistItems(submittedItems);
@@ -606,9 +608,9 @@ export default function IgstRefundPage() {
         }
     };
 
-    
 
-    
+
+
 
     const parseProducts = (product: any) => {
         if (typeof product === 'string') {
@@ -664,7 +666,7 @@ export default function IgstRefundPage() {
                             onClick={() => {
                                 setEditingItem(null);
                                 setForm(emptyForm);
-                                
+
                                 setIsModalOpen(true);
                             }}
                             className="bg-[var(--theme-primary)]/10 text-[var(--theme-primary)] p-2.5 rounded-2xl hover:bg-[var(--theme-primary)] hover:text-white transition-all shadow-sm"
@@ -706,48 +708,48 @@ export default function IgstRefundPage() {
                                         {stepConfigs.map((config, index) => {
                                             const stageName = EXPORT_STAGES.find(s => s.step === config.step)?.name || config.stepName;
                                             return (
-                                            <tr key={config.step}>
-                                                <td className="px-6 py-4 font-black">#{config.step}</td>
-                                                <td className="px-6 py-4 text-xs font-bold">{stageName}</td>
-                                                <td className="px-6 py-4">
-                                                    <select
-                                                        value={config.doerName}
-                                                        onChange={(e) => {
-                                                            const n = [...stepConfigs];
-                                                            n[index].doerName = e.target.value;
-                                                            setStepConfigs(n);
-                                                        }}
-                                                        className="w-full h-10 px-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 rounded-xl text-xs font-bold"
-                                                    >
-                                                        <option value="">Select User</option>
-                                                        {systemUsers.map(u => <option key={u.id} value={u.username}>{u.username}</option>)}
-                                                    </select>
-                                                </td>
-                                                <td className="px-6 py-4 flex gap-2">
-                                                    <input
-                                                        type="number"
-                                                        value={config.tatValue}
-                                                        onChange={(e) => {
-                                                            const n = [...stepConfigs];
-                                                            n[index].tatValue = parseInt(e.target.value) || 0;
-                                                            setStepConfigs(n);
-                                                        }}
-                                                        className="w-20 h-10 px-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 rounded-xl text-xs font-bold"
-                                                    />
-                                                    <select
-                                                        value={config.tatUnit}
-                                                        onChange={(e) => {
-                                                            const n = [...stepConfigs];
-                                                            n[index].tatUnit = e.target.value as any;
-                                                            setStepConfigs(n);
-                                                        }}
-                                                        className="h-10 px-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 rounded-xl text-xs font-bold uppercase"
-                                                    >
-                                                        <option value="hours">H</option>
-                                                        <option value="days">D</option>
-                                                    </select>
-                                                </td>
-                                            </tr>
+                                                <tr key={config.step}>
+                                                    <td className="px-6 py-4 font-black">#{config.step}</td>
+                                                    <td className="px-6 py-4 text-xs font-bold">{stageName}</td>
+                                                    <td className="px-6 py-4">
+                                                        <select
+                                                            value={config.doerName}
+                                                            onChange={(e) => {
+                                                                const n = [...stepConfigs];
+                                                                n[index].doerName = e.target.value;
+                                                                setStepConfigs(n);
+                                                            }}
+                                                            className="w-full h-10 px-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 rounded-xl text-xs font-bold"
+                                                        >
+                                                            <option value="">Select User</option>
+                                                            {systemUsers.map(u => <option key={u.id} value={u.username}>{u.username}</option>)}
+                                                        </select>
+                                                    </td>
+                                                    <td className="px-6 py-4 flex gap-2">
+                                                        <input
+                                                            type="number"
+                                                            value={config.tatValue}
+                                                            onChange={(e) => {
+                                                                const n = [...stepConfigs];
+                                                                n[index].tatValue = parseInt(e.target.value) || 0;
+                                                                setStepConfigs(n);
+                                                            }}
+                                                            className="w-20 h-10 px-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 rounded-xl text-xs font-bold"
+                                                        />
+                                                        <select
+                                                            value={config.tatUnit}
+                                                            onChange={(e) => {
+                                                                const n = [...stepConfigs];
+                                                                n[index].tatUnit = e.target.value as any;
+                                                                setStepConfigs(n);
+                                                            }}
+                                                            className="h-10 px-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 rounded-xl text-xs font-bold uppercase"
+                                                        >
+                                                            <option value="hours">H</option>
+                                                            <option value="days">D</option>
+                                                        </select>
+                                                    </td>
+                                                </tr>
                                             );
                                         })}
                                     </tbody>
@@ -765,31 +767,31 @@ export default function IgstRefundPage() {
                                             statTiles.push({ step: s.step, label: (s as any).short || s.name, value: statusStats[`Step${s.step}`] });
                                         });
                                         return statTiles.map((stat, i) => (
-                                        <motion.div
-                                            key={i}
-                                            initial={{ opacity: 0, y: 10 }}
-                                            animate={{ opacity: 1, y: 0 }}
-                                            transition={{ delay: i * 0.03 }}
-                                            whileHover={activeStepFilter === stat.step ? { scale: 1 } : { y: -1 }}
-                                            onClick={() => {
-                                                const nextStep = activeStepFilter === stat.step ? ('all' as const) : (stat as any).step;
-                                                setActiveStepFilter(nextStep);
-                                                if (nextStep === 'all') setActiveTimeFilter(null);
-                                                setCurrentPage(1);
-                                            }}
-                                            className={`p-2 rounded-xl border shadow-sm flex items-center gap-2 transition-all min-w-[140px] cursor-pointer ${activeStepFilter === stat.step ? 'ring-2 ring-[var(--theme-primary)] shadow-md opacity-100' : 'opacity-75 hover:opacity-100 hover:-translate-y-px'} ${i === 0 ? 'bg-gradient-to-br from-slate-50 to-slate-100 border-slate-200' : `bg-gradient-to-br ${stepGradients[i - 1]} ${stepBorders[i - 1]}`}`}
-                                        >
-                                            {i > 0 && (
-                                                <div className={`w-8 h-8 rounded-lg bg-gradient-to-br ${stepIconBgs[i - 1]} flex items-center justify-center flex-shrink-0 shadow-sm text-white`}>
-                                                    <span className="text-xs font-bold">{EXPORT_STAGES[i - 1].step}</span>
+                                            <motion.div
+                                                key={i}
+                                                initial={{ opacity: 0, y: 10 }}
+                                                animate={{ opacity: 1, y: 0 }}
+                                                transition={{ delay: i * 0.03 }}
+                                                whileHover={activeStepFilter === stat.step ? { scale: 1 } : { y: -1 }}
+                                                onClick={() => {
+                                                    const nextStep = activeStepFilter === stat.step ? ('all' as const) : (stat as any).step;
+                                                    setActiveStepFilter(nextStep);
+                                                    if (nextStep === 'all') setActiveTimeFilter(null);
+                                                    setCurrentPage(1);
+                                                }}
+                                                className={`p-2 rounded-xl border shadow-sm flex items-center gap-2 transition-all min-w-[140px] cursor-pointer ${activeStepFilter === stat.step ? 'ring-2 ring-[var(--theme-primary)] shadow-md opacity-100' : 'opacity-75 hover:opacity-100 hover:-translate-y-px'} ${i === 0 ? 'bg-gradient-to-br from-slate-50 to-slate-100 border-slate-200' : `bg-gradient-to-br ${stepGradients[i - 1]} ${stepBorders[i - 1]}`}`}
+                                            >
+                                                {i > 0 && (
+                                                    <div className={`w-8 h-8 rounded-lg bg-gradient-to-br ${stepIconBgs[i - 1]} flex items-center justify-center flex-shrink-0 shadow-sm text-white`}>
+                                                        <span className="text-xs font-bold">{EXPORT_STAGES[i - 1].step}</span>
+                                                    </div>
+                                                )}
+                                                <div className="min-w-0 flex-1">
+                                                    <p className="text-[8px] font-black text-gray-500 uppercase tracking-wider truncate opacity-80">{stat.label}</p>
+                                                    <p className="text-base font-black text-gray-900 leading-none mt-0.5">{stat.value}</p>
                                                 </div>
-                                            )}
-                                            <div className="min-w-0 flex-1">
-                                                <p className="text-[8px] font-black text-gray-500 uppercase tracking-wider truncate opacity-80">{stat.label}</p>
-                                                <p className="text-base font-black text-gray-900 leading-none mt-0.5">{stat.value}</p>
-                                            </div>
-                                        </motion.div>
-                                    ));
+                                            </motion.div>
+                                        ));
                                     })()}
                                 </div>
                             </div>
@@ -884,6 +886,7 @@ export default function IgstRefundPage() {
                                             <th className="px-4 py-3 text-left text-[9px] font-black text-slate-500 uppercase tracking-widest border-r border-slate-100 dark:border-slate-700">Company Name</th>
                                             <th className="px-4 py-3 text-left text-[9px] font-black text-slate-500 uppercase tracking-widest">SB No</th>
                                             <th className="px-4 py-3 text-left text-[9px] font-black text-slate-500 uppercase tracking-widest">SB Date</th>
+                                            <th className="px-4 py-3 text-left text-[9px] font-black text-slate-500 uppercase tracking-widest">Invoice No.</th>
                                             <th className="px-4 py-3 text-right text-[9px] font-black text-slate-500 uppercase tracking-widest">IGST ₹</th>
                                             <th className="px-4 py-3 text-right text-[9px] font-black text-slate-500 uppercase tracking-widest">Drawback ₹</th>
                                             <th className="px-4 py-3 text-right text-[9px] font-black text-slate-500 uppercase tracking-widest border-r border-slate-100 dark:border-slate-700">RodTEP ₹</th>
@@ -903,7 +906,7 @@ export default function IgstRefundPage() {
                                         ) : paginatedData.length === 0 ? (
                                             <tr><td colSpan={15} className="px-6 py-12 text-center text-slate-400 font-bold">No records found</td></tr>
                                         ) : paginatedData.map((item, idx) => {
-                                            
+
                                             return (
                                                 <tr key={item.id || `row-${idx}`} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/20 group transition-colors">
                                                     <td className="px-3 py-2 text-center border-r border-gray-100 dark:border-gray-700/50">
@@ -924,6 +927,7 @@ export default function IgstRefundPage() {
                                                                         Company_Name: item.Company_Name || '',
                                                                         Shipping_Bill_No: item.Shipping_Bill_No || '',
                                                                         Shipping_Bill_Date: item.Shipping_Bill_Date || '',
+                                                                        Invoice_No: item.Invoice_No || '',
                                                                         Igst_Amt: item.Igst_Amt ? String(item.Igst_Amt) : '',
                                                                         Drawback_Amt: item.Drawback_Amt ? String(item.Drawback_Amt) : '',
                                                                         Rod_Tep_Amt: item.Rod_Tep_Amt ? String(item.Rod_Tep_Amt) : '',
@@ -969,6 +973,9 @@ export default function IgstRefundPage() {
                                                     </td>
                                                     <td className="px-4 py-4">
                                                         <span className="text-[11px] text-slate-500 dark:text-slate-400">{formatDisplayDate(item.Shipping_Bill_Date)}</span>
+                                                    </td>
+                                                    <td className="px-4 py-4">
+                                                        <span className="text-[11px] font-bold text-slate-700 dark:text-slate-300">{item.Invoice_No || '-'}</span>
                                                     </td>
                                                     <td className="px-4 py-4 text-right">
                                                         <span className="text-[11px] font-bold text-blue-700 dark:text-blue-300">{item.Igst_Amt || '-'}</span>
@@ -1065,6 +1072,10 @@ export default function IgstRefundPage() {
                                             <input type="date" value={form.Shipping_Bill_Date} onChange={(e) => setForm({ ...form, Shipping_Bill_Date: e.target.value })} className="w-full px-3 py-2.5 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl focus:ring-2 focus:ring-[var(--theme-primary)] outline-none text-sm transition-all" />
                                         </div>
                                         <div className="space-y-1.5">
+                                            <label className="block text-[10px] font-black text-gray-900 dark:text-gray-100 uppercase tracking-widest mb-1">Invoice No.</label>
+                                            <input type="text" value={form.Invoice_No} onChange={(e) => setForm({ ...form, Invoice_No: e.target.value })} className="w-full px-3 py-2.5 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl focus:ring-2 focus:ring-[var(--theme-primary)] outline-none text-sm transition-all" placeholder="Enter Invoice No" />
+                                        </div>
+                                        <div className="space-y-1.5">
                                             <label className="block text-[10px] font-black text-gray-900 dark:text-gray-100 uppercase tracking-widest mb-1">IGST Amount</label>
                                             <input type="number" value={form.Igst_Amt} onChange={(e) => setForm({ ...form, Igst_Amt: e.target.value })} className="w-full px-3 py-2.5 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl focus:ring-2 focus:ring-[var(--theme-primary)] outline-none text-sm transition-all" placeholder="Enter IGST Amount" />
                                         </div>
@@ -1077,18 +1088,18 @@ export default function IgstRefundPage() {
                                             <input type="number" value={form.Rod_Tep_Amt} onChange={(e) => setForm({ ...form, Rod_Tep_Amt: e.target.value })} className="w-full px-3 py-2.5 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl focus:ring-2 focus:ring-[var(--theme-primary)] outline-none text-sm transition-all" placeholder="Enter ROD TEP Amount" />
                                         </div>
 
-                                    <div className="pt-4 flex gap-2 justify-end border-t border-gray-200 dark:border-gray-700">
-                                        <button type="button" onClick={() => setIsModalOpen(false)} className="px-6 py-2.5 border border-gray-200 dark:border-gray-700 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-800/50 font-black text-[10px] uppercase tracking-widest text-gray-700 dark:text-gray-300 transition-all">
-                                            Cancel
-                                        </button>
-                                        <button type="submit" className="px-6 py-2.5 bg-[var(--theme-primary)] hover:bg-[var(--theme-primary)]/90 text-gray-900 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center gap-2 transition-all">
-                                            <Save className="w-4 h-4" /> Save
-                                        </button>
-                                    </div>
-                                </form>
-                            </div>
-                        </motion.div>
-                    </Fragment>
+                                        <div className="pt-4 flex gap-2 justify-end border-t border-gray-200 dark:border-gray-700">
+                                            <button type="button" onClick={() => setIsModalOpen(false)} className="px-6 py-2.5 border border-gray-200 dark:border-gray-700 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-800/50 font-black text-[10px] uppercase tracking-widest text-gray-700 dark:text-gray-300 transition-all">
+                                                Cancel
+                                            </button>
+                                            <button type="submit" className="px-6 py-2.5 bg-[var(--theme-primary)] hover:bg-[var(--theme-primary)]/90 text-gray-900 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center gap-2 transition-all">
+                                                <Save className="w-4 h-4" /> Save
+                                            </button>
+                                        </div>
+                                    </form>
+                                </div>
+                            </motion.div>
+                        </Fragment>
                     )}
 
                     {isDeleteModalOpen && (
@@ -1250,7 +1261,7 @@ export default function IgstRefundPage() {
                                                             className={`px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all border ${stageItems.every(i => itemsToMarkDone.has(i.id))
                                                                 ? 'bg-gray-100 dark:bg-gray-800 text-gray-400 border-gray-200 dark:border-gray-700'
                                                                 : 'bg-[var(--theme-primary)]/10 text-[var(--theme-primary)] border-[var(--theme-primary)]/20 hover:bg-[var(--theme-primary)] hover:text-gray-900'
-                                                            }`}
+                                                                }`}
                                                         >
                                                             {stageItems.every(i => itemsToMarkDone.has(i.id)) ? 'Unmark All' : 'Mark All Done'}
                                                         </button>
@@ -1261,7 +1272,7 @@ export default function IgstRefundPage() {
                                                             <div key={item.id} className={`p-4 rounded-2xl border transition-all relative overflow-hidden group ${itemsToMarkDone.has(item.id)
                                                                 ? 'bg-emerald-50/30 dark:bg-emerald-500/5 border-emerald-200 dark:border-emerald-500/20'
                                                                 : 'bg-white dark:bg-gray-800 border-gray-100 dark:border-gray-700 shadow-sm'
-                                                            }`}>
+                                                                }`}>
                                                                 <div className="flex flex-col gap-3">
                                                                     <div className="flex items-center justify-between gap-3">
                                                                         <div className="min-w-0">
@@ -1360,7 +1371,7 @@ export default function IgstRefundPage() {
                                     <div className="p-6 space-y-3 max-h-[60vh] overflow-y-auto">
                                         {(() => {
                                             const allItems = checklistViewStep && STEP_CHECKLISTS[checklistViewStep] ? STEP_CHECKLISTS[checklistViewStep] : [];
-                                            
+
                                             if (allItems.length === 0) {
                                                 return (
                                                     <div className="flex flex-col items-center justify-center py-8 text-center">
@@ -1375,29 +1386,26 @@ export default function IgstRefundPage() {
                                                     {allItems.map((item, idx) => {
                                                         const isSubmitted = savedChecklistItems.includes(item);
                                                         return (
-                                                            <div 
-                                                                key={idx} 
-                                                                className={`flex items-start gap-3 p-3 rounded-xl border transition-all ${
-                                                                    isSubmitted 
-                                                                        ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-800' 
+                                                            <div
+                                                                key={idx}
+                                                                className={`flex items-start gap-3 p-3 rounded-xl border transition-all ${isSubmitted
+                                                                        ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-800'
                                                                         : 'bg-slate-50 dark:bg-slate-800/30 border-slate-200 dark:border-slate-700'
-                                                                }`}
+                                                                    }`}
                                                             >
-                                                                <div className={`p-1 rounded-lg mt-0.5 flex-shrink-0 ${
-                                                                    isSubmitted 
-                                                                        ? 'bg-emerald-100 dark:bg-emerald-900' 
+                                                                <div className={`p-1 rounded-lg mt-0.5 flex-shrink-0 ${isSubmitted
+                                                                        ? 'bg-emerald-100 dark:bg-emerald-900'
                                                                         : 'bg-slate-200 dark:bg-slate-700'
-                                                                }`}>
-                                                                    <CheckCircle2 
-                                                                        size={14} 
-                                                                        className={isSubmitted ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-400 dark:text-slate-500'} 
+                                                                    }`}>
+                                                                    <CheckCircle2
+                                                                        size={14}
+                                                                        className={isSubmitted ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-400 dark:text-slate-500'}
                                                                     />
                                                                 </div>
-                                                                <span className={`text-sm font-medium leading-snug ${
-                                                                    isSubmitted 
-                                                                        ? 'text-emerald-900 dark:text-emerald-100' 
+                                                                <span className={`text-sm font-medium leading-snug ${isSubmitted
+                                                                        ? 'text-emerald-900 dark:text-emerald-100'
                                                                         : 'text-slate-600 dark:text-slate-400'
-                                                                }`}>
+                                                                    }`}>
                                                                     {item}
                                                                 </span>
                                                             </div>

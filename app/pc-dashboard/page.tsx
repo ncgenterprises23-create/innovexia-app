@@ -64,11 +64,13 @@ export default function PCDashboardPage() {
                 '/api/fms-product-search', '/api/fms-product-search-config',
                 '/api/export-fms', '/api/export-fms-config',
                 '/api/sales-export-purchase-enquiry-fms', '/api/sales-export-purchase-enquiry-fms-config',
-                '/api/igst-refund', '/api/igst-refund-config'
+                '/api/igst-refund', '/api/igst-refund-config',
+                '/api/collection', '/api/collection/doer',
+                '/api/payable', '/api/payable/doer'
             ];
 
             const responses = await Promise.allSettled(
-                endpoints.map(ep => fetch(ep, { headers }).then(r => {
+                endpoints.map(ep => fetch(ep, { headers, cache: 'no-store' }).then(r => {
                     if (!r.ok) throw new Error(`Failed ${ep}`);
                     return r.json();
                 }))
@@ -139,7 +141,7 @@ export default function PCDashboardPage() {
                     const itemsToProcess = Array.isArray(order.items) ? order.items : [order];
                     itemsToProcess.forEach((item: any) => {
                         for (let i = 1; i <= maxSteps; i++) {
-                            const stepConfig = cList.find((c: any) => c.step === i);
+                            const stepConfig = cList.find((c: any) => String(c.step) === String(i));
                             if (stepConfig) {
                                 const itemKeys = Object.keys(item);
                                 const plannedKey = itemKeys.find(k => k.toLowerCase() === `planned_${i}`);
@@ -153,14 +155,21 @@ export default function PCDashboardPage() {
 
                                 if (plannedDate || actualDate) {
                                     allTasks.push({
-                                        id: `${typeStr}-${item.id || order.id}-${i}`,
-                                        title: `${order.party_name || item.party_name || order.client_name || order.clientName || item.clientName || order.vendor_name || order.vendorName || item.vendorName || order['Vendor Name'] || item['Vendor Name'] || order.materialName || item.materialName || order.Product || item.Product || order.piNumber || order.PI_Number || item.piNumber || order.invoice_number || order.Invoice_Number || item.invoice_number || order['Job Work Name'] || item['Job Work Name'] || order['Party Name'] || item['Party Name'] || 'Item'} - ${stepConfig.stepName}`,
+                                        id: `${typeStr}-${item.id || item.Id || item.ID || order.id || order.Id || order.ID || Math.random().toString(36).substring(2, 10)}-${i}`,
+                                        title: `${order.party_name || item.party_name || order.client_name || order.clientName || item.clientName || order['Client Name'] || item['Client Name'] || order.vendor_name || order.vendorName || item.vendorName || order['Vendor Name'] || item['Vendor Name'] || order.materialName || item.materialName || order.Product || item.Product || order.piNumber || order.PI_Number || item.piNumber || order.invoice_number || order.Invoice_Number || item.invoice_number || order['Job Work Name'] || item['Job Work Name'] || order['Item Name'] || item['Item Name'] || order['Party Name'] || item['Party Name'] || order.Company_Name || item.Company_Name || order.Item_name || item.Item_name || order.Party_Name || item.Party_Name || order.Name || item.Name || order.requirement || item.requirement || order['Po No.'] || item['Po No.'] || 'Item'} - ${stepConfig.stepName}`,
                                         sourceModule: moduleName,
                                         status: actualDate ? 'Completed' : 'Pending',
                                         dueDate: plannedDate ? new Date(plannedDate) : null,
                                         updatedDate: actualDate ? new Date(actualDate) : null,
                                         doerName: stepConfig.doerName || 'Unassigned',
-                                        rawTaskData: { ...item, type: typeStr }
+                                        rawTaskData: { 
+                                            ...item, 
+                                            type: typeStr,
+                                            step_number: i,
+                                            step_name: stepConfig.stepName,
+                                            planned_date: plannedDate || null,
+                                            actual_date: actualDate || null
+                                        }
                                     });
                                 }
                             }
@@ -180,6 +189,66 @@ export default function PCDashboardPage() {
             parseFms('Export FMS', data[19], data[20], 11, 'exportfms');
             parseFms('Sales Export FMS', data[21], data[22], 11, 'salesexportfms');
             parseFms('IGST Refund', data[23], data[24], 11, 'igstrefund');
+
+            // Parse Collection & Payable
+            const parseCollectionPayable = (moduleName: string, ledgerData: any, doerData: any, typeStr: string) => {
+                if (!ledgerData || !ledgerData.data) return;
+                const doerName = doerData?.doer || 'Unassigned';
+
+                ledgerData.data.forEach((item: any) => {
+                    const pendingAmount = parseFloat(item.PendingAmount || '0');
+                    if (pendingAmount <= 0) return; // Only process pending payments
+
+                    let history: any[] = [];
+                    try {
+                        if (typeof item['Follow Up'] === 'string') {
+                            const parsed = JSON.parse(item['Follow Up']);
+                            history = Array.isArray(parsed) ? parsed : [parsed];
+                        } else if (Array.isArray(item['Follow Up'])) {
+                            history = item['Follow Up'];
+                        } else if (item['Follow Up']) {
+                            history = [{ remark: item['Follow Up'], timestamp: 'Legacy' }];
+                        }
+                    } catch {
+                        history = item['Follow Up'] ? [{ remark: item['Follow Up'], timestamp: 'Legacy' }] : [];
+                    }
+
+                    const sortedHistory = [...history].sort((a: any, b: any) => {
+                        const tA = a.timestamp === 'Legacy' ? 0 : new Date(a.timestamp).getTime();
+                        const tB = b.timestamp === 'Legacy' ? 0 : new Date(b.timestamp).getTime();
+                        return tB - tA;
+                    });
+                    
+                    const latestWithDate = sortedHistory.find((h: any) => h.next_followup);
+                    const effectiveDateStr = latestWithDate?.next_followup || item['1 Day Before Due Date'];
+                    
+                    if (!effectiveDateStr) return;
+                    
+                    const dueDate = parseSheetDate(effectiveDateStr);
+
+                    allTasks.push({
+                        id: `${typeStr}-${item.Id || Math.random().toString(36).substring(2, 10)}`,
+                        title: `${item.Name || item.party_name || 'Item'} - ₹${pendingAmount.toLocaleString()}`,
+                        sourceModule: moduleName,
+                        status: pendingAmount > 0 ? 'Pending' : 'Completed',
+                        dueDate: dueDate ? new Date(dueDate) : null,
+                        updatedDate: null,
+                        doerName: doerName,
+                        rawTaskData: {
+                            ...item,
+                            type: typeStr,
+                            step_name: `Pending Amount: ₹${pendingAmount.toLocaleString()}`,
+                            party_name: item.Name,
+                            planned_date: effectiveDateStr,
+                            actual_date: null,
+                            step_number: 1,
+                        }
+                    });
+                });
+            };
+
+            parseCollectionPayable('Collection', data[25], data[26], 'collection');
+            parseCollectionPayable('Payable', data[27], data[28], 'payable');
 
             setTasks(allTasks);
             categorizeTasks(allTasks);
@@ -205,6 +274,7 @@ export default function PCDashboardPage() {
         const isBeforeToday = (d: Date | null) => {
             if (!d) return false;
             const target = new Date(d);
+            if (isNaN(target.getTime())) return false;
             target.setHours(0, 0, 0, 0);
             return target.getTime() < today.getTime();
         };
@@ -212,6 +282,7 @@ export default function PCDashboardPage() {
         const isTodayOrFuture = (d: Date | null) => {
             if (!d) return true;
             const target = new Date(d);
+            if (isNaN(target.getTime())) return true;
             target.setHours(0, 0, 0, 0);
             return target.getTime() >= today.getTime();
         };
@@ -219,6 +290,17 @@ export default function PCDashboardPage() {
         const daily = allTasks.filter(t => t.status === 'Completed' && isToday(t.updatedDate));
         const delayed = allTasks.filter(t => t.status === 'Pending' && isBeforeToday(t.dueDate));
         const pending = allTasks.filter(t => t.status === 'Pending' && isTodayOrFuture(t.dueDate));
+
+        console.log('--- PC DASHBOARD TASK CATEGORIZATION ---');
+        console.log('All Tasks Length:', allTasks.length);
+        console.log('Job Work FMS:', allTasks.filter(t => t.sourceModule === 'Job Work').length);
+        console.log('Sales Export FMS:', allTasks.filter(t => t.sourceModule === 'Sales Export FMS').length);
+        console.log('Collection:', allTasks.filter(t => t.sourceModule === 'Collection').length);
+        console.log('Payable:', allTasks.filter(t => t.sourceModule === 'Payable').length);
+        
+        console.log('Daily:', daily.length);
+        console.log('Delayed:', delayed.length);
+        console.log('Pending:', pending.length);
 
         setDailyJobs(daily);
         setDelayedJobs(delayed);
@@ -264,12 +346,19 @@ export default function PCDashboardPage() {
     const filterOptions = getFilterDropdownUsers();
 
     const getFilterDropdownSystems = () => {
+        const ALL_SYSTEMS = [
+            'Delegation', 'Checklist', 'Todo', 'O2D', 'CRM', 'Client Complain', 
+            'Purchase FMS', 'Factory Req.', 'Job Work', 'RM Defects', 
+            'New Product Search', 'Export FMS', 'Sales Export FMS', 'IGST Refund',
+            'Collection', 'Payable'
+        ];
         const statsMap = new Map<string, { daily: number, delayed: number, pending: number }>();
         const initSystem = (name: string) => {
             if (!statsMap.has(name)) {
                 statsMap.set(name, { daily: 0, delayed: 0, pending: 0 });
             }
         };
+        ALL_SYSTEMS.forEach(initSystem);
         dailyJobs.forEach(t => { const n = t.sourceModule; initSystem(n); statsMap.get(n)!.daily += 1; });
         delayedJobs.forEach(t => { const n = t.sourceModule; initSystem(n); statsMap.get(n)!.delayed += 1; });
         pendingJobs.forEach(t => { const n = t.sourceModule; initSystem(n); statsMap.get(n)!.pending += 1; });
@@ -547,9 +636,15 @@ export default function PCDashboardPage() {
                                                             <div className="ml-3 flex-1 flex flex-col sm:flex-row sm:items-center justify-between gap-1 overflow-hidden">
                                                                 <span className="text-sm font-bold text-gray-700 dark:text-gray-200 truncate" title={opt.systemName}>{opt.systemName}</span>
                                                                 <div className="flex items-center gap-1.5 text-[10px] font-bold shrink-0">
-                                                                    {opt.daily > 0 && <span className="text-green-700 bg-green-100/80 dark:bg-green-900/40 dark:text-green-400 px-1.5 py-0.5 rounded-md">Daily: {opt.daily}</span>}
-                                                                    {opt.delayed > 0 && <span className="text-red-700 bg-red-100/80 dark:bg-red-900/40 dark:text-red-400 px-1.5 py-0.5 rounded-md">Del: {opt.delayed}</span>}
-                                                                    {opt.pending > 0 && <span className="text-blue-700 bg-blue-100/80 dark:bg-blue-900/40 dark:text-blue-400 px-1.5 py-0.5 rounded-md">Pend: {opt.pending}</span>}
+                                                                    {opt.total === 0 ? (
+                                                                        <span className="text-gray-500 bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded-md">0 Tasks</span>
+                                                                    ) : (
+                                                                        <>
+                                                                            {opt.daily > 0 && <span className="text-green-700 bg-green-100/80 dark:bg-green-900/40 dark:text-green-400 px-1.5 py-0.5 rounded-md">Daily: {opt.daily}</span>}
+                                                                            {opt.delayed > 0 && <span className="text-red-700 bg-red-100/80 dark:bg-red-900/40 dark:text-red-400 px-1.5 py-0.5 rounded-md">Del: {opt.delayed}</span>}
+                                                                            {opt.pending > 0 && <span className="text-blue-700 bg-blue-100/80 dark:bg-blue-900/40 dark:text-blue-400 px-1.5 py-0.5 rounded-md">Pend: {opt.pending}</span>}
+                                                                        </>
+                                                                    )}
                                                                 </div>
                                                             </div>
                                                         </label>

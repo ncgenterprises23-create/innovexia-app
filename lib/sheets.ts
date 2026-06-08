@@ -7482,14 +7482,35 @@ export async function updateClientInterfaceData(sheetName: string, identifierKey
     if (!rows || rows.length === 0) throw new Error('No data found');
 
     const headers = rows[0];
-    const identifierIndex = headers.indexOf(identifierKey);
-    if (identifierIndex === -1) throw new Error(`Identifier key ${identifierKey} not found`);
+    let rowIndex = -1;
+    let existingData: any = null;
 
-    const rowIndex = rows.findIndex(row => row[identifierIndex]?.toString() === identifierValue.toString());
+    if (identifierKey === 'compound') {
+      const matchCriteria = JSON.parse(identifierValue);
+      rowIndex = rows.findIndex(row => {
+        const rowObj = rowToObject(headers, row);
+        for (const [k, v] of Object.entries(matchCriteria)) {
+          // Compare as strings to avoid type issues with numbers/dates
+          if (rowObj[k]?.toString() !== v?.toString()) return false;
+        }
+        return true;
+      });
+      if (rowIndex !== -1) {
+        existingData = rowToObject(headers, rows[rowIndex]);
+      }
+    } else {
+      const identifierIndex = headers.indexOf(identifierKey);
+      if (identifierIndex === -1) throw new Error(`Identifier key ${identifierKey} not found`);
+
+      rowIndex = rows.findIndex(row => row[identifierIndex]?.toString() === identifierValue.toString());
+      if (rowIndex !== -1) {
+        existingData = rowToObject(headers, rows[rowIndex]);
+      }
+    }
+
     if (rowIndex === -1) throw new Error('Record not found');
 
     const actualRow = rowIndex + 1;
-    const existingData = rowToObject(headers, rows[rowIndex]);
     const updatedData = { ...existingData, ...updates };
     const rowData = objectToRow(headers, updatedData);
 
@@ -7523,10 +7544,23 @@ export async function deleteClientInterfaceData(sheetName: string, identifierKey
     if (!rows || rows.length === 0) throw new Error('No data found');
 
     const headers = rows[0];
-    const identifierIndex = headers.indexOf(identifierKey);
-    if (identifierIndex === -1) throw new Error(`Identifier key ${identifierKey} not found`);
+    let rowIndex = -1;
+    if (identifierKey === 'compound') {
+      const matchCriteria = JSON.parse(identifierValue);
+      rowIndex = rows.findIndex(row => {
+        const rowObj = rowToObject(headers, row);
+        for (const [k, v] of Object.entries(matchCriteria)) {
+          if (rowObj[k]?.toString() !== v?.toString()) return false;
+        }
+        return true;
+      });
+    } else {
+      const identifierIndex = headers.indexOf(identifierKey);
+      if (identifierIndex === -1) throw new Error(`Identifier key ${identifierKey} not found`);
 
-    const rowIndex = rows.findIndex(row => row[identifierIndex]?.toString() === identifierValue.toString());
+      rowIndex = rows.findIndex(row => row[identifierIndex]?.toString() === identifierValue.toString());
+    }
+
     if (rowIndex === -1) throw new Error('Record not found');
 
     const actualRow = rowIndex + 1;
