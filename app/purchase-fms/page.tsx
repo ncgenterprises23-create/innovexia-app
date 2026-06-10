@@ -421,13 +421,13 @@ export default function PurchaseFMSPage() {
                 const updatedData: any = { id: order.id };
 
                 // Handle fields only if they have new values (don't overwrite with old item data unless explicitly set in row)
-                if (rowUpdate.Remark) {
+                if (rowUpdate.Remark !== undefined) {
                     updatedData.Remark = rowUpdate.Remark;
                 }
-                if (rowUpdate.Next_Follow_Up_Date) {
+                if (rowUpdate.Next_Follow_Up_Date !== undefined) {
                     updatedData.Next_Follow_Up_Date = rowUpdate.Next_Follow_Up_Date;
                 }
-                if (rowUpdate.Lead_Time_2) {
+                if (rowUpdate.Lead_Time_2 !== undefined) {
                     updatedData.Lead_Time_2 = rowUpdate.Lead_Time_2;
                 }
 
@@ -1244,7 +1244,15 @@ export default function PurchaseFMSPage() {
                                                                     if (allMarked) {
                                                                         stepItems.forEach(i => next.delete(i.id));
                                                                     } else {
-                                                                        stepItems.forEach(i => next.add(i.id));
+                                                                        stepItems.forEach(i => {
+                                                                            next.add(i.id);
+                                                                            if (stepNum === 3) {
+                                                                                setBulkUpdates(prev => ({
+                                                                                    ...prev,
+                                                                                    [i.id]: { ...prev[i.id], Next_Follow_Up_Date: '' }
+                                                                                }));
+                                                                            }
+                                                                        });
                                                                     }
                                                                     setItemsToMarkDone(next);
                                                                 }}
@@ -1274,21 +1282,23 @@ export default function PurchaseFMSPage() {
                                                                         </div>
                                                                     </div>
 
-                                                                    <label className="relative inline-flex items-center cursor-pointer">
-                                                                        <input
-                                                                            type="checkbox"
-                                                                            className="sr-only peer"
-                                                                            checked={itemsToMarkDone.has(item.id)}
-                                                                            onChange={() => {
-                                                                                const next = new Set(itemsToMarkDone);
-                                                                                if (next.has(item.id)) next.delete(item.id);
-                                                                                else next.add(item.id);
-                                                                                setItemsToMarkDone(next);
-                                                                            }}
-                                                                        />
-                                                                        <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-green-500 rounded-full"></div>
-                                                                        <span className="ml-2 text-[8px] font-black text-slate-500 uppercase tracking-widest">Done</span>
-                                                                    </label>
+                                                                    {stepNum !== 3 && (
+                                                                        <label className="relative inline-flex items-center cursor-pointer">
+                                                                            <input
+                                                                                type="checkbox"
+                                                                                className="sr-only peer"
+                                                                                checked={itemsToMarkDone.has(item.id)}
+                                                                                onChange={() => {
+                                                                                    const next = new Set(itemsToMarkDone);
+                                                                                    if (next.has(item.id)) next.delete(item.id);
+                                                                                    else next.add(item.id);
+                                                                                    setItemsToMarkDone(next);
+                                                                                }}
+                                                                            />
+                                                                            <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-green-500 rounded-full"></div>
+                                                                            <span className="ml-2 text-[8px] font-black text-slate-500 uppercase tracking-widest">Done</span>
+                                                                        </label>
+                                                                    )}
                                                                 </div>
 
                                                                 {/* Item-specific inputs based on Step */}
@@ -1311,33 +1321,77 @@ export default function PurchaseFMSPage() {
                                                                         )}
 
                                                                         {stepNum === 3 && (
-                                                                            <>
-                                                                                <div>
-                                                                                    <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1 block">Next Follow Up</label>
-                                                                                    <input
-                                                                                        type="datetime-local"
-                                                                                        value={bulkUpdates[item.id]?.Next_Follow_Up_Date ?? (item.Next_Follow_Up_Date ? new Date(item.Next_Follow_Up_Date).toISOString().slice(0, 16) : '')}
-                                                                                        onChange={(e) => setBulkUpdates(prev => ({
-                                                                                            ...prev,
-                                                                                            [item.id]: { ...prev[item.id], Next_Follow_Up_Date: e.target.value }
-                                                                                        }))}
-                                                                                        className="w-full px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-[10px] font-medium text-slate-900 dark:text-white outline-none focus:ring-1 focus:ring-[var(--theme-primary)]"
-                                                                                    />
+                                                                            <div className="col-span-full">
+                                                                                <div className="flex gap-6 mb-4 mt-1 bg-slate-50 dark:bg-slate-900/50 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
+                                                                                    <label className="flex items-center gap-2 cursor-pointer group">
+                                                                                        <input 
+                                                                                            type="radio" 
+                                                                                            name={`step3_action_${item.id}`}
+                                                                                            checked={itemsToMarkDone.has(item.id)}
+                                                                                            onChange={() => {
+                                                                                                const next = new Set(itemsToMarkDone);
+                                                                                                next.add(item.id);
+                                                                                                setItemsToMarkDone(next);
+                                                                                                setBulkUpdates(prev => ({
+                                                                                                    ...prev,
+                                                                                                    [item.id]: { ...prev[item.id], Next_Follow_Up_Date: '' }
+                                                                                                }));
+                                                                                            }}
+                                                                                            className="w-4 h-4 text-green-500 border-slate-300 focus:ring-green-500 cursor-pointer"
+                                                                                        />
+                                                                                        <span className="text-[11px] font-black text-slate-700 dark:text-slate-200 uppercase tracking-widest group-hover:text-green-600 transition-colors">Mark as Done</span>
+                                                                                    </label>
+                                                                                    <label className="flex items-center gap-2 cursor-pointer group">
+                                                                                        <input 
+                                                                                            type="radio" 
+                                                                                            name={`step3_action_${item.id}`}
+                                                                                            checked={!itemsToMarkDone.has(item.id)}
+                                                                                            onChange={() => {
+                                                                                                const next = new Set(itemsToMarkDone);
+                                                                                                next.delete(item.id);
+                                                                                                setItemsToMarkDone(next);
+                                                                                            }}
+                                                                                            className="w-4 h-4 text-orange-500 border-slate-300 focus:ring-orange-500 cursor-pointer"
+                                                                                        />
+                                                                                        <span className="text-[11px] font-black text-slate-700 dark:text-slate-200 uppercase tracking-widest group-hover:text-orange-600 transition-colors">Next Follow Up</span>
+                                                                                    </label>
                                                                                 </div>
-                                                                                <div>
-                                                                                    <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1 block">Quick Remark</label>
-                                                                                    <input
-                                                                                        type="text"
-                                                                                        value={bulkUpdates[item.id]?.Remark ?? (item.Remark || '')}
-                                                                                        onChange={(e) => setBulkUpdates(prev => ({
-                                                                                            ...prev,
-                                                                                            [item.id]: { ...prev[item.id], Remark: e.target.value }
-                                                                                        }))}
-                                                                                        className="w-full px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-[10px] font-medium text-slate-900 dark:text-white outline-none focus:ring-1 focus:ring-[var(--theme-primary)]"
-                                                                                        placeholder="Notes..."
-                                                                                    />
+                                                                                
+                                                                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                                                                    <div className={`transition-opacity ${itemsToMarkDone.has(item.id) ? 'opacity-50 pointer-events-none' : ''}`}>
+                                                                                        <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1 block">Next Follow Up Date</label>
+                                                                                        <input
+                                                                                            type="datetime-local"
+                                                                                            value={bulkUpdates[item.id]?.Next_Follow_Up_Date ?? (item.Next_Follow_Up_Date ? new Date(item.Next_Follow_Up_Date).toISOString().slice(0, 16) : '')}
+                                                                                            onChange={(e) => {
+                                                                                                setBulkUpdates(prev => ({
+                                                                                                    ...prev,
+                                                                                                    [item.id]: { ...prev[item.id], Next_Follow_Up_Date: e.target.value }
+                                                                                                }));
+                                                                                                if (e.target.value) {
+                                                                                                    const next = new Set(itemsToMarkDone);
+                                                                                                    next.delete(item.id);
+                                                                                                    setItemsToMarkDone(next);
+                                                                                                }
+                                                                                            }}
+                                                                                            className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-[11px] font-bold text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-[var(--theme-primary)]/20 shadow-sm"
+                                                                                        />
+                                                                                    </div>
+                                                                                    <div>
+                                                                                        <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1 block">Remark (Notes)</label>
+                                                                                        <input
+                                                                                            type="text"
+                                                                                            value={bulkUpdates[item.id]?.Remark ?? (item.Remark || '')}
+                                                                                            onChange={(e) => setBulkUpdates(prev => ({
+                                                                                                ...prev,
+                                                                                                [item.id]: { ...prev[item.id], Remark: e.target.value }
+                                                                                            }))}
+                                                                                            className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-[11px] font-bold text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-[var(--theme-primary)]/20 shadow-sm"
+                                                                                            placeholder="Type remark..."
+                                                                                        />
+                                                                                    </div>
                                                                                 </div>
-                                                                            </>
+                                                                            </div>
                                                                         )}
                                                                     </div>
                                                                 )}
