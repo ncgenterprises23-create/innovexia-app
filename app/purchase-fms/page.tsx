@@ -1,10 +1,11 @@
 'use client';
 
-import React, { useState, useEffect, useMemo, Fragment } from 'react';
+import React, { useState, useEffect, useMemo, Fragment, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import LayoutWrapper from '@/components/LayoutWrapper';
 import { useToast } from '@/components/ToastProvider';
 import { useLoader } from '@/components/LoaderProvider';
+import { Calendar } from 'lucide-react';
 
 interface StepConfig {
     step: number;
@@ -75,6 +76,20 @@ export default function PurchaseFMSPage() {
     const [removeTarget, setRemoveTarget] = useState<{ id: number; Item_name?: string } | null>(null);
     const [removeStep, setRemoveStep] = useState<number | 'all'>(1);
     const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+
+    const [isCalendarOpen, setIsCalendarOpen] = useState(false);
+    const [calendarMonth, setCalendarMonth] = useState(new Date());
+    const calendarRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        const handleClickOutside = (event: MouseEvent) => {
+            if (calendarRef.current && !calendarRef.current.contains(event.target as Node)) {
+                setIsCalendarOpen(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
 
     // Advanced Filter States
     const [showAdvancedFilterModal, setShowAdvancedFilterModal] = useState(false);
@@ -214,6 +229,22 @@ export default function PurchaseFMSPage() {
         return stats;
     }, [orders]);
 
+    const calendarCounts = useMemo(() => {
+        const counts: Record<string, number> = {};
+        const activeOrders = orders.filter(o => o.Cancelled !== 'Cancelled');
+        activeOrders.forEach(o => {
+            const currentStep = getCurrentStep(o);
+            if (currentStep > 4) return;
+            const plannedStr = o[`Planned_${currentStep}` as keyof PurchaseFMSOrder];
+            if (!plannedStr) return;
+            const pDate = new Date(plannedStr as string);
+            if (isNaN(pDate.getTime())) return;
+            const dateKey = `${pDate.getFullYear()}-${String(pDate.getMonth() + 1).padStart(2, '0')}-${String(pDate.getDate()).padStart(2, '0')}`;
+            counts[dateKey] = (counts[dateKey] || 0) + 1;
+        });
+        return counts;
+    }, [orders]);
+
     const distinctSteps = useMemo(() => {
         const selectedOrders = orders.filter(o => selectedItems.has(o.id));
         const steps = new Set(selectedOrders.map(o => getCurrentStep(o)));
@@ -301,6 +332,12 @@ export default function PurchaseFMSPage() {
                     const pDayStart = new Date(pDate.getFullYear(), pDate.getMonth(), pDate.getDate()).getTime();
                     const diffDays = Math.round((pDayStart - todayStart) / oneDayMs);
 
+                    if (activeTimeFilter.startsWith('Date:')) {
+                        const targetDateStr = activeTimeFilter.split(':')[1];
+                        const pDateStr = `${pDate.getFullYear()}-${String(pDate.getMonth() + 1).padStart(2, '0')}-${String(pDate.getDate()).padStart(2, '0')}`;
+                        return pDateStr === targetDateStr;
+                    }
+
                     switch (activeTimeFilter) {
                         case 'Delayed': return pTime < now.getTime();
                         case 'Today': return diffDays === 0;
@@ -371,10 +408,11 @@ export default function PurchaseFMSPage() {
                 let nextPlanned: Date;
 
                 if (step === 2 && order.Lead_Time_2) {
-                    // Step 3 planned time is based on Lead_Time_2 from Step 2
+                    // Step 3 planned time is based on Lead_Time_2 from Step 2 (minus 2 days as per requirement)
                     const leadTimeDays = parseInt(String(order.Lead_Time_2)) || 0;
                     if (leadTimeDays > 0) {
-                        nextPlanned = getNextPlannedTime(currentTime, leadTimeDays, "days");
+                        const adjustedLeadTime = Math.max(0, leadTimeDays - 2);
+                        nextPlanned = getNextPlannedTime(currentTime, adjustedLeadTime, "days");
                     } else {
                         const nextConfig = stepConfigs.find(c => c.step === nextStep);
                         nextPlanned = getNextPlannedTime(currentTime, nextConfig?.tatValue || 1, nextConfig?.tatUnit || "hours");
@@ -452,7 +490,8 @@ export default function PurchaseFMSPage() {
                         if (currentStep === 2 && leadTime) {
                             const leadTimeDays = parseInt(String(leadTime)) || 0;
                             if (leadTimeDays > 0) {
-                                nextPlanned = getNextPlannedTime(currentTime, leadTimeDays, "days");
+                                const adjustedLeadTime = Math.max(0, leadTimeDays - 2);
+                                nextPlanned = getNextPlannedTime(currentTime, adjustedLeadTime, "days");
                             } else {
                                 const nextConfig = stepConfigs.find(c => c.step === nextStep);
                                 nextPlanned = getNextPlannedTime(currentTime, nextConfig?.tatValue || 1, nextConfig?.tatUnit || "hours");
@@ -677,6 +716,52 @@ export default function PurchaseFMSPage() {
         }
     };
 
+    const handleExportCSV = () => {
+        if (orders.length === 0) {
+            toast.error("No data available to export");
+            return;
+        }
+
+        const formatCSVValue = (val: any) => {
+            if (!val) return '';
+            if (typeof val === 'string') {
+                if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z?$/.test(val)) {
+                    return new Date(val).toLocaleString('en-IN', {
+                        day: '2-digit', month: 'short', year: 'numeric',
+                        hour: '2-digit', minute: '2-digit', hour12: true
+                    });
+                }
+            }
+            return String(val);
+        };
+
+        const headers = Object.keys(orders[0]).filter(key => key !== 'id' && key !== '_rowIndex');
+
+        const csvRows = [];
+        csvRows.push(headers.map(h => `"${String(h).replace(/"/g, '""')}"`).join(','));
+
+        for (const row of orders) {
+            const values = headers.map(header => {
+                const val = (row as any)[header];
+                const formattedVal = formatCSVValue(val);
+                const escaped = String(formattedVal).replace(/"/g, '""');
+                return `"${escaped}"`;
+            });
+            csvRows.push(values.join(','));
+        }
+
+        const csvString = csvRows.join('\n');
+        const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement('a');
+        const url = URL.createObjectURL(blob);
+        link.setAttribute('href', url);
+        link.setAttribute('download', `purchase_fms_export_${new Date().toISOString().split('T')[0]}.csv`);
+        link.style.visibility = 'hidden';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    };
+
     const getStageSortIcon = (step: number) => {
         const key = `Actual_${step}`;
         return getSortIcon(key);
@@ -724,6 +809,14 @@ export default function PurchaseFMSPage() {
                                     Setup
                                 </button>
                             </div>
+
+                            <button
+                                onClick={handleExportCSV}
+                                className="flex items-center gap-2 px-4 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-sm hover:border-green-500 hover:text-green-600 transition-all group"
+                            >
+                                <svg className="w-4 h-4 text-slate-400 group-hover:text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                                <span className="text-xs font-bold text-slate-600 dark:text-slate-300 group-hover:text-green-600">Export</span>
+                            </button>
 
                             {/* Advanced Filter Button */}
                             <button
@@ -901,8 +994,8 @@ export default function PurchaseFMSPage() {
                                     </div>
                                 </div>
 
-                                <div className="bg-white dark:bg-slate-800 rounded-3xl shadow-xl shadow-slate-200/50 dark:shadow-none border border-white dark:border-slate-700 overflow-hidden">
-                                    <div className="flex bg-[var(--theme-lighter)]/50 dark:bg-slate-900/50 p-2 border-y border-slate-100 dark:border-slate-800 backdrop-blur-md sticky top-0 z-[20]">
+                                <div className="bg-white dark:bg-slate-800 rounded-3xl shadow-xl shadow-slate-200/50 dark:shadow-none border border-white dark:border-slate-700">
+                                    <div className="flex bg-[var(--theme-lighter)]/50 dark:bg-slate-900/50 p-2 border-y border-slate-100 dark:border-slate-800 backdrop-blur-md sticky top-0 z-[30]">
                                         <div className="flex-1 flex items-center justify-between px-4">
                                             <div className="flex items-center gap-4">
                                                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest whitespace-nowrap">
@@ -929,6 +1022,99 @@ export default function PurchaseFMSPage() {
                                                             )}
                                                         </button>
                                                     ))}
+                                                </div>
+
+                                                <div className="h-3 w-px bg-slate-300 dark:bg-slate-700 mx-1 shrink-0" />
+                                                <div className="relative flex items-center shrink-0" ref={calendarRef}>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setIsCalendarOpen(!isCalendarOpen)}
+                                                        className={`flex items-center gap-2 px-3 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest border transition-all cursor-pointer outline-none ${activeTimeFilter?.startsWith('Date:') ? 'bg-[var(--theme-primary)] text-white border-[var(--theme-primary)] shadow-md scale-[1.05]' : 'bg-white dark:bg-slate-800 text-slate-500 border-slate-100 dark:border-slate-700 hover:border-[var(--theme-primary)] hover:text-[var(--theme-primary)]'}`}
+                                                    >
+                                                        <Calendar size={12} />
+                                                        {activeTimeFilter?.startsWith('Date:') 
+                                                            ? new Date(activeTimeFilter.split(':')[1]).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) 
+                                                            : 'Select Date'}
+                                                    </button>
+
+                                                    <AnimatePresence>
+                                                        {isCalendarOpen && (
+                                                            <motion.div
+                                                                initial={{ opacity: 0, x: -10, scale: 0.95 }}
+                                                                animate={{ opacity: 1, x: 0, scale: 1 }}
+                                                                exit={{ opacity: 0, x: -10, scale: 0.95 }}
+                                                                transition={{ duration: 0.2 }}
+                                                                className="absolute left-[100%] ml-3 top-0 z-[99] bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-gray-100 dark:border-gray-700 p-5 w-80"
+                                                            >
+                                                                <div className="flex items-center justify-between mb-4">
+                                                                    <button
+                                                                        onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() - 1))}
+                                                                        className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                                                                    >
+                                                                        <svg className="w-5 h-5 text-gray-600 dark:text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
+                                                                    </button>
+                                                                    <span className="font-bold text-sm text-gray-900 dark:text-white uppercase tracking-wider">
+                                                                        {calendarMonth.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}
+                                                                    </span>
+                                                                    <button
+                                                                        onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1))}
+                                                                        className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                                                                    >
+                                                                        <svg className="w-5 h-5 text-gray-600 dark:text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+                                                                    </button>
+                                                                </div>
+
+                                                                <div className="grid grid-cols-7 gap-1 mb-2 text-center">
+                                                                    {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map(day => (
+                                                                        <div key={day} className="text-[10px] font-black text-gray-400 uppercase tracking-widest">{day}</div>
+                                                                    ))}
+                                                                </div>
+
+                                                                <div className="grid grid-cols-7 gap-1">
+                                                                    {Array.from({ length: new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), 1).getDay() }).map((_, i) => (
+                                                                        <div key={`empty-${i}`} />
+                                                                    ))}
+                                                                    {Array.from({ length: new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 0).getDate() }).map((_, i) => {
+                                                                        const day = i + 1;
+                                                                        const dateKey = `${calendarMonth.getFullYear()}-${String(calendarMonth.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                                                                        const count = calendarCounts[dateKey] || 0;
+                                                                        const isSelected = activeTimeFilter === `Date:${dateKey}`;
+                                                                        const isToday = new Date().toDateString() === new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), day).toDateString();
+
+                                                                        return (
+                                                                            <button
+                                                                                key={day}
+                                                                                onClick={() => {
+                                                                                    setActiveTimeFilter(`Date:${dateKey}`);
+                                                                                    setCurrentPage(1);
+                                                                                    setIsCalendarOpen(false);
+                                                                                }}
+                                                                                className={`relative h-10 w-10 rounded-lg text-sm flex items-center justify-center transition-all ${isSelected ? 'bg-[var(--theme-primary)] text-white font-bold shadow-md' : isToday ? 'bg-gray-100 dark:bg-gray-700 text-[var(--theme-primary)] font-bold' : count > 0 ? 'bg-[var(--theme-primary)]/15 text-[var(--theme-primary)] font-bold border border-[var(--theme-primary)]/30 shadow-sm' : 'hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 font-medium'}`}
+                                                                            >
+                                                                                {day}
+                                                                                {count > 0 && (
+                                                                                    <span className={`absolute -top-1.5 -right-1.5 flex h-4 w-4 items-center justify-center rounded-full text-[9px] font-black shadow-sm ${isSelected ? 'bg-white text-[var(--theme-primary)]' : 'bg-[var(--theme-primary)] text-white'}`}>
+                                                                                        {count}
+                                                                                    </span>
+                                                                                )}
+                                                                            </button>
+                                                                        );
+                                                                    })}
+                                                                </div>
+
+                                                                {activeTimeFilter?.startsWith('Date:') && (
+                                                                    <div className="mt-4 pt-3 border-t border-gray-100 dark:border-gray-700">
+                                                                        <button
+                                                                            onClick={() => { setActiveTimeFilter(null); setIsCalendarOpen(false); }}
+                                                                            className="w-full py-1.5 text-[10px] font-black uppercase tracking-widest text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
+                                                                        >
+                                                                            Clear Selection
+                                                                        </button>
+                                                                    </div>
+                                                                )}
+                                                            </motion.div>
+                                                        )}
+                                                    </AnimatePresence>
                                                 </div>
                                             </div>
                                             <div className="flex items-center gap-2">
@@ -986,7 +1172,7 @@ export default function PurchaseFMSPage() {
                                         </div>
                                     </div>
 
-                                    <div className="overflow-x-auto custom-scrollbar relative">
+                                    <div className="overflow-x-auto custom-scrollbar relative overflow-hidden rounded-b-3xl">
                                         <table className="w-full text-left border-collapse min-w-[2000px]">
                                             <thead>
                                                 <tr className="bg-[var(--theme-primary)] sticky top-0 z-[20] border-none shadow-sm h-14">

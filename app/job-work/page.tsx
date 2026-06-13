@@ -8,7 +8,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
     Loader2, Save, X, Plus, Trash2, Pencil, Search, History, AlertTriangle, ClipboardCheck, ArrowRight,
     Filter, LayoutGrid, List, CheckCircle2, Download, Trash, ChevronLeft, ChevronRight, Ban, RotateCcw,
-    Users, Package, MessageSquareWarning
+    Users, Package, MessageSquareWarning, Calendar
 } from 'lucide-react';
 
 interface StepConfig {
@@ -129,6 +129,20 @@ export default function JobWorkPage() {
     const [isDeleting, setIsDeleting] = useState(false);
     const [isCancelling, setIsCancelling] = useState(false);
 
+    const [isCalendarOpen, setIsCalendarOpen] = useState(false);
+    const [calendarMonth, setCalendarMonth] = useState(new Date());
+    const calendarRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        const handleClickOutside = (event: MouseEvent) => {
+            if (calendarRef.current && !calendarRef.current.contains(event.target as Node)) {
+                setIsCalendarOpen(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
+
     const fetchData = async () => {
         setLoading(true);
         try {
@@ -189,6 +203,30 @@ export default function JobWorkPage() {
         fetchUsers();
     }, []);
 
+    const calendarCounts = useMemo(() => {
+        const counts: Record<string, number> = {};
+        data.forEach(item => {
+            if (item['Cancelled']?.trim().toLowerCase() === 'yes') return;
+
+            let currentStep = 1;
+            for (let s = 1; s <= 11; s++) {
+                if ((item as any)[`Actual_${s}`]) currentStep = s + 1;
+                else break;
+            }
+            if (currentStep > 11) return;
+
+            const plannedStr = (item as any)[`Planned_${currentStep}`];
+            if (plannedStr) {
+                const pDate = new Date(plannedStr);
+                if (!isNaN(pDate.getTime())) {
+                    const dateKey = `${pDate.getFullYear()}-${String(pDate.getMonth() + 1).padStart(2, '0')}-${String(pDate.getDate()).padStart(2, '0')}`;
+                    counts[dateKey] = (counts[dateKey] || 0) + 1;
+                }
+            }
+        });
+        return counts;
+    }, [data]);
+
     const activeData = useMemo(() => {
         let filtered = data.filter(d =>
             viewMode === 'cancelled'
@@ -225,6 +263,13 @@ export default function JobWorkPage() {
                 const pTime = pDate.getTime();
                 const pDayStart = new Date(pDate.getFullYear(), pDate.getMonth(), pDate.getDate()).getTime();
                 const diffDays = Math.round((pDayStart - todayStart) / oneDayMs);
+
+                if (activeTimeFilter.startsWith('Date:')) {
+                    const targetDateStr = activeTimeFilter.split(':')[1];
+                    const targetDate = new Date(targetDateStr);
+                    const targetDayStart = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate()).getTime();
+                    return pDayStart === targetDayStart;
+                }
 
                 switch (activeTimeFilter) {
                     case 'Delayed': return pTime < now.getTime();
@@ -305,17 +350,12 @@ export default function JobWorkPage() {
         const next = new Date(current);
         const numericValue = Number(value);
         if (unit === 'days') {
-            let daysAdded = 0;
-            while (daysAdded < numericValue) {
-                next.setDate(next.getDate() + 1);
-                if (next.getDay() !== 0) { // Skip Sunday
-                    daysAdded++;
-                }
-            }
+            next.setDate(next.getDate() + numericValue);
         } else {
             next.setHours(next.getHours() + numericValue);
         }
 
+        // Skip Sunday
         if (next.getDay() === 0) {
             next.setDate(next.getDate() + 1);
         }
@@ -439,9 +479,9 @@ export default function JobWorkPage() {
                         let unit: 'hours' | 'days' = 'hours';
 
                         if (currentStep === 1) {
-                            // Specifically for Step 1 -> Step 2, use lead_time_1 in days
+                            // Specifically for Step 1 -> Step 2, use lead_time_1 in days (minus 2 as per requirement)
                             const lt1 = bulkUpdates[id]?.lead_time_1 || (item as any).lead_time_1 || 0;
-                            duration = Number(lt1);
+                            duration = Math.max(0, Number(lt1) - 2);
                             unit = 'days';
                         } else {
                             const nextConfig = stepConfigs.find(c => c.step === nextStep);
@@ -573,6 +613,52 @@ export default function JobWorkPage() {
         }
     };
 
+    const handleExportCSV = () => {
+        if (data.length === 0) {
+            toast.error("No data available to export");
+            return;
+        }
+
+        const formatCSVValue = (val: any) => {
+            if (!val) return '';
+            if (typeof val === 'string') {
+                if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z?$/.test(val)) {
+                    return new Date(val).toLocaleString('en-IN', {
+                        day: '2-digit', month: 'short', year: 'numeric',
+                        hour: '2-digit', minute: '2-digit', hour12: true
+                    });
+                }
+            }
+            return String(val);
+        };
+
+        const headers = Object.keys(data[0]).filter(key => key !== 'id' && key !== '_rowIndex');
+
+        const csvRows = [];
+        csvRows.push(headers.map(h => `"${String(h).replace(/"/g, '""')}"`).join(','));
+
+        for (const row of data) {
+            const values = headers.map(header => {
+                const val = (row as any)[header];
+                const formattedVal = formatCSVValue(val);
+                const escaped = String(formattedVal).replace(/"/g, '""');
+                return `"${escaped}"`;
+            });
+            csvRows.push(values.join(','));
+        }
+
+        const csvString = csvRows.join('\n');
+        const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement('a');
+        const url = URL.createObjectURL(blob);
+        link.setAttribute('href', url);
+        link.setAttribute('download', `job_work_export_${new Date().toISOString().split('T')[0]}.csv`);
+        link.style.visibility = 'hidden';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    };
+
     return (
         <LayoutWrapper>
             <div className="p-4 space-y-4">
@@ -611,6 +697,12 @@ export default function JobWorkPage() {
                         >
                             <LayoutGrid size={14} /> Setup
                         </button>
+                        <button
+                            onClick={handleExportCSV}
+                            className="flex items-center gap-2 px-6 py-2.5 rounded-[1.5rem] text-[10px] font-black uppercase tracking-widest transition-all text-gray-500 hover:text-green-600 hover:bg-green-50"
+                        >
+                            <Download size={14} /> Export
+                        </button>
                         <div className="w-px h-6 bg-slate-200 dark:bg-slate-700 mx-1" />
                         <button
                             onClick={() => {
@@ -634,7 +726,7 @@ export default function JobWorkPage() {
 
                 {/* Search and Table Section — Search Removed */}
                 {viewMode !== 'setup' ? (
-                    <div className="bg-white dark:bg-gray-800 rounded-[2.5rem] shadow-2xl border border-slate-100 dark:border-slate-700/50 overflow-hidden">
+                    <div className="bg-white dark:bg-gray-800 rounded-[2.5rem] shadow-2xl border border-slate-100 dark:border-slate-700/50">
                         {/* Summary Tiles Inside Container */}
                         <div className="overflow-x-auto pb-0 scroll-smooth -mx-0 px-4 pt-4 border-b border-slate-50 dark:border-slate-800/50 bg-slate-50/30 dark:bg-slate-900/10">
                             <div className="flex gap-2 min-w-max pr-2 pb-4">
@@ -682,7 +774,7 @@ export default function JobWorkPage() {
                         </div>
 
                         {/* Pagination Row — above header, combined with filters */}
-                        <div className="flex bg-slate-50/50 dark:bg-slate-900/50 p-2 border-b border-slate-50 dark:border-slate-800 backdrop-blur-md sticky top-0 z-[20]">
+                        <div className="flex bg-slate-50/50 dark:bg-slate-900/50 p-2 border-b border-slate-50 dark:border-slate-800 backdrop-blur-md sticky top-0 z-[30]">
                             <div className="flex-1 flex items-center justify-between px-3">
                                 <div className="flex items-center gap-4">
                                     <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest whitespace-nowrap">
@@ -696,24 +788,119 @@ export default function JobWorkPage() {
 
                                     <div className="h-4 w-px bg-slate-200 dark:bg-slate-700 mx-1" />
 
-                                    <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-1">
-                                        {['Delayed', 'Today', 'Tomorrow', 'Next 3', 'Next 7', 'Next 15'].map((filter) => (
+                                    <div className="flex items-center gap-1.5">
+                                        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-1">
+                                            {['Delayed', 'Today', 'Tomorrow', 'Next 3', 'Next 7', 'Next 15'].map((filter) => (
+                                                <button
+                                                    key={filter}
+                                                    onClick={() => { setActiveTimeFilter(activeTimeFilter === filter ? null : filter); setCurrentPage(1); }}
+                                                    className={`px-3 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all whitespace-nowrap relative ${activeTimeFilter === filter
+                                                        ? 'bg-[var(--theme-primary)] text-gray-900 shadow-md scale-[1.05]'
+                                                        : 'bg-white dark:bg-slate-800 text-slate-500 border border-slate-100 dark:border-slate-700 hover:border-[var(--theme-primary)] hover:text-[var(--theme-primary)]'
+                                                        }`}
+                                                >
+                                                    {filter}
+                                                    {((timeStats[filter as keyof typeof timeStats] ?? 0) > 0) && (
+                                                        <sup className={`ml-1 text-[8px] ${activeTimeFilter === filter ? 'text-gray-900' : (filter === 'Delayed' ? 'text-red-500' : 'text-emerald-500')}`}>
+                                                            {timeStats[filter as keyof typeof timeStats]}
+                                                        </sup>
+                                                    )}
+                                                </button>
+                                            ))}
+                                        </div>
+
+                                        <div className="h-3 w-px bg-slate-300 dark:bg-slate-700 mx-1 shrink-0" />
+                                        <div className="relative flex items-center shrink-0" ref={calendarRef}>
                                             <button
-                                                key={filter}
-                                                onClick={() => { setActiveTimeFilter(activeTimeFilter === filter ? null : filter); setCurrentPage(1); }}
-                                                className={`px-3 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all whitespace-nowrap relative ${activeTimeFilter === filter
-                                                    ? 'bg-[var(--theme-primary)] text-gray-900 shadow-md scale-[1.05]'
-                                                    : 'bg-white dark:bg-slate-800 text-slate-500 border border-slate-100 dark:border-slate-700 hover:border-[var(--theme-primary)] hover:text-[var(--theme-primary)]'
-                                                    }`}
+                                                type="button"
+                                                onClick={() => setIsCalendarOpen(!isCalendarOpen)}
+                                                className={`flex items-center gap-2 px-3 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest border transition-all cursor-pointer outline-none ${activeTimeFilter?.startsWith('Date:') ? 'bg-[var(--theme-primary)] text-gray-900 border-[var(--theme-primary)] shadow-md scale-[1.05]' : 'bg-white dark:bg-slate-800 text-slate-500 border-slate-100 dark:border-slate-700 hover:border-[var(--theme-primary)] hover:text-[var(--theme-primary)]'}`}
                                             >
-                                                {filter}
-                                                {((timeStats[filter as keyof typeof timeStats] ?? 0) > 0) && (
-                                                    <sup className={`ml-1 text-[8px] ${activeTimeFilter === filter ? 'text-gray-900' : (filter === 'Delayed' ? 'text-red-500' : 'text-emerald-500')}`}>
-                                                        {timeStats[filter as keyof typeof timeStats]}
-                                                    </sup>
-                                                )}
+                                                <Calendar size={12} />
+                                                {activeTimeFilter?.startsWith('Date:') 
+                                                    ? new Date(activeTimeFilter.split(':')[1]).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) 
+                                                    : 'Select Date'}
                                             </button>
-                                        ))}
+
+                                            <AnimatePresence>
+                                                {isCalendarOpen && (
+                                                    <motion.div
+                                                        initial={{ opacity: 0, x: -10, scale: 0.95 }}
+                                                        animate={{ opacity: 1, x: 0, scale: 1 }}
+                                                        exit={{ opacity: 0, x: -10, scale: 0.95 }}
+                                                        transition={{ duration: 0.2 }}
+                                                        className="absolute left-[100%] ml-3 top-0 z-[99] bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-gray-100 dark:border-gray-700 p-5 w-80"
+                                                    >
+                                                        <div className="flex items-center justify-between mb-4">
+                                                            <button
+                                                                onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() - 1))}
+                                                                className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                                                            >
+                                                                <svg className="w-5 h-5 text-gray-600 dark:text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
+                                                            </button>
+                                                            <span className="font-bold text-sm text-gray-900 dark:text-white uppercase tracking-wider">
+                                                                {calendarMonth.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}
+                                                            </span>
+                                                            <button
+                                                                onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1))}
+                                                                className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                                                            >
+                                                                <svg className="w-5 h-5 text-gray-600 dark:text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+                                                            </button>
+                                                        </div>
+
+                                                        <div className="grid grid-cols-7 gap-1 mb-2 text-center">
+                                                            {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map(day => (
+                                                                <div key={day} className="text-[10px] font-black text-gray-400 uppercase tracking-widest">{day}</div>
+                                                            ))}
+                                                        </div>
+
+                                                        <div className="grid grid-cols-7 gap-1">
+                                                            {Array.from({ length: new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), 1).getDay() }).map((_, i) => (
+                                                                <div key={`empty-${i}`} />
+                                                            ))}
+                                                            {Array.from({ length: new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 0).getDate() }).map((_, i) => {
+                                                                const day = i + 1;
+                                                                const dateKey = `${calendarMonth.getFullYear()}-${String(calendarMonth.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                                                                const count = calendarCounts[dateKey] || 0;
+                                                                const isSelected = activeTimeFilter === `Date:${dateKey}`;
+                                                                const isToday = new Date().toDateString() === new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), day).toDateString();
+
+                                                                return (
+                                                                    <button
+                                                                        key={day}
+                                                                        onClick={() => {
+                                                                            setActiveTimeFilter(`Date:${dateKey}`);
+                                                                            setCurrentPage(1);
+                                                                            setIsCalendarOpen(false);
+                                                                        }}
+                                                                        className={`relative h-10 w-10 rounded-lg text-sm flex items-center justify-center transition-all ${isSelected ? 'bg-[var(--theme-primary)] text-gray-900 font-bold shadow-md' : isToday ? 'bg-gray-100 dark:bg-gray-700 text-[var(--theme-primary)] font-bold' : count > 0 ? 'bg-[var(--theme-primary)]/15 text-[var(--theme-primary)] font-bold border border-[var(--theme-primary)]/30 shadow-sm' : 'hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 font-medium'}`}
+                                                                    >
+                                                                        {day}
+                                                                        {count > 0 && (
+                                                                            <span className={`absolute -top-1.5 -right-1.5 flex h-4 w-4 items-center justify-center rounded-full text-[9px] font-black shadow-sm ${isSelected ? 'bg-white text-[var(--theme-primary)]' : 'bg-[var(--theme-primary)] text-gray-900'}`}>
+                                                                                {count}
+                                                                            </span>
+                                                                        )}
+                                                                    </button>
+                                                                );
+                                                            })}
+                                                        </div>
+
+                                                        {activeTimeFilter?.startsWith('Date:') && (
+                                                            <div className="mt-4 pt-3 border-t border-gray-100 dark:border-gray-700">
+                                                                <button
+                                                                    onClick={() => { setActiveTimeFilter(null); setIsCalendarOpen(false); }}
+                                                                    className="w-full py-1.5 text-[10px] font-black uppercase tracking-widest text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
+                                                                >
+                                                                    Clear Selection
+                                                                </button>
+                                                            </div>
+                                                        )}
+                                                    </motion.div>
+                                                )}
+                                            </AnimatePresence>
+                                        </div>
                                     </div>
 
                                     {selectedItems.size > 0 && (
@@ -779,7 +966,7 @@ export default function JobWorkPage() {
                         </div>
 
 
-                        <div className="overflow-x-auto">
+                        <div className="overflow-x-auto overflow-hidden rounded-b-[2.5rem]">
                             <table className="w-full text-left">
                                 <thead className={`text-[10px] font-black uppercase tracking-widest text-gray-900 ${viewMode === 'cancelled' ? 'bg-red-400' : 'bg-[var(--theme-primary)]'}`}>
                                     <tr>

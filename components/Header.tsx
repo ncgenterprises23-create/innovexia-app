@@ -352,9 +352,9 @@ export default function Header({ isOpen, setIsOpen, disableNotifications = false
 
             {/* Search Results Dropdown */}
             <AnimatePresence>
-              {showSearchResults && searchQuery && (
+              {showSearchResults && (
                 <motion.div
-                  className="absolute top-full left-0 right-0 mt-2 bg-white dark:bg-gray-800 rounded-xl shadow-xl overflow-hidden z-50"
+                  className="absolute top-full left-0 right-0 mt-2 bg-white dark:bg-gray-800 rounded-xl shadow-xl overflow-y-auto max-h-96 z-50"
                   initial={{ opacity: 0, y: -10 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -10 }}
