@@ -210,7 +210,9 @@ export default function PurchaseFMSPage() {
             const currentStep = getCurrentStep(o);
             if (currentStep > 4) return;
 
-            const plannedStr = o[`Planned_${currentStep}` as keyof PurchaseFMSOrder];
+            // Prefer Next_Follow_Up_Date for step 3 when present
+            let plannedStr = o[`Planned_${currentStep}` as keyof PurchaseFMSOrder];
+            if (currentStep === 3 && o.Next_Follow_Up_Date) plannedStr = o.Next_Follow_Up_Date;
             if (!plannedStr) return;
 
             const pDate = new Date(plannedStr as string);
@@ -235,7 +237,9 @@ export default function PurchaseFMSPage() {
         activeOrders.forEach(o => {
             const currentStep = getCurrentStep(o);
             if (currentStep > 4) return;
-            const plannedStr = o[`Planned_${currentStep}` as keyof PurchaseFMSOrder];
+            // Prefer Next_Follow_Up_Date for step 3 when present
+            let plannedStr = o[`Planned_${currentStep}` as keyof PurchaseFMSOrder];
+            if (currentStep === 3 && o.Next_Follow_Up_Date) plannedStr = o.Next_Follow_Up_Date;
             if (!plannedStr) return;
             const pDate = new Date(plannedStr as string);
             if (isNaN(pDate.getTime())) return;
@@ -324,7 +328,9 @@ export default function PurchaseFMSPage() {
                     const currentStep = getCurrentStep(o);
                     if (currentStep > 4) return false;
 
-                    const plannedStr = o[`Planned_${currentStep}` as keyof PurchaseFMSOrder];
+                    // Prefer Next_Follow_Up_Date for step 3 when present
+                    let plannedStr = o[`Planned_${currentStep}` as keyof PurchaseFMSOrder];
+                    if (currentStep === 3 && o.Next_Follow_Up_Date) plannedStr = o.Next_Follow_Up_Date;
                     if (!plannedStr) return false;
 
                     const pDate = new Date(plannedStr as string);
@@ -1292,10 +1298,12 @@ export default function PurchaseFMSPage() {
                                                                 {order['Po No.']}
                                                             </td>
                                                             {STAGES.map((s) => {
-                                                                const actual = order[`Actual_${s.step}` as keyof PurchaseFMSOrder];
                                                                 const planned = order[`Planned_${s.step}` as keyof PurchaseFMSOrder];
+                                                                const actual = order[`Actual_${s.step}` as keyof PurchaseFMSOrder];
                                                                 const status = order[`Status_${s.step}` as keyof PurchaseFMSOrder];
-                                                                const delayInfo = getDelayInfo(planned as string, actual as string);
+                                                                // If a Next_Follow_Up_Date exists for step 3, use it as the reference for delay
+                                                                const plannedForDelay = (s.step === 3 && order.Next_Follow_Up_Date) ? order.Next_Follow_Up_Date : planned;
+                                                                const delayInfo = getDelayInfo(plannedForDelay as string, actual as string);
 
                                                                 const isPreviousDone = s.step === 1 || !!order[`Actual_${s.step - 1}` as keyof PurchaseFMSOrder];
                                                                 const isDone = !!actual;
