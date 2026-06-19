@@ -27,6 +27,7 @@ export const SPREADSHEET_IDS = {
   FACTORY_REQUIREMENT: '1YuE6M_kD6iZwB6XT-gdj6ki8MHON5L_Rp2D7Mlw3IXc',
   CRM: '1oJZWpxo1cgNc20lr8aPIZMMp_W1MaPchPYajRIexnT0',
   CLIENT_COMPLAIN: '1NbmOkuvfCDIdeK-UGKzWvPtWMf1Io1Yo9TH-lz-_uNs',
+  DEALER_KIT: '1TphrulMxdksL5J0MMPqFK4cXEHni_eQJ9XcXXXj05Zs',
   RM_DEFECTS: '1a0pnGbY_tSk5y9_VN02KHcqiJWHUKQSLAav9_9aIDpE',
   JOB_WORK: '1V326z9jzR8bBaLy5J5eae4jKsyg3px7E87LZ9TOue90',
   IMS_FG: '1Jc8ITgif_JE3DkhZDewrc3k1ew5vZpYhobPhWS1eXTI',
@@ -65,6 +66,10 @@ const SHEETS = {
   CRM: 'CRM',
   CRM_CONFIG: 'Step Configuration',
   CLIENT_COMPLAIN: 'Client Complain',
+  DEALER_KIT_SUMMARY: 'Summary',
+  DEALER_KIT_FESTIVALS: 'Festivals',
+  DEALER_KIT_DEALERS: 'Dealer Master',
+  DEALER_KIT_MONTHLY: 'Monthly Frequency KIT',
   CLIENT_COMPLAIN_CONFIG: 'Step Configuration',
   RM_DEFECTS: 'Raw Material Defect Problem',
   RM_DEFECTS_CONFIG: 'Step Configuration',
@@ -7593,6 +7598,594 @@ export async function deleteClientInterfaceData(sheetName: string, identifierKey
     return { success: true };
   } catch (error) {
     console.error(`Error deleting Client Interface data for ${sheetName}:`, error);
+    throw error;
+  }
+}
+
+// DEALER KIT OPERATIONS
+
+type DealerKitStatus = 'Overdue' | 'Upcoming' | 'Scheduled';
+
+const DEALER_KIT_HEADERS = {
+  dealers: [
+    'Dealer ID', 'Firm Name', 'Contact Person', 'WhatsApp Mobile',
+    'City', 'State', 'Pincode', 'Courier Address', 'Category', 'Preferred Language',
+    'Relationship Owner', 'Customer Type', 'WhatsApp Consent', 'Number Saved Cuboc?',
+    'Courier Address Verified', 'Active in KIT?', 'Last Order Date',
+    'Potential Product Interest', 'Notes'
+  ],
+  monthly: [
+    'Content ID', 'Month', 'Medium', 'Content Type', 'Due Date', 'Release Date',
+    'Topic', 'Draft Owner', 'Design Owner', 'Approval Status', 'File Link',
+    'Print Qty', 'Courier Qty', 'WhatsApp Target', 'Production Status', 'Remarks'
+  ]
+};
+
+function normalizeHeader(header: string): string {
+  return (header || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function findHeader(headers: string[], candidates: string[]): string | null {
+  const normalizedMap = new Map(headers.map((h) => [normalizeHeader(h), h]));
+  for (const candidate of candidates) {
+    const found = normalizedMap.get(normalizeHeader(candidate));
+    if (found) return found;
+  }
+  return null;
+}
+
+function toNumber(value: unknown): number {
+  if (value === null || value === undefined || value === '') return 0;
+  const parsed = Number(value);
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+function toDate(value: unknown): Date | null {
+  const parseInput = (typeof value === 'string' || typeof value === 'number' || value === null || value === undefined)
+    ? value
+    : undefined;
+  const parsed = parseSheetDate(parseInput);
+  if (parsed) {
+    const date = new Date(parsed);
+    if (!Number.isNaN(date.getTime())) return date;
+  }
+
+  if (typeof value === 'string' && value.trim()) {
+    const valueAsDate = new Date(value);
+    if (!Number.isNaN(valueAsDate.getTime())) return valueAsDate;
+
+    const parts = value.split(/[\/-]/);
+    if (parts.length === 3) {
+      const [part1, part2, part3] = parts.map((part) => Number(part));
+      if (!Number.isNaN(part1) && !Number.isNaN(part2) && !Number.isNaN(part3)) {
+        // dd/mm/yyyy fallback
+        const fallback = new Date(part3, part2 - 1, part1);
+        if (!Number.isNaN(fallback.getTime())) return fallback;
+      }
+    }
+  }
+
+  return null;
+}
+
+function getDealerKitStatus(dueDate: unknown): DealerKitStatus {
+  const date = toDate(dueDate);
+  if (!date) return 'Scheduled';
+
+  const now = new Date();
+  const diffMs = date.getTime() - now.getTime();
+  const diffDays = diffMs / (1000 * 60 * 60 * 24);
+
+  if (diffDays < 0) return 'Overdue';
+  if (diffDays <= 7) return 'Upcoming';
+  return 'Scheduled';
+}
+
+function mapDealerKitDealerRow(rowObj: any) {
+  return {
+    dealerId: rowObj['Dealer ID'] || rowObj.dealer_id || rowObj.id || '',
+    firmName: rowObj['Firm Name'] || rowObj.firm_name || '',
+    contactPerson: rowObj['Contact Person'] || rowObj.contact_person || '',
+    whatsappMobile: rowObj['WhatsApp Mobile'] || rowObj['WhatsApp Number'] || rowObj.whatsapp_mobile || rowObj.whatsapp_number || '',
+    city: rowObj.City || rowObj.city || '',
+    state: rowObj.State || rowObj.state || '',
+    pincode: rowObj.Pincode || rowObj.pincode || rowObj['PIN Code'] || '',
+    courierAddress: rowObj['Courier Address'] || rowObj.Address || rowObj.courier_address || rowObj.address || '',
+    category: rowObj.Category || rowObj.category || '',
+    preferredLanguage: rowObj['Preferred Language'] || rowObj.Language || rowObj.preferred_language || rowObj.language || '',
+    relationshipOwner: rowObj['Relationship Owner'] || rowObj.Owner || rowObj.relationship_owner || rowObj.owner || '',
+    customerType: rowObj['Customer Type'] || rowObj.customer_type || '',
+    whatsappConsent: rowObj['WhatsApp Consent'] || rowObj.whatsapp_consent || '',
+    numberSavedCuboc: rowObj['Number Saved Cuboc?'] || rowObj.number_saved_cuboc || '',
+    courierAddressVerified: rowObj['Courier Address Verified'] || rowObj.courier_address_verified || '',
+    activeInKit: rowObj['Active in KIT?'] || rowObj['Active KIT?'] || rowObj.active_in_kit || rowObj.active_kit || '',
+    lastOrderDate: rowObj['Last Order Date'] || rowObj.last_order_date || '',
+    potentialProductInterest: rowObj['Potential Product Interest'] || rowObj.Interest || rowObj.potential_product_interest || rowObj.interest || '',
+    notes: rowObj.Notes || rowObj.notes || '',
+  };
+}
+
+function mapDealerKitMonthlyRow(rowObj: any) {
+  const dueDate = rowObj['Due Date'] || rowObj.due_date || '';
+  return {
+    contentId: rowObj['Content ID'] || rowObj.content_id || rowObj.id || '',
+    month: rowObj.Month || rowObj.month || '',
+    medium: rowObj.Medium || rowObj.medium || '',
+    contentType: rowObj['Content Type'] || rowObj.content_type || '',
+    dueDate,
+    releaseDate: rowObj['Release Date'] || rowObj.release_date || '',
+    topic: rowObj.Topic || rowObj.topic || '',
+    draftOwner: rowObj['Draft Owner'] || rowObj.draft_owner || '',
+    designOwner: rowObj['Design Owner'] || rowObj.design_owner || '',
+    approvalStatus: rowObj['Approval Status'] || rowObj.approval_status || '',
+    fileLink: rowObj['File Link'] || rowObj.file_link || '',
+    printQty: toNumber(rowObj['Print Qty'] || rowObj.print_qty),
+    courierQty: toNumber(rowObj['Courier Qty'] || rowObj.courier_qty),
+    whatsappTarget: toNumber(rowObj['WhatsApp Target'] || rowObj.whatsapp_target),
+    productionStatus: rowObj['Production Status'] || rowObj.production_status || '',
+    remarks: rowObj.Remarks || rowObj.remarks || '',
+    status: getDealerKitStatus(dueDate),
+  };
+}
+
+async function getDealerKitSheetRows(sheetName: string) {
+  const sheets = await getGoogleSheetsClient();
+  const spreadsheetId = SPREADSHEET_IDS.DEALER_KIT;
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${sheetName}!A:AZ`,
+    valueRenderOption: 'UNFORMATTED_VALUE',
+  });
+
+  return {
+    sheets,
+    spreadsheetId,
+    rows: response.data.values || [],
+  };
+}
+
+function buildNextCode(existingValues: string[], prefix: string): string {
+  const maxNumber = existingValues.reduce((max, value) => {
+    const match = String(value).match(/(\d+)$/);
+    if (!match) return max;
+    const numeric = Number(match[1]);
+    return Number.isNaN(numeric) ? max : Math.max(max, numeric);
+  }, 0);
+
+  return `${prefix}${String(maxNumber + 1).padStart(3, '0')}`;
+}
+
+export async function getDealerKitSummary() {
+  try {
+    const { rows } = await getDealerKitSheetRows(SHEETS.DEALER_KIT_SUMMARY);
+    if (!rows.length) {
+      return {
+        annualCycle: '',
+        dealerCount: 0,
+        festivalWhatsapp: 0,
+        videos: 0,
+        insightLetters: 0,
+      };
+    }
+
+    const map = new Map<string, string>();
+    rows.forEach((row) => {
+      const key = String(row[0] || '').trim();
+      const value = String(row[1] || '').trim();
+      if (key) map.set(normalizeHeader(key), value);
+    });
+
+    return {
+      annualCycle: map.get('annualcycle') || map.get('cycle') || '',
+      dealerCount: toNumber(map.get('dealercount') || map.get('totaldealers')),
+      festivalWhatsapp: toNumber(map.get('festivalwhatsapp')),
+      videos: toNumber(map.get('videos')),
+      insightLetters: toNumber(map.get('insightletters')),
+      activeDealers: toNumber(map.get('activedealers')),
+      pendingContent: toNumber(map.get('pendingcontent')),
+      completedContent: toNumber(map.get('completedcontent')),
+      upcomingDispatches: toNumber(map.get('upcomingdispatches')),
+      whatsappCampaigns: toNumber(map.get('whatsappcampaigns')),
+      courierCampaigns: toNumber(map.get('couriercampaigns')),
+    };
+  } catch (error) {
+    console.error('Error fetching Dealer_Kit summary:', error);
+    throw error;
+  }
+}
+
+export async function getDealerKitFestivals() {
+  try {
+    const { rows } = await getDealerKitSheetRows(SHEETS.DEALER_KIT_FESTIVALS);
+    if (!rows.length) return [];
+
+    const headers = rows[0].map((header: string) => String(header).trim());
+    return rows.slice(1).map((row, index) => {
+      const rowObj = rowToObject(headers, row);
+      const festivalDate = rowObj.Date || rowObj.date || '';
+
+      return {
+        id: `${rowObj.id || `fest-${index + 1}`}`,
+        month: rowObj.Month || rowObj.month || '',
+        festival: rowObj.Festival || rowObj.festival || rowObj.Name || '',
+        date: festivalDate,
+        medium: rowObj.Medium || rowObj.medium || 'WhatsApp Greeting',
+        status: rowObj.Status || rowObj.status || getDealerKitStatus(festivalDate),
+      };
+    });
+  } catch (error) {
+    console.error('Error fetching Dealer_Kit festivals:', error);
+    throw error;
+  }
+}
+
+export async function getDealerKitDealers() {
+  try {
+    const { rows } = await getDealerKitSheetRows(SHEETS.DEALER_KIT_DEALERS);
+    if (!rows.length) return [];
+
+    const headers = rows[0].map((header: string) => String(header).trim());
+    return rows.slice(1).map((row, index) => {
+      const rowObj = rowToObject(headers, row);
+      return {
+        ...mapDealerKitDealerRow(rowObj),
+        _rowIndex: index + 2,
+      };
+    });
+  } catch (error) {
+    console.error('Error fetching Dealer_Kit dealers:', error);
+    throw error;
+  }
+}
+
+export async function createDealerKitDealer(payload: Record<string, unknown>) {
+  try {
+    const { sheets, spreadsheetId, rows } = await getDealerKitSheetRows(SHEETS.DEALER_KIT_DEALERS);
+    const headers = rows[0]?.map((header: string) => String(header).trim()) || [];
+    const targetHeaders = headers.length ? headers : DEALER_KIT_HEADERS.dealers;
+
+    if (!headers.length) {
+      await sheets.spreadsheets.values.update({
+        spreadsheetId,
+        range: `${SHEETS.DEALER_KIT_DEALERS}!A1`,
+        valueInputOption: 'RAW',
+        requestBody: { values: [targetHeaders] },
+      });
+    }
+
+    const dealerIdHeader = findHeader(targetHeaders, ['Dealer ID', 'dealer_id', 'id']) || 'Dealer ID';
+    const dealerIdIndex = targetHeaders.indexOf(dealerIdHeader);
+    const existingDealerIds = rows.slice(1).map((row) => String(row[dealerIdIndex] || ''));
+
+    const dealerId = String(payload.dealerId || buildNextCode(existingDealerIds, 'D'));
+
+    const rowMap: Record<string, unknown> = {
+      'Dealer ID': dealerId,
+      'Firm Name': payload.firmName || '',
+      'Contact Person': payload.contactPerson || '',
+      'WhatsApp Mobile': payload.whatsappMobile || payload.whatsappNumber || '',
+      'WhatsApp Number': payload.whatsappMobile || payload.whatsappNumber || '',
+      City: payload.city || '',
+      State: payload.state || '',
+      Pincode: payload.pincode || '',
+      'Courier Address': payload.courierAddress || payload.address || '',
+      Address: payload.courierAddress || payload.address || '',
+      Category: payload.category || '',
+      'Preferred Language': payload.preferredLanguage || payload.language || '',
+      Language: payload.preferredLanguage || payload.language || '',
+      'Relationship Owner': payload.relationshipOwner || payload.owner || '',
+      Owner: payload.relationshipOwner || payload.owner || '',
+      'Customer Type': payload.customerType || '',
+      'WhatsApp Consent': payload.whatsappConsent || '',
+      'Number Saved Cuboc?': payload.numberSavedCuboc || '',
+      'Courier Address Verified': payload.courierAddressVerified || '',
+      'Active in KIT?': payload.activeInKit || payload.activeKit || '',
+      'Active KIT?': payload.activeInKit || payload.activeKit || '',
+      'Last Order Date': payload.lastOrderDate || '',
+      'Potential Product Interest': payload.potentialProductInterest || payload.interest || '',
+      Interest: payload.potentialProductInterest || payload.interest || '',
+      Notes: payload.notes || '',
+    };
+
+    const rowData = targetHeaders.map((header) => rowMap[header] ?? '');
+
+    await sheets.spreadsheets.values.append({
+      spreadsheetId,
+      range: `${SHEETS.DEALER_KIT_DEALERS}!A:AZ`,
+      valueInputOption: 'USER_ENTERED',
+      requestBody: { values: [rowData] },
+    });
+
+    return { success: true, dealerId };
+  } catch (error) {
+    console.error('Error creating Dealer_Kit dealer:', error);
+    throw error;
+  }
+}
+
+export async function updateDealerKitDealer(dealerId: string, updates: Record<string, unknown>) {
+  try {
+    const { sheets, spreadsheetId, rows } = await getDealerKitSheetRows(SHEETS.DEALER_KIT_DEALERS);
+    if (!rows.length) throw new Error('Dealer sheet is empty');
+
+    const headers = rows[0].map((header: string) => String(header).trim());
+    const dealerIdHeader = findHeader(headers, ['Dealer ID', 'dealer_id', 'id']);
+    if (!dealerIdHeader) throw new Error('Dealer ID column not found');
+
+    const dealerIdIndex = headers.indexOf(dealerIdHeader);
+    const rowIndex = rows.findIndex((row, index) => index > 0 && String(row[dealerIdIndex] || '') === String(dealerId));
+    if (rowIndex === -1) throw new Error('Dealer not found');
+
+    const existingRow = rows[rowIndex] || [];
+    const rowMap: Record<string, unknown> = {};
+    headers.forEach((header, index) => {
+      rowMap[header] = existingRow[index] ?? '';
+    });
+
+    const updateMap: Record<string, unknown> = {
+      'Firm Name': updates.firmName,
+      'Contact Person': updates.contactPerson,
+      'WhatsApp Mobile': updates.whatsappMobile ?? updates.whatsappNumber,
+      'WhatsApp Number': updates.whatsappMobile ?? updates.whatsappNumber,
+      City: updates.city,
+      State: updates.state,
+      Pincode: updates.pincode,
+      'Courier Address': updates.courierAddress ?? updates.address,
+      Address: updates.courierAddress ?? updates.address,
+      Category: updates.category,
+      'Preferred Language': updates.preferredLanguage ?? updates.language,
+      Language: updates.preferredLanguage ?? updates.language,
+      'Relationship Owner': updates.relationshipOwner ?? updates.owner,
+      Owner: updates.relationshipOwner ?? updates.owner,
+      'Customer Type': updates.customerType,
+      'WhatsApp Consent': updates.whatsappConsent,
+      'Number Saved Cuboc?': updates.numberSavedCuboc,
+      'Courier Address Verified': updates.courierAddressVerified,
+      'Active in KIT?': updates.activeInKit ?? updates.activeKit,
+      'Active KIT?': updates.activeInKit ?? updates.activeKit,
+      'Last Order Date': updates.lastOrderDate,
+      'Potential Product Interest': updates.potentialProductInterest ?? updates.interest,
+      Interest: updates.potentialProductInterest ?? updates.interest,
+      Notes: updates.notes,
+    };
+
+    Object.entries(updateMap).forEach(([header, value]) => {
+      if (value !== undefined && headers.includes(header)) {
+        rowMap[header] = value;
+      }
+    });
+
+    const updatedRow = headers.map((header) => rowMap[header] ?? '');
+    const sheetRow = rowIndex + 1;
+    const range = `${SHEETS.DEALER_KIT_DEALERS}!A${sheetRow}:${getColLetter(headers.length - 1)}${sheetRow}`;
+
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range,
+      valueInputOption: 'USER_ENTERED',
+      requestBody: { values: [updatedRow] },
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error('Error updating Dealer_Kit dealer:', error);
+    throw error;
+  }
+}
+
+export async function deleteDealerKitDealer(dealerId: string) {
+  try {
+    const { sheets, spreadsheetId, rows } = await getDealerKitSheetRows(SHEETS.DEALER_KIT_DEALERS);
+    if (!rows.length) throw new Error('Dealer sheet is empty');
+
+    const headers = rows[0].map((header: string) => String(header).trim());
+    const dealerIdHeader = findHeader(headers, ['Dealer ID', 'dealer_id', 'id']);
+    if (!dealerIdHeader) throw new Error('Dealer ID column not found');
+
+    const dealerIdIndex = headers.indexOf(dealerIdHeader);
+    const rowIndex = rows.findIndex((row, index) => index > 0 && String(row[dealerIdIndex] || '') === String(dealerId));
+    if (rowIndex === -1) throw new Error('Dealer not found');
+
+    const metadata = await sheets.spreadsheets.get({ spreadsheetId });
+    const sheet = metadata.data.sheets?.find((item) => item.properties?.title === SHEETS.DEALER_KIT_DEALERS);
+    const sheetId = sheet?.properties?.sheetId;
+    if (sheetId === undefined) throw new Error('Dealer sheet id not found');
+
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        requests: [{
+          deleteDimension: {
+            range: {
+              sheetId,
+              dimension: 'ROWS',
+              startIndex: rowIndex,
+              endIndex: rowIndex + 1,
+            }
+          }
+        }]
+      }
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error('Error deleting Dealer_Kit dealer:', error);
+    throw error;
+  }
+}
+
+export async function getDealerKitMonthlyFrequency() {
+  try {
+    const { rows } = await getDealerKitSheetRows(SHEETS.DEALER_KIT_MONTHLY);
+    if (!rows.length) return [];
+
+    const headers = rows[0].map((header: string) => String(header).trim());
+    return rows.slice(1).map((row, index) => {
+      const rowObj = rowToObject(headers, row);
+      return {
+        ...mapDealerKitMonthlyRow(rowObj),
+        _rowIndex: index + 2,
+      };
+    });
+  } catch (error) {
+    console.error('Error fetching Dealer_Kit monthly frequency:', error);
+    throw error;
+  }
+}
+
+export async function createDealerKitMonthlyFrequency(payload: Record<string, unknown>) {
+  try {
+    const { sheets, spreadsheetId, rows } = await getDealerKitSheetRows(SHEETS.DEALER_KIT_MONTHLY);
+    const headers = rows[0]?.map((header: string) => String(header).trim()) || [];
+    const targetHeaders = headers.length ? headers : DEALER_KIT_HEADERS.monthly;
+
+    if (!headers.length) {
+      await sheets.spreadsheets.values.update({
+        spreadsheetId,
+        range: `${SHEETS.DEALER_KIT_MONTHLY}!A1`,
+        valueInputOption: 'RAW',
+        requestBody: { values: [targetHeaders] },
+      });
+    }
+
+    const contentIdHeader = findHeader(targetHeaders, ['Content ID', 'content_id', 'id']) || 'Content ID';
+    const contentIdIndex = targetHeaders.indexOf(contentIdHeader);
+    const existingContentIds = rows.slice(1).map((row) => String(row[contentIdIndex] || ''));
+    const contentId = String(payload.contentId || buildNextCode(existingContentIds, 'C'));
+
+    const rowMap: Record<string, unknown> = {
+      'Content ID': contentId,
+      Month: payload.month || '',
+      Medium: payload.medium || '',
+      'Content Type': payload.contentType || '',
+      'Due Date': payload.dueDate || '',
+      'Release Date': payload.releaseDate || '',
+      Topic: payload.topic || '',
+      'Draft Owner': payload.draftOwner || '',
+      'Design Owner': payload.designOwner || '',
+      'Approval Status': payload.approvalStatus || '',
+      'File Link': payload.fileLink || '',
+      'Print Qty': payload.printQty || '',
+      'Courier Qty': payload.courierQty || '',
+      'WhatsApp Target': payload.whatsappTarget || '',
+      'Production Status': payload.productionStatus || '',
+      Remarks: payload.remarks || '',
+    };
+
+    const rowData = targetHeaders.map((header) => rowMap[header] ?? '');
+
+    await sheets.spreadsheets.values.append({
+      spreadsheetId,
+      range: `${SHEETS.DEALER_KIT_MONTHLY}!A:AZ`,
+      valueInputOption: 'USER_ENTERED',
+      requestBody: { values: [rowData] },
+    });
+
+    return { success: true, contentId };
+  } catch (error) {
+    console.error('Error creating Dealer_Kit monthly frequency:', error);
+    throw error;
+  }
+}
+
+export async function updateDealerKitMonthlyFrequency(contentId: string, updates: Record<string, unknown>) {
+  try {
+    const { sheets, spreadsheetId, rows } = await getDealerKitSheetRows(SHEETS.DEALER_KIT_MONTHLY);
+    if (!rows.length) throw new Error('Monthly Frequency sheet is empty');
+
+    const headers = rows[0].map((header: string) => String(header).trim());
+    const contentIdHeader = findHeader(headers, ['Content ID', 'content_id', 'id']);
+    if (!contentIdHeader) throw new Error('Content ID column not found');
+
+    const contentIdIndex = headers.indexOf(contentIdHeader);
+    const rowIndex = rows.findIndex((row, index) => index > 0 && String(row[contentIdIndex] || '') === String(contentId));
+    if (rowIndex === -1) throw new Error('Monthly item not found');
+
+    const existingRow = rows[rowIndex] || [];
+    const rowMap: Record<string, unknown> = {};
+    headers.forEach((header, index) => {
+      rowMap[header] = existingRow[index] ?? '';
+    });
+
+    const updateMap: Record<string, unknown> = {
+      Month: updates.month,
+      Medium: updates.medium,
+      'Content Type': updates.contentType,
+      'Due Date': updates.dueDate,
+      'Release Date': updates.releaseDate,
+      Topic: updates.topic,
+      'Draft Owner': updates.draftOwner,
+      'Design Owner': updates.designOwner,
+      'Approval Status': updates.approvalStatus,
+      'File Link': updates.fileLink,
+      'Print Qty': updates.printQty,
+      'Courier Qty': updates.courierQty,
+      'WhatsApp Target': updates.whatsappTarget,
+      'Production Status': updates.productionStatus,
+      Remarks: updates.remarks,
+    };
+
+    Object.entries(updateMap).forEach(([header, value]) => {
+      if (value !== undefined && headers.includes(header)) {
+        rowMap[header] = value;
+      }
+    });
+
+    const updatedRow = headers.map((header) => rowMap[header] ?? '');
+    const sheetRow = rowIndex + 1;
+    const range = `${SHEETS.DEALER_KIT_MONTHLY}!A${sheetRow}:${getColLetter(headers.length - 1)}${sheetRow}`;
+
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range,
+      valueInputOption: 'USER_ENTERED',
+      requestBody: { values: [updatedRow] },
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error('Error updating Dealer_Kit monthly frequency:', error);
+    throw error;
+  }
+}
+
+export async function deleteDealerKitMonthlyFrequency(contentId: string) {
+  try {
+    const { sheets, spreadsheetId, rows } = await getDealerKitSheetRows(SHEETS.DEALER_KIT_MONTHLY);
+    if (!rows.length) throw new Error('Monthly Frequency sheet is empty');
+
+    const headers = rows[0].map((header: string) => String(header).trim());
+    const contentIdHeader = findHeader(headers, ['Content ID', 'content_id', 'id']);
+    if (!contentIdHeader) throw new Error('Content ID column not found');
+
+    const contentIdIndex = headers.indexOf(contentIdHeader);
+    const rowIndex = rows.findIndex((row, index) => index > 0 && String(row[contentIdIndex] || '') === String(contentId));
+    if (rowIndex === -1) throw new Error('Monthly item not found');
+
+    const metadata = await sheets.spreadsheets.get({ spreadsheetId });
+    const sheet = metadata.data.sheets?.find((item) => item.properties?.title === SHEETS.DEALER_KIT_MONTHLY);
+    const sheetId = sheet?.properties?.sheetId;
+    if (sheetId === undefined) throw new Error('Monthly Frequency sheet id not found');
+
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        requests: [{
+          deleteDimension: {
+            range: {
+              sheetId,
+              dimension: 'ROWS',
+              startIndex: rowIndex,
+              endIndex: rowIndex + 1,
+            }
+          }
+        }]
+      }
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error('Error deleting Dealer_Kit monthly frequency:', error);
     throw error;
   }
 }

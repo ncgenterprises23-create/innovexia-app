@@ -63,6 +63,7 @@ export default function Header({ isOpen, setIsOpen, disableNotifications = false
     { name: 'MOM', path: '/mom', icon: 'document' },
     { name: 'Lead to Sales', path: '/lead-to-sales', icon: 'trending' },
     { name: 'O2D', path: '/o2d', icon: 'clipboard' },
+    { name: 'Dealer_Kit', path: '/Dealer_Kit', icon: 'clock' },
     { name: 'Export FMS', path: '/export-fms', icon: 'clipboard' },
     { name: 'NBD', path: '/nbd', icon: 'clipboard' },
     { name: 'Collection', path: '/collection', icon: 'clipboard' },
