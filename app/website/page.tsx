@@ -1477,6 +1477,7 @@ export default function WebsitePage() {
                                           )}
                                           {activeTab === 'Freshness' && (
                                             <>
+                                              <th className="px-4 py-2.5 font-black text-slate-500 uppercase tracking-wider text-right w-[110px]">Received Qty</th>
                                               <th className="px-4 py-2.5 font-black text-slate-500 uppercase tracking-wider text-center w-[130px]">Mfg Date</th>
                                               <th className="px-4 py-2.5 font-black text-slate-500 uppercase tracking-wider text-center w-[130px]">Expiry Date</th>
                                             </>
@@ -1539,6 +1540,11 @@ export default function WebsitePage() {
 
                                                {activeTab === 'Freshness' && (
                                                  <>
+                                                   {/* Received Qty Column */}
+                                                   <td className="px-4 py-2.5 text-right font-black text-emerald-600">
+                                                     {rowObj.receivedQty === 0 && !rowObj.isComplete ? '—' : rowObj.receivedQty}
+                                                   </td>
+
                                                    {/* Mfg Date Column */}
                                                    <td className="px-4 py-2.5 text-center font-semibold text-slate-500">
                                                      {rowObj.mfgDate ? formatDateValue(String(rowObj.mfgDate), 'Mfg Date') : '—'}

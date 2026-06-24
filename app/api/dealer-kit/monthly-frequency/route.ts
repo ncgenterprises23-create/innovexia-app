@@ -30,14 +30,22 @@ export async function POST(request: Request) {
 export async function PUT(request: Request) {
   try {
     const body = await request.json();
-    const contentId = body.contentId || body['Content ID'] || body.id;
-
-    if (!contentId) {
-      return NextResponse.json({ error: 'contentId is required' }, { status: 400 });
+    
+    // Support batch update
+    const updates = Array.isArray(body) ? body : [body];
+    const results = [];
+    
+    for (const update of updates) {
+      const contentId = update.contentId || update['Content ID'] || update.id;
+      if (!contentId) {
+        return NextResponse.json({ error: 'contentId is required for all updates' }, { status: 400 });
+      }
+      
+      const result = await updateDealerKitMonthlyFrequency(String(contentId), update);
+      results.push(result);
     }
 
-    const result = await updateDealerKitMonthlyFrequency(String(contentId), body);
-    return NextResponse.json(result);
+    return NextResponse.json(results.length === 1 ? results[0] : results);
   } catch (error: any) {
     console.error('Error updating Dealer_Kit monthly frequency:', error);
     return NextResponse.json({ error: 'Failed to update monthly plan item', details: error.message }, { status: 500 });

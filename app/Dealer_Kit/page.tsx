@@ -9,7 +9,8 @@ import { useThemeColor } from '@/components/ThemeColorProvider';
 import {
   Loader2, Pencil, Plus, Trash2, RefreshCcw, Search, CalendarDays,
   Users, Megaphone, FileText, Truck, BadgeCheck, Sparkles, ArrowRight,
-  MapPin, Globe2, Link2, X, ClipboardList, Layers3
+  MapPin, Globe2, Link2, X, ClipboardList, Layers3,
+  User, Phone, MessageCircle, Building2, Map, Languages, Tag, MessageSquare, Clock
 } from 'lucide-react';
 
 interface DealerSummary {
@@ -77,6 +78,15 @@ interface MonthlyPlan {
   status: 'Overdue' | 'Upcoming' | 'Scheduled';
 }
 
+interface TrackingStatus {
+  doneBy?: string;
+  dealerId: string;
+  contentId: string;
+  status: string;
+  link: string;
+}
+
+
 type ActiveTab = 'summary' | 'festivals' | 'dealers' | 'monthly';
 type ModalMode = 'add' | 'edit';
 
@@ -102,37 +112,21 @@ const DEALER_FORM_DEFAULT: Dealer = {
   notes: '',
 };
 
-const MONTHLY_FORM_DEFAULT: MonthlyPlan = {
-  contentId: '',
-  month: '',
-  medium: 'WhatsApp',
-  contentType: '',
-  dueDate: '',
-  releaseDate: '',
-  topic: '',
-  draftOwner: '',
-  designOwner: '',
-  approvalStatus: 'Scheduled',
-  fileLink: '',
-  printQty: 0,
-  courierQty: 0,
-  whatsappTarget: 0,
-  productionStatus: '',
-  remarks: '',
-  status: 'Scheduled',
-};
-
 function statusBadgeClass(status: string) {
   if (status === 'Overdue') return 'bg-red-100 text-red-700 border-red-200';
   if (status === 'Upcoming') return 'bg-amber-100 text-amber-700 border-amber-200';
   return 'bg-emerald-100 text-emerald-700 border-emerald-200';
 }
 
-function formatDate(value: string) {
-  if (!value) return '-';
+function formatDate(value: string | number) {
+  if (!value || String(value).trim() === '' || String(value) === '0' || String(value) === '-') return '-';
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleDateString('en-IN');
+  if (Number.isNaN(date.getTime())) return String(value);
+  if (date.getFullYear() <= 1970) return '-';
+  const d = String(date.getDate()).padStart(2, '0');
+  const m = date.toLocaleString('en-GB', { month: 'short' });
+  const y = String(date.getFullYear()).slice(-2);
+  return `${d} ${m} ${y}`;
 }
 
 function formatCompactDate(value: string) {
@@ -296,6 +290,7 @@ export default function DealerKitPage() {
   const [festivals, setFestivals] = useState<Festival[]>([]);
   const [dealers, setDealers] = useState<Dealer[]>([]);
   const [monthlyPlans, setMonthlyPlans] = useState<MonthlyPlan[]>([]);
+  const [trackingData, setTrackingData] = useState<TrackingStatus[]>([]);
 
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'Overdue' | 'Upcoming' | 'Scheduled'>('all');
@@ -305,9 +300,17 @@ export default function DealerKitPage() {
   const [dealerModalMode, setDealerModalMode] = useState<ModalMode>('add');
   const [dealerForm, setDealerForm] = useState<Dealer>(DEALER_FORM_DEFAULT);
 
+  const [festivalModalOpen, setFestivalModalOpen] = useState(false);
+  const [festivalModalMode, setFestivalModalMode] = useState<ModalMode>('add');
+  const [festivalForm, setFestivalForm] = useState<Festival>({
+    id: '', month: '', festival: '', date: '', medium: 'WhatsApp Greeting', status: 'Scheduled'
+  });
+
   const [monthlyModalOpen, setMonthlyModalOpen] = useState(false);
-  const [monthlyModalMode, setMonthlyModalMode] = useState<ModalMode>('add');
-  const [monthlyForm, setMonthlyForm] = useState<MonthlyPlan>(MONTHLY_FORM_DEFAULT);
+  const [batchItems, setBatchItems] = useState<{ contentId?: string; medium: string; contentType: string; dueDate: string; remarks: string }[]>([]);
+
+  const [trackingModalOpen, setTrackingModalOpen] = useState(false);
+  const [trackingForm, setTrackingForm] = useState<{ dealerId: string; contentId: string; status: string; link: string; doneBy: string; dealerName: string; contentName: string; month: string } | null>(null);
 
   const [saving, setSaving] = useState(false);
   const [deletingKey, setDeletingKey] = useState<string | null>(null);
@@ -318,24 +321,27 @@ export default function DealerKitPage() {
   const fetchAll = async () => {
     try {
       setLoading(true);
-      const [summaryRes, festivalsRes, dealersRes, monthlyRes] = await Promise.all([
+      const [summaryRes, festivalsRes, dealersRes, monthlyRes, trackingRes] = await Promise.all([
         fetch('/api/dealer-kit/summary'),
         fetch('/api/dealer-kit/festivals'),
         fetch('/api/dealer-kit/dealers'),
         fetch('/api/dealer-kit/monthly-frequency'),
+        fetch('/api/dealer-kit/tracking'),
       ]);
 
-      const [summaryJson, festivalsJson, dealersJson, monthlyJson] = await Promise.all([
+      const [summaryJson, festivalsJson, dealersJson, monthlyJson, trackingJson] = await Promise.all([
         summaryRes.json(),
         festivalsRes.json(),
         dealersRes.json(),
         monthlyRes.json(),
+        trackingRes.json(),
       ]);
 
       setSummary(summaryJson.data || {});
       setFestivals(festivalsJson.data || []);
       setDealers(dealersJson.data || []);
       setMonthlyPlans(monthlyJson.data || []);
+      setTrackingData(trackingJson.tracking || []);
     } catch (error) {
       console.error('Failed to load Dealer_Kit data:', error);
       toast.error('Failed to load Dealer_Kit data');
@@ -438,15 +444,16 @@ export default function DealerKitPage() {
     setDealerModalOpen(true);
   };
 
-  const openAddMonthlyModal = () => {
-    setMonthlyModalMode('add');
-    setMonthlyForm(MONTHLY_FORM_DEFAULT);
-    setMonthlyModalOpen(true);
-  };
+  const BATCH_TEMPLATE = [
+    { medium: 'WhatsApp', contentType: 'Festival Greeting', remarks: 'Send on festival morning or evening before' },
+    { medium: 'WhatsApp', contentType: 'Video 1', remarks: '30-60 sec; dealer education/product' },
+    { medium: 'Courier', contentType: 'Insight Letter', remarks: 'Print 10 extra copies' },
+    { medium: 'Courier', contentType: 'Special Report', remarks: 'Send inside monthly packet' },
+    { medium: 'WhatsApp', contentType: 'Video 2', remarks: '30-60 sec; send after 5 PM' },
+  ];
 
-  const openEditMonthlyModal = (plan: MonthlyPlan) => {
-    setMonthlyModalMode('edit');
-    setMonthlyForm(plan);
+  const openAddMonthlyModal = () => {
+    setBatchItems(BATCH_TEMPLATE.map(t => ({ ...t, dueDate: '' })));
     setMonthlyModalOpen(true);
   };
 
@@ -492,41 +499,32 @@ export default function DealerKitPage() {
     }
   };
 
-  const saveMonthly = async () => {
-    if (!monthlyForm.month.trim() || !monthlyForm.contentType.trim() || !monthlyForm.dueDate) {
-      toast.error('Month, Content Type and Due Date are required');
-      return;
-    }
-
+  const saveMonthlyBatch = async () => {
     try {
       setSaving(true);
       loader.showLoader();
 
-      const payload = {
-        ...monthlyForm,
-        printQty: Number(monthlyForm.printQty || 0),
-        courierQty: Number(monthlyForm.courierQty || 0),
-        whatsappTarget: Number(monthlyForm.whatsappTarget || 0),
-      };
+      const payloads = batchItems.map(item => ({
+        medium: item.medium,
+        contentType: item.contentType,
+        dueDate: item.dueDate,
+        remarks: item.remarks,
+      }));
 
-      const method = monthlyModalMode === 'add' ? 'POST' : 'PUT';
       const response = await fetch('/api/dealer-kit/monthly-frequency', {
-        method,
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(payloads),
       });
 
-      if (!response.ok) {
-        const result = await response.json();
-        throw new Error(result.error || 'Failed to save monthly plan');
-      }
+      if (!response.ok) throw new Error('Failed to create new plan items');
 
-      toast.success(monthlyModalMode === 'add' ? 'Plan item created' : 'Plan item updated');
+      toast.success('Batch plan created');
       setMonthlyModalOpen(false);
       await fetchAll();
     } catch (error: any) {
       console.error(error);
-      toast.error(error.message || 'Failed to save monthly plan');
+      toast.error(error.message || 'Failed to save monthly plans');
     } finally {
       setSaving(false);
       loader.hideLoader();
@@ -586,6 +584,144 @@ export default function DealerKitPage() {
       setDeletingKey(null);
     }
   };
+
+  const openTrackingModal = (dealer: Dealer, plan: MonthlyPlan, tracking?: TrackingStatus) => {
+    let defaultDoneBy = tracking?.doneBy || '';
+    if (!defaultDoneBy && typeof window !== 'undefined') {
+      try {
+        const erpUserStr = localStorage.getItem('erp_logged_user');
+        if (erpUserStr) {
+          const erpUser = JSON.parse(erpUserStr);
+          defaultDoneBy = erpUser.username || erpUser.name || '';
+        } else {
+          defaultDoneBy = localStorage.getItem('user_name') || '';
+        }
+      } catch (e) {}
+    }
+    setTrackingForm({
+      dealerId: dealer.dealerId,
+      contentId: plan.contentId,
+      status: tracking?.status || 'Pending',
+      link: tracking?.link || '',
+      doneBy: defaultDoneBy,
+      dealerName: dealer.firmName,
+      contentName: plan.contentType,
+      month: plan.dueDate ? new Date(plan.dueDate).toLocaleString('en-US', { month: 'long' }) : 'Unscheduled'
+    });
+    setTrackingModalOpen(true);
+  };
+
+  const saveTracking = async () => {
+    if (!trackingForm) return;
+    try {
+      setSaving(true);
+      const response = await fetch('/api/dealer-kit/tracking', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          dealerId: trackingForm.dealerId,
+          contentId: trackingForm.contentId,
+          status: trackingForm.status,
+          link: trackingForm.link,
+          doneBy: trackingForm.doneBy,
+        }),
+      });
+
+      if (!response.ok) throw new Error('Failed to update tracking');
+      
+      toast.success('Status updated');
+      setTrackingModalOpen(false);
+      await fetchAll();
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to update status');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const openAddFestivalModal = () => {
+    setFestivalModalMode('add');
+    setFestivalForm({ id: '', month: '', festival: '', date: '', medium: 'WhatsApp Greeting', status: 'Scheduled' });
+    setFestivalModalOpen(true);
+  };
+
+  const openEditFestivalModal = (festival: Festival) => {
+    setFestivalModalMode('edit');
+    setFestivalForm(festival);
+    setFestivalModalOpen(true);
+  };
+
+  const saveFestival = async () => {
+    if (!festivalForm.festival.trim()) {
+      toast.error('Festival name is required');
+      return;
+    }
+
+    try {
+      setSaving(true);
+      loader.showLoader();
+
+      const method = festivalModalMode === 'add' ? 'POST' : 'PUT';
+      const response = await fetch('/api/dealer-kit/festivals', {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(festivalForm),
+      });
+
+      if (!response.ok) {
+        const result = await response.json();
+        throw new Error(result.error || 'Failed to save festival');
+      }
+
+      toast.success(festivalModalMode === 'add' ? 'Festival created' : 'Festival updated');
+      setFestivalModalOpen(false);
+      await fetchAll();
+    } catch (error: any) {
+      console.error(error);
+      toast.error(error.message || 'Failed to save festival');
+    } finally {
+      setSaving(false);
+      loader.hideLoader();
+    }
+  };
+
+  const deleteFestival = async (id: string) => {
+    const confirmed = window.confirm(`Delete festival?`);
+    if (!confirmed) return;
+
+    try {
+      setDeletingKey(id);
+      const response = await fetch('/api/dealer-kit/festivals', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id }),
+      });
+
+      if (!response.ok) {
+        const result = await response.json();
+        throw new Error(result.error || 'Failed to delete festival');
+      }
+
+      toast.success('Festival deleted');
+      await fetchAll();
+    } catch (error: any) {
+      console.error(error);
+      toast.error(error.message || 'Failed to delete festival');
+    } finally {
+      setDeletingKey(null);
+    }
+  };
+
+  const monthlyPlansByMonth = useMemo(() => {
+    const grouped: Record<string, MonthlyPlan[]> = {};
+    const sortedPlans = [...filteredMonthlyPlans].sort((a,b) => new Date(a.dueDate||0).getTime() - new Date(b.dueDate||0).getTime());
+    sortedPlans.forEach(plan => {
+      const m = plan.dueDate ? new Date(plan.dueDate).toLocaleString('en-US', { month: 'long' }) : 'Unscheduled';
+      if (!grouped[m]) grouped[m] = [];
+      grouped[m].push(plan);
+    });
+    return grouped;
+  }, [filteredMonthlyPlans]);
 
   return (
     <LayoutWrapper>
@@ -803,15 +939,31 @@ export default function DealerKitPage() {
                     icon={<CalendarDays className="h-5 w-5 text-white" />}
                   >
                     <div className="overflow-hidden rounded-[1.25rem] border border-gray-100 bg-white shadow-sm">
+                      <div className="flex items-center justify-between border-b border-gray-100 bg-gradient-to-r from-fuchsia-50 via-rose-50 to-orange-50 px-4 py-4">
+                        <div>
+                          <p className="text-xs font-black uppercase tracking-[0.18em] text-rose-700">Festival schedule</p>
+                          <p className="text-sm text-gray-600">Manage promotional activities and greetings.</p>
+                        </div>
+                        <motion.button
+                          whileHover={{ scale: 1.02 }}
+                          whileTap={{ scale: 0.98 }}
+                          onClick={openAddFestivalModal}
+                          className="inline-flex items-center gap-2 rounded-2xl bg-[var(--theme-secondary)] px-4 py-2.5 text-sm font-black text-gray-900 shadow-lg shadow-[var(--theme-secondary)]/30 hover:bg-[var(--theme-tertiary)]"
+                        >
+                          <Plus className="h-4 w-4" /> Add Festival
+                        </motion.button>
+                      </div>
+
                       <div className="overflow-auto">
                         <table className="w-full text-sm">
-                          <thead className="bg-gradient-to-r from-fuchsia-50 via-rose-50 to-orange-50 text-gray-700">
+                          <thead className="bg-gray-50 text-gray-700">
                             <tr>
                               <th className="px-4 py-3 text-left text-[11px] font-black uppercase tracking-[0.18em]">Month</th>
                               <th className="px-4 py-3 text-left text-[11px] font-black uppercase tracking-[0.18em]">Festival</th>
                               <th className="px-4 py-3 text-left text-[11px] font-black uppercase tracking-[0.18em]">Date</th>
                               <th className="px-4 py-3 text-left text-[11px] font-black uppercase tracking-[0.18em]">Medium</th>
                               <th className="px-4 py-3 text-left text-[11px] font-black uppercase tracking-[0.18em]">Status</th>
+                              <th className="px-4 py-3 text-right text-[11px] font-black uppercase tracking-[0.18em]">Actions</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -826,8 +978,36 @@ export default function DealerKitPage() {
                                     {festival.status}
                                   </span>
                                 </td>
+                                <td className="px-4 py-3">
+                                  <div className="flex items-center justify-end gap-2">
+                                    <button
+                                      onClick={() => openEditFestivalModal(festival)}
+                                      className="rounded-2xl border border-rose-200 bg-rose-50 p-2.5 text-rose-700 hover:bg-rose-100"
+                                      title="Edit Festival"
+                                    >
+                                      <Pencil className="h-4 w-4" />
+                                    </button>
+                                    <button
+                                      onClick={() => deleteFestival(festival.id)}
+                                      className="rounded-2xl border border-rose-200 bg-rose-50 p-2.5 text-rose-700 hover:bg-rose-100"
+                                      title="Delete Festival"
+                                      disabled={deletingKey === festival.id}
+                                    >
+                                      {deletingKey === festival.id ? (
+                                        <Loader2 className="h-4 w-4 animate-spin" />
+                                      ) : (
+                                        <Trash2 className="h-4 w-4" />
+                                      )}
+                                    </button>
+                                  </div>
+                                </td>
                               </tr>
                             ))}
+                            {festivals.length === 0 && (
+                              <tr>
+                                <td colSpan={6} className="px-4 py-10 text-center text-gray-500">No festival items found</td>
+                              </tr>
+                            )}
                           </tbody>
                         </table>
                       </div>
@@ -862,7 +1042,7 @@ export default function DealerKitPage() {
                         <table className="w-full text-sm">
                           <thead className="bg-amber-700 text-amber-50">
                             <tr>
-                              <th className="px-4 py-3 text-left text-[11px] font-black uppercase tracking-[0.18em]">Dealer ID</th>
+                              {/* <th className="px-4 py-3 text-left text-[11px] font-black uppercase tracking-[0.18em]">Dealer ID</th> */}
                               <th className="px-4 py-3 text-left text-[11px] font-black uppercase tracking-[0.18em]">Dealer Details</th>
                               <th className="px-4 py-3 text-left text-[11px] font-black uppercase tracking-[0.18em]">Location & Address</th>
                               <th className="px-4 py-3 text-left text-[11px] font-black uppercase tracking-[0.18em]">Profile & Ownership</th>
@@ -873,68 +1053,105 @@ export default function DealerKitPage() {
                           <tbody>
                             {filteredDealers.map((dealer) => (
                               <tr key={dealer.dealerId} className="border-t border-gray-100 hover:bg-gray-50/80">
-                                <td className="px-4 py-3 font-black text-gray-900">{dealer.dealerId}</td>
-                                <td className="px-4 py-3 text-gray-700">
-                                  <div className="space-y-1">
-                                    <p className="font-black text-gray-900">{dealer.firmName || '-'}</p>
-                                    <p><span className="font-semibold text-gray-900">Contact:</span> {dealer.contactPerson || '-'}</p>
-                                    <p><span className="font-semibold text-gray-900">WhatsApp:</span> {dealer.whatsappMobile || '-'}</p>
-                                  </div>
-                                </td>
-                                <td className="px-4 py-3 text-gray-700">
-                                  <div className="space-y-1">
-                                    <p><span className="font-semibold text-gray-900">City:</span> {dealer.city || '-'}</p>
-                                    <p><span className="font-semibold text-gray-900">State:</span> {dealer.state || '-'}</p>
-                                    <p><span className="font-semibold text-gray-900">Pincode:</span> {dealer.pincode || '-'}</p>
-                                    <p className="max-w-[320px] truncate" title={dealer.courierAddress || '-'}><span className="font-semibold text-gray-900">Courier Address:</span> {dealer.courierAddress || '-'}</p>
-                                  </div>
-                                </td>
-                                <td className="px-4 py-3 text-gray-700">
-                                  <div className="space-y-1">
-                                    <p><span className="font-semibold text-gray-900">Category:</span> {dealer.category || '-'}</p>
-                                    <p><span className="font-semibold text-gray-900">Preferred Language:</span> {dealer.preferredLanguage || '-'}</p>
-                                    <p><span className="font-semibold text-gray-900">Relationship Owner:</span> {dealer.relationshipOwner || '-'}</p>
-                                    <p><span className="font-semibold text-gray-900">Customer Type:</span> {dealer.customerType || '-'}</p>
-                                    <p><span className="font-semibold text-gray-900">Potential Product Interest:</span> {dealer.potentialProductInterest || '-'}</p>
-                                  </div>
-                                </td>
-                                <td className="px-4 py-3 text-gray-700">
+                                {/* <td className="px-4 py-3 font-black text-gray-900">{dealer.dealerId}</td> */}
+                                <td className="px-4 py-3 text-gray-700 align-top">
                                   <div className="space-y-2">
+                                    <p className="font-black text-gray-900 text-base">{dealer.firmName || '-'}</p>
+                                    <div className="flex items-center gap-2 text-sm">
+                                      <User className="h-4 w-4 text-sky-500" />
+                                      <span>{dealer.contactPerson || '-'}</span>
+                                    </div>
+                                    <div className="flex items-center gap-2 text-sm">
+                                      <MessageCircle className="h-4 w-4 text-emerald-500" />
+                                      <span>{dealer.whatsappMobile || '-'}</span>
+                                    </div>
+                                  </div>
+                                </td>
+                                <td className="px-4 py-3 text-gray-700 align-top">
+                                  <div className="space-y-2 text-sm">
+                                    <div className="flex items-start gap-2">
+                                      <Building2 className="h-4 w-4 text-amber-500 mt-0.5 shrink-0" />
+                                      <span>{dealer.city || '-'}, {dealer.state || '-'}</span>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                      <MapPin className="h-4 w-4 text-rose-500 shrink-0" />
+                                      <span>{dealer.pincode || '-'}</span>
+                                    </div>
+                                    <div className="flex items-start gap-2">
+                                      <Truck className="h-4 w-4 text-violet-500 mt-0.5 shrink-0" />
+                                      <span className="max-w-[280px] line-clamp-2" title={dealer.courierAddress || '-'}>{dealer.courierAddress || '-'}</span>
+                                    </div>
+                                  </div>
+                                </td>
+                                <td className="px-4 py-3 text-gray-700 align-top">
+                                  <div className="space-y-2 text-sm">
+                                    <div className="flex items-center gap-2" title="Category">
+                                      <Tag className="h-4 w-4 text-fuchsia-500 shrink-0" />
+                                      <span>{dealer.category || '-'}</span>
+                                    </div>
+                                    <div className="flex items-center gap-2" title="Preferred Language">
+                                      <Languages className="h-4 w-4 text-blue-500 shrink-0" />
+                                      <span>{dealer.preferredLanguage || '-'}</span>
+                                    </div>
+                                    <div className="flex items-center gap-2" title="Relationship Owner">
+                                      <Users className="h-4 w-4 text-teal-500 shrink-0" />
+                                      <span>{dealer.relationshipOwner || '-'}</span>
+                                    </div>
+                                    <div className="flex items-center gap-2" title="Customer Type">
+                                      <BadgeCheck className="h-4 w-4 text-orange-500 shrink-0" />
+                                      <span>{dealer.customerType || '-'}</span>
+                                    </div>
+                                    <div className="flex items-center gap-2" title="Potential Product Interest">
+                                      <Sparkles className="h-4 w-4 text-yellow-500 shrink-0" />
+                                      <span className="truncate max-w-[150px]">{dealer.potentialProductInterest || '-'}</span>
+                                    </div>
+                                  </div>
+                                </td>
+                                <td className="px-4 py-3 text-gray-700 align-top">
+                                  <div className="space-y-3">
                                     <div className="flex flex-wrap gap-2">
-                                      <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-black ${
+                                      <span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-black uppercase tracking-wider ${
                                         String(dealer.whatsappConsent).toLowerCase() === 'yes'
                                           ? 'border-emerald-200 bg-emerald-100 text-emerald-700'
                                           : 'border-rose-200 bg-rose-100 text-rose-700'
-                                      }`}>
-                                        WA Consent: {dealer.whatsappConsent || '-'}
+                                      }`} title="WhatsApp Consent">
+                                        WA
                                       </span>
-                                      <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-black ${
+                                      <span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-black uppercase tracking-wider ${
                                         String(dealer.numberSavedCuboc).toLowerCase() === 'yes'
-                                          ? 'border-emerald-200 bg-emerald-100 text-emerald-700'
-                                          : 'border-gray-200 bg-gray-100 text-gray-700'
-                                      }`}>
-                                        Saved Cuboc: {dealer.numberSavedCuboc || '-'}
+                                          ? 'border-sky-200 bg-sky-100 text-sky-700'
+                                          : 'border-gray-200 bg-gray-100 text-gray-500'
+                                      }`} title="Number Saved in Cuboc">
+                                        Cuboc
                                       </span>
-                                      <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-black ${
+                                      <span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-black uppercase tracking-wider ${
                                         String(dealer.courierAddressVerified).toLowerCase() === 'yes'
-                                          ? 'border-emerald-200 bg-emerald-100 text-emerald-700'
-                                          : 'border-gray-200 bg-gray-100 text-gray-700'
-                                      }`}>
-                                        Address Verified: {dealer.courierAddressVerified || '-'}
+                                          ? 'border-violet-200 bg-violet-100 text-violet-700'
+                                          : 'border-gray-200 bg-gray-100 text-gray-500'
+                                      }`} title="Courier Address Verified">
+                                        Verified
                                       </span>
-                                      <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-black ${
+                                      <span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-black uppercase tracking-wider ${
                                         String(dealer.activeInKit).toLowerCase() === 'yes'
-                                          ? 'border-emerald-200 bg-emerald-100 text-emerald-700'
-                                          : 'border-gray-200 bg-gray-100 text-gray-700'
-                                      }`}>
-                                        Active in KIT: {dealer.activeInKit || '-'}
+                                          ? 'border-amber-200 bg-amber-100 text-amber-700'
+                                          : 'border-gray-200 bg-gray-100 text-gray-500'
+                                      }`} title="Active in KIT">
+                                        Active
                                       </span>
                                     </div>
-                                    <p><span className="font-semibold text-gray-900">Last Order:</span> {formatDate(dealer.lastOrderDate)}</p>
-                                    <p className="max-w-[320px] truncate" title={dealer.notes || '-'}><span className="font-semibold text-gray-900">Notes:</span> {dealer.notes || '-'}</p>
+                                    <div className="flex flex-col gap-1.5 text-sm">
+                                      <div className="flex items-center gap-2">
+                                        <Clock className="h-4 w-4 text-gray-400 shrink-0" />
+                                        <span>{formatDate(dealer.lastOrderDate)}</span>
+                                      </div>
+                                      <div className="flex items-start gap-2">
+                                        <MessageSquare className="h-4 w-4 text-gray-400 shrink-0 mt-0.5" />
+                                        <span className="line-clamp-2 text-xs text-gray-500 italic" title={dealer.notes || '-'}>{dealer.notes || '-'}</span>
+                                      </div>
+                                    </div>
                                   </div>
                                 </td>
-                                <td className="px-4 py-3">
+                                <td className="px-4 py-3 align-top">
                                   <div className="flex items-center justify-end gap-2">
                                     <button
                                       onClick={() => openEditDealerModal(dealer)}
@@ -990,66 +1207,80 @@ export default function DealerKitPage() {
                           onClick={openAddMonthlyModal}
                           className="inline-flex items-center gap-2 rounded-2xl bg-[var(--theme-secondary)] px-4 py-2.5 text-sm font-black text-gray-900 shadow-lg shadow-[var(--theme-secondary)]/30 hover:bg-[var(--theme-tertiary)]"
                         >
-                          <Plus className="h-4 w-4" /> Add Plan Item
+                          <Plus className="h-4 w-4" /> Add Monthly Batch
                         </motion.button>
                       </div>
 
                       <div className="overflow-auto">
-                        <table className="w-full text-sm">
+                        <table className="w-full text-sm whitespace-nowrap">
                           <thead className="bg-gray-50 text-gray-700">
                             <tr>
-                              <th className="px-4 py-3 text-left text-[11px] font-black uppercase tracking-[0.18em]">Content ID</th>
-                              <th className="px-4 py-3 text-left text-[11px] font-black uppercase tracking-[0.18em]">Month</th>
-                              <th className="px-4 py-3 text-left text-[11px] font-black uppercase tracking-[0.18em]">Medium</th>
-                              <th className="px-4 py-3 text-left text-[11px] font-black uppercase tracking-[0.18em]">Type</th>
-                              <th className="px-4 py-3 text-left text-[11px] font-black uppercase tracking-[0.18em]">Due Date</th>
-                              <th className="px-4 py-3 text-left text-[11px] font-black uppercase tracking-[0.18em]">Topic</th>
-                              <th className="px-4 py-3 text-left text-[11px] font-black uppercase tracking-[0.18em]">Status</th>
-                              <th className="px-4 py-3 text-right text-[11px] font-black uppercase tracking-[0.18em]">Actions</th>
+                              <th className="px-4 py-3 text-left text-[11px] font-black uppercase tracking-[0.18em] border-r border-gray-200 bg-gray-50 sticky left-0 z-20" rowSpan={3}>
+                                Dealer Name
+                              </th>
+                              {Object.entries(monthlyPlansByMonth).map(([month, plans]) => (
+                                <th key={month} colSpan={plans.length} className="px-4 py-2 text-center text-sm font-black uppercase tracking-[0.18em] border-b border-r border-gray-300 bg-violet-50 text-violet-800">
+                                  {month}
+                                </th>
+                              ))}
+                            </tr>
+                            <tr>
+                              {Object.entries(monthlyPlansByMonth).map(([month, plans]) => 
+                                plans.map(plan => (
+                                  <th key={`date-${plan.contentId}`} className="px-4 py-2 text-center text-xs font-bold border-b border-r border-gray-300">
+                                    {formatDate(plan.dueDate)}
+                                  </th>
+                                ))
+                              )}
+                            </tr>
+                            <tr>
+                              {Object.entries(monthlyPlansByMonth).map(([month, plans]) => 
+                                plans.map(plan => (
+                                  <th key={`type-${plan.contentId}`} className="px-4 py-2 text-center text-[11px] font-bold uppercase tracking-[0.1em] border-b border-r border-gray-300">
+                                    {plan.contentType}
+                                  </th>
+                                ))
+                              )}
                             </tr>
                           </thead>
                           <tbody>
-                            {filteredMonthlyPlans.map((plan) => (
-                              <tr key={plan.contentId} className="border-t border-gray-100 hover:bg-gray-50/80">
-                                <td className="px-4 py-3 font-black text-gray-900">{plan.contentId}</td>
-                                <td className="px-4 py-3 text-gray-800">{plan.month}</td>
-                                <td className="px-4 py-3 text-gray-700">{plan.medium}</td>
-                                <td className="px-4 py-3 text-gray-700">{plan.contentType}</td>
-                                <td className="px-4 py-3 text-gray-700">{formatDate(plan.dueDate)}</td>
-                                <td className="px-4 py-3 text-gray-700">{plan.topic}</td>
-                                <td className="px-4 py-3">
-                                  <span className={`inline-flex rounded-full border px-3 py-1 text-xs font-black ${statusBadgeClass(plan.status)}`}>
-                                    {plan.status}
-                                  </span>
+                            {filteredDealers.map(dealer => (
+                              <tr key={dealer.dealerId} className="border-t border-gray-300 hover:bg-gray-50">
+                                <td className="px-4 py-3 font-black text-gray-900 border-r border-gray-300 sticky left-0 bg-white z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.05)]">
+                                  {dealer.firmName || dealer.contactPerson}
                                 </td>
-                                <td className="px-4 py-3">
-                                  <div className="flex items-center justify-end gap-2">
-                                    <button
-                                      onClick={() => openEditMonthlyModal(plan)}
-                                      className="rounded-2xl border border-violet-200 bg-violet-50 p-2.5 text-violet-700 hover:bg-violet-100"
-                                      title="Edit Plan"
-                                    >
-                                      <Pencil className="h-4 w-4" />
-                                    </button>
-                                    <button
-                                      onClick={() => deleteMonthly(plan.contentId)}
-                                      className="rounded-2xl border border-rose-200 bg-rose-50 p-2.5 text-rose-700 hover:bg-rose-100"
-                                      title="Delete Plan"
-                                      disabled={deletingKey === plan.contentId}
-                                    >
-                                      {deletingKey === plan.contentId ? (
-                                        <Loader2 className="h-4 w-4 animate-spin" />
-                                      ) : (
-                                        <Trash2 className="h-4 w-4" />
-                                      )}
-                                    </button>
-                                  </div>
-                                </td>
+                                {Object.entries(monthlyPlansByMonth).map(([month, plans]) => 
+                                  plans.map(plan => {
+                                    const tracking = trackingData.find(t => t.dealerId === dealer.dealerId && t.contentId === plan.contentId);
+                                    const isDone = tracking?.status === 'Done';
+                                    
+                                    return (
+                                      <td key={`cell-${dealer.dealerId}-${plan.contentId}`} className="px-4 py-3 text-center border-r border-gray-300 min-w-[120px]">
+                                        <div className={`flex items-center justify-between gap-2 rounded-xl px-3 py-2 transition ${isDone ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-gray-50 text-gray-500 border border-gray-200'}`}>
+                                          <span className="text-xs font-bold">{isDone ? 'Done' : 'Pending'}</span>
+                                          <div className="flex items-center gap-1">
+                                            {isDone && tracking?.link && (
+                                              <a href={tracking.link} target="_blank" rel="noreferrer" className="text-emerald-600 hover:text-emerald-800 hover:bg-emerald-100 p-1 rounded-md" title="View Video/Link">
+                                                <Link2 className="h-3.5 w-3.5" />
+                                              </a>
+                                            )}
+                                            <button
+                                              onClick={() => openTrackingModal(dealer, plan, tracking)}
+                                              className="p-1 rounded-md hover:bg-black/5 text-gray-400 hover:text-gray-700"
+                                            >
+                                              <Pencil className="h-3.5 w-3.5" />
+                                            </button>
+                                          </div>
+                                        </div>
+                                      </td>
+                                    );
+                                  })
+                                )}
                               </tr>
                             ))}
-                            {filteredMonthlyPlans.length === 0 && (
+                            {filteredDealers.length === 0 && (
                               <tr>
-                                <td colSpan={8} className="px-4 py-10 text-center text-gray-500">No monthly items found</td>
+                                <td colSpan={100} className="px-4 py-10 text-center text-gray-500">No dealers found</td>
                               </tr>
                             )}
                           </tbody>
@@ -1071,7 +1302,7 @@ export default function DealerKitPage() {
               initial={{ opacity: 0, y: 18, scale: 0.98 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: 18, scale: 0.98 }}
-              className="w-full max-w-4xl overflow-hidden rounded-[2rem] border border-white/70 bg-white shadow-[0_30px_80px_-35px_rgba(0,0,0,0.35)]"
+              className="w-full max-w-[1000px] overflow-hidden rounded-[2rem] border border-white/70 bg-white shadow-[0_30px_80px_-35px_rgba(0,0,0,0.35)]"
             >
               <div className="bg-gradient-to-r from-sky-500 via-cyan-500 to-teal-500 px-6 py-5 text-gray-900">
                 <div className="flex items-start justify-between gap-4">
@@ -1227,7 +1458,7 @@ export default function DealerKitPage() {
                 <div className="flex items-start justify-between gap-4">
                   <div>
                     <p className="text-[11px] font-black uppercase tracking-[0.2em] text-gray-900/75">Monthly plan form</p>
-                    <h3 className="mt-1 text-2xl font-black">{monthlyModalMode === 'add' ? 'Add Monthly Plan Item' : 'Edit Monthly Plan Item'}</h3>
+                    <h3 className="mt-1 text-2xl font-black">Add Monthly Batch</h3>
                     <p className="mt-1 text-sm font-medium text-gray-900/80">Track production, approvals and dispatches with a brighter workflow sheet.</p>
                   </div>
                   <button
@@ -1241,60 +1472,58 @@ export default function DealerKitPage() {
               </div>
 
               <div className="max-h-[78vh] overflow-auto bg-gradient-to-b from-white to-violet-50/40 p-6">
-                <div className="grid gap-6 lg:grid-cols-2">
+                <div className="space-y-6">
                   <SectionCard
-                    title="Content Details"
-                    subtitle="Core planning and timeline fields"
+                    title="Batch Setup"
+                    subtitle="Plan the content distribution"
                     accent="bg-gradient-to-r from-violet-500 to-fuchsia-500"
                     icon={<Megaphone className="h-5 w-5 text-white" />}
                   >
-                    <div className="grid gap-4">
-                      <Field label="Content ID" hint="Leave blank to auto-generate">
-                        <InputShell value={monthlyForm.contentId} onChange={(e) => setMonthlyForm((s) => ({ ...s, contentId: e.target.value }))} disabled={monthlyModalMode === 'edit'} placeholder="Content ID" />
-                      </Field>
-                      <div className="grid gap-4 sm:grid-cols-2">
-                        <Field label="Month"><InputShell value={monthlyForm.month} onChange={(e) => setMonthlyForm((s) => ({ ...s, month: e.target.value }))} placeholder="Month *" /></Field>
-                        <Field label="Medium"><InputShell value={monthlyForm.medium} onChange={(e) => setMonthlyForm((s) => ({ ...s, medium: e.target.value }))} placeholder="WhatsApp / Courier / Video" /></Field>
-                      </div>
-                      <Field label="Content Type"><InputShell value={monthlyForm.contentType} onChange={(e) => setMonthlyForm((s) => ({ ...s, contentType: e.target.value }))} placeholder="Content Type *" /></Field>
-                      <Field label="Topic"><TextAreaShell value={monthlyForm.topic} onChange={(e) => setMonthlyForm((s) => ({ ...s, topic: e.target.value }))} placeholder="Topic / campaign name" className="min-h-[92px]" /></Field>
-                    </div>
-                  </SectionCard>
-
-                  <SectionCard
-                    title="Timing & Production"
-                    subtitle="Due dates and execution fields"
-                    accent="bg-gradient-to-r from-rose-500 to-orange-500"
-                    icon={<Layers3 className="h-5 w-5 text-white" />}
-                  >
-                    <div className="grid gap-4">
-                      <div className="grid gap-4 sm:grid-cols-2">
-                        <Field label="Due Date">
-                          <InputShell type="date" value={monthlyForm.dueDate ? String(monthlyForm.dueDate).slice(0, 10) : ''} onChange={(e) => setMonthlyForm((s) => ({ ...s, dueDate: e.target.value }))} />
-                        </Field>
-                        <Field label="Release Date">
-                          <InputShell type="date" value={monthlyForm.releaseDate ? String(monthlyForm.releaseDate).slice(0, 10) : ''} onChange={(e) => setMonthlyForm((s) => ({ ...s, releaseDate: e.target.value }))} />
-                        </Field>
-                      </div>
-                      <div className="grid gap-4 sm:grid-cols-2">
-                        <Field label="Draft Owner"><InputShell value={monthlyForm.draftOwner} onChange={(e) => setMonthlyForm((s) => ({ ...s, draftOwner: e.target.value }))} placeholder="Draft Owner" /></Field>
-                        <Field label="Design Owner"><InputShell value={monthlyForm.designOwner} onChange={(e) => setMonthlyForm((s) => ({ ...s, designOwner: e.target.value }))} placeholder="Design Owner" /></Field>
-                      </div>
-                      <div className="grid gap-4 sm:grid-cols-2">
-                        <Field label="Approval Status"><InputShell value={monthlyForm.approvalStatus} onChange={(e) => setMonthlyForm((s) => ({ ...s, approvalStatus: e.target.value }))} placeholder="Approval Status" /></Field>
-                        <Field label="Production Status"><InputShell value={monthlyForm.productionStatus} onChange={(e) => setMonthlyForm((s) => ({ ...s, productionStatus: e.target.value }))} placeholder="Production Status" /></Field>
-                      </div>
-                      <Field label="File Link" hint="Drive or file URL">
-                        <InputShell value={monthlyForm.fileLink} onChange={(e) => setMonthlyForm((s) => ({ ...s, fileLink: e.target.value }))} placeholder="https://..." />
-                      </Field>
-                      <div className="grid gap-4 sm:grid-cols-3">
-                        <Field label="Print Qty"><InputShell type="number" value={monthlyForm.printQty} onChange={(e) => setMonthlyForm((s) => ({ ...s, printQty: Number(e.target.value) }))} placeholder="0" /></Field>
-                        <Field label="Courier Qty"><InputShell type="number" value={monthlyForm.courierQty} onChange={(e) => setMonthlyForm((s) => ({ ...s, courierQty: Number(e.target.value) }))} placeholder="0" /></Field>
-                        <Field label="WhatsApp Target"><InputShell type="number" value={monthlyForm.whatsappTarget} onChange={(e) => setMonthlyForm((s) => ({ ...s, whatsappTarget: Number(e.target.value) }))} placeholder="0" /></Field>
-                      </div>
-                      <Field label="Remarks">
-                        <TextAreaShell value={monthlyForm.remarks} onChange={(e) => setMonthlyForm((s) => ({ ...s, remarks: e.target.value }))} placeholder="Any instructions or notes" className="min-h-[92px]" />
-                      </Field>
+                    <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white">
+                      <table className="w-full text-sm">
+                        <thead className="bg-gray-50 text-gray-700">
+                          <tr>
+                            <th className="px-4 py-3 text-left font-black uppercase tracking-[0.18em] text-[11px] w-16">ID</th>
+                            <th className="px-4 py-3 text-left font-black uppercase tracking-[0.18em] text-[11px]">Medium</th>
+                            <th className="px-4 py-3 text-left font-black uppercase tracking-[0.18em] text-[11px]">Content Type</th>
+                            <th className="px-4 py-3 text-left font-black uppercase tracking-[0.18em] text-[11px] w-48">Due Date</th>
+                            <th className="px-4 py-3 text-left font-black uppercase tracking-[0.18em] text-[11px]">Remarks</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {batchItems.map((item, i) => (
+                            <tr key={i} className="border-t border-gray-100 hover:bg-gray-50">
+                              <td className="px-4 py-3 font-black text-gray-900">{item.contentId || (i + 1)}</td>
+                              <td className="px-4 py-3 text-gray-700">{item.medium}</td>
+                              <td className="px-4 py-3 text-gray-700">{item.contentType}</td>
+                              <td className="px-4 py-3">
+                                <InputShell 
+                                  type="date" 
+                                  value={item.dueDate ? String(item.dueDate).slice(0, 10) : ''} 
+                                  onChange={(e) => {
+                                    const newItems = [...batchItems];
+                                    newItems[i].dueDate = e.target.value;
+                                    setBatchItems(newItems);
+                                  }} 
+                                  className="py-1.5"
+                                />
+                              </td>
+                              <td className="px-4 py-3">
+                                <InputShell 
+                                  value={item.remarks} 
+                                  onChange={(e) => {
+                                    const newItems = [...batchItems];
+                                    newItems[i].remarks = e.target.value;
+                                    setBatchItems(newItems);
+                                  }} 
+                                  placeholder="Remarks" 
+                                  className="py-1.5"
+                                />
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
                     </div>
                   </SectionCard>
                 </div>
@@ -1304,9 +1533,167 @@ export default function DealerKitPage() {
                 <button onClick={() => setMonthlyModalOpen(false)} className="rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-black text-gray-700 hover:bg-gray-50">
                   Cancel
                 </button>
-                <button onClick={saveMonthly} disabled={saving} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-[var(--theme-primary)] via-[var(--theme-secondary)] to-[var(--theme-tertiary)] px-5 py-2.5 text-sm font-black text-gray-900 shadow-lg shadow-[var(--theme-primary)]/20">
+                <button onClick={saveMonthlyBatch} disabled={saving} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-[var(--theme-primary)] via-[var(--theme-secondary)] to-[var(--theme-tertiary)] px-5 py-2.5 text-sm font-black text-gray-900 shadow-lg shadow-[var(--theme-primary)]/20">
                   {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
-                  Save Plan Item
+                  Save Batch
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {festivalModalOpen && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, y: 18, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 18, scale: 0.98 }}
+              className="w-full max-w-2xl overflow-hidden rounded-[2rem] border border-white/70 bg-white shadow-[0_30px_80px_-35px_rgba(0,0,0,0.35)]"
+            >
+              <div className="bg-gradient-to-r from-fuchsia-500 via-rose-500 to-orange-500 px-6 py-5 text-gray-900">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-[11px] font-black uppercase tracking-[0.2em] text-gray-900/75">Festival form</p>
+                    <h3 className="mt-1 text-2xl font-black">{festivalModalMode === 'add' ? 'Add Festival' : 'Edit Festival'}</h3>
+                  </div>
+                  <button
+                    onClick={() => setFestivalModalOpen(false)}
+                    className="rounded-2xl bg-white/30 p-2.5 text-gray-900 transition hover:bg-white/45"
+                    aria-label="Close festival modal"
+                  >
+                    <X className="h-5 w-5" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="max-h-[78vh] overflow-auto bg-gradient-to-b from-white to-rose-50/40 p-6">
+                <div className="grid gap-4">
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <Field label="Month">
+                      <select
+                        value={festivalForm.month}
+                        onChange={(e) => setFestivalForm((s) => ({ ...s, month: e.target.value }))}
+                        className="w-full rounded-2xl border border-gray-200 bg-white/90 px-4 py-2.5 text-sm shadow-sm outline-none transition focus:border-[var(--theme-primary)] focus:ring-4 focus:ring-[var(--theme-primary)]/15"
+                      >
+                        <option value="" disabled>Select Month</option>
+                        {['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'].map(m => (
+                          <option key={m} value={m}>{m}</option>
+                        ))}
+                      </select>
+                    </Field>
+                    <Field label="Festival Date"><InputShell type="date" value={festivalForm.date ? String(festivalForm.date).slice(0, 10) : ''} onChange={(e) => setFestivalForm((s) => ({ ...s, date: e.target.value }))} /></Field>
+                  </div>
+                  <Field label="Festival Name"><InputShell value={festivalForm.festival} onChange={(e) => setFestivalForm((s) => ({ ...s, festival: e.target.value }))} placeholder="Festival Name *" /></Field>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <Field label="Medium"><InputShell value={festivalForm.medium} onChange={(e) => setFestivalForm((s) => ({ ...s, medium: e.target.value }))} placeholder="WhatsApp Greeting" /></Field>
+                    <Field label="Status"><InputShell value={festivalForm.status} onChange={(e) => setFestivalForm((s) => ({ ...s, status: e.target.value }))} placeholder="Status (e.g. Scheduled)" /></Field>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-3 border-t border-gray-100 bg-white px-6 py-4 sm:flex-row sm:justify-end">
+                <button onClick={() => setFestivalModalOpen(false)} className="rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-black text-gray-700 hover:bg-gray-50">
+                  Cancel
+                </button>
+                <button onClick={saveFestival} disabled={saving} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-[var(--theme-primary)] via-[var(--theme-secondary)] to-[var(--theme-tertiary)] px-5 py-2.5 text-sm font-black text-gray-900 shadow-lg shadow-[var(--theme-primary)]/20">
+                  {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
+                  Save Festival
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {trackingModalOpen && trackingForm && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, y: 18, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 18, scale: 0.98 }}
+              className="w-full max-w-lg overflow-hidden rounded-[2rem] border border-white/70 bg-white shadow-[0_30px_80px_-35px_rgba(0,0,0,0.35)]"
+            >
+              <div className="bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 px-6 py-5 text-white">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-[11px] font-black uppercase tracking-[0.2em] text-white/80">Tracking Update</p>
+                    <h3 className="mt-1 text-2xl font-black">{trackingForm.dealerName}</h3>
+                    <p className="mt-1 text-sm font-medium text-white/90">{trackingForm.month} - {trackingForm.contentName}</p>
+                  </div>
+                  <button
+                    onClick={() => setTrackingModalOpen(false)}
+                    className="rounded-2xl bg-black/10 p-2.5 text-white transition hover:bg-black/20"
+                  >
+                    <X className="h-5 w-5" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="bg-gradient-to-b from-white to-emerald-50/30 p-6">
+                <div className="grid gap-5">
+                  <Field label="Status">
+                    <div className="grid grid-cols-2 gap-3">
+                      <button
+                        onClick={() => setTrackingForm(prev => prev ? { ...prev, status: 'Pending' } : null)}
+                        className={`rounded-xl border-2 px-4 py-3 text-sm font-black transition ${
+                          trackingForm.status === 'Pending' 
+                            ? 'border-gray-900 bg-gray-900 text-white shadow-md' 
+                            : 'border-gray-200 bg-white text-gray-500 hover:border-gray-300'
+                        }`}
+                      >
+                        Pending
+                      </button>
+                      <button
+                        onClick={() => setTrackingForm(prev => prev ? { ...prev, status: 'Done' } : null)}
+                        className={`rounded-xl border-2 px-4 py-3 text-sm font-black transition ${
+                          trackingForm.status === 'Done' 
+                            ? 'border-emerald-500 bg-emerald-500 text-white shadow-md shadow-emerald-500/20' 
+                            : 'border-gray-200 bg-white text-gray-500 hover:border-gray-300'
+                        }`}
+                      >
+                        Done
+                      </button>
+                    </div>
+                  </Field>
+                  
+                  <div className={`transition-all duration-300 ${trackingForm.status === 'Done' ? 'opacity-100 max-h-[300px]' : 'opacity-40 max-h-[100px]'}`}>
+                    <Field label="Content Link (Optional)" hint="Video URL, Google Drive link, etc.">
+                      <div className="relative mb-4">
+                        <Link2 className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                        <InputShell 
+                          className="pl-11"
+                          placeholder="https://..."
+                          value={trackingForm.link}
+                          onChange={(e) => setTrackingForm(prev => prev ? { ...prev, link: e.target.value } : null)}
+                          disabled={trackingForm.status !== 'Done'}
+                        />
+                      </div>
+                    </Field>
+                    <Field label="Done By" hint="Person who completed this task">
+                      <div className="relative">
+                        <User className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                        <InputShell 
+                          className="pl-11"
+                          placeholder="Your Name"
+                          value={trackingForm.doneBy}
+                          onChange={(e) => setTrackingForm(prev => prev ? { ...prev, doneBy: e.target.value } : null)}
+                          disabled={trackingForm.status !== 'Done'}
+                        />
+                      </div>
+                    </Field>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-3 border-t border-gray-100 bg-white px-6 py-4 sm:flex-row sm:justify-end">
+                <button onClick={() => setTrackingModalOpen(false)} className="rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-black text-gray-700 hover:bg-gray-50">
+                  Cancel
+                </button>
+                <button onClick={saveTracking} disabled={saving} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-500 px-5 py-2.5 text-sm font-black text-white shadow-lg shadow-emerald-500/20 hover:from-emerald-600 hover:to-teal-600">
+                  {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Save Update'}
                 </button>
               </div>
             </motion.div>

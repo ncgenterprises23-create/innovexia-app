@@ -70,6 +70,7 @@ const SHEETS = {
   DEALER_KIT_FESTIVALS: 'Festivals',
   DEALER_KIT_DEALERS: 'Dealer Master',
   DEALER_KIT_MONTHLY: 'Monthly Frequency KIT',
+  DEALER_KIT_TRACKING: 'Dealer Content Tracking',
   CLIENT_COMPLAIN_CONFIG: 'Step Configuration',
   RM_DEFECTS: 'Raw Material Defect Problem',
   RM_DEFECTS_CONFIG: 'Step Configuration',
@@ -7705,15 +7706,27 @@ function mapDealerKitDealerRow(rowObj: any) {
   };
 }
 
+function formatDateForFrontend(value: unknown): string {
+  const d = toDate(value);
+  if (!d) return '';
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 function mapDealerKitMonthlyRow(rowObj: any) {
-  const dueDate = rowObj['Due Date'] || rowObj.due_date || '';
+  const rawDueDate = rowObj['Due Date'] || rowObj.due_date || '';
+  const dueDate = formatDateForFrontend(rawDueDate);
+  const releaseDate = formatDateForFrontend(rowObj['Release Date'] || rowObj.release_date || '');
+  
   return {
     contentId: rowObj['Content ID'] || rowObj.content_id || rowObj.id || '',
     month: rowObj.Month || rowObj.month || '',
     medium: rowObj.Medium || rowObj.medium || '',
     contentType: rowObj['Content Type'] || rowObj.content_type || '',
     dueDate,
-    releaseDate: rowObj['Release Date'] || rowObj.release_date || '',
+    releaseDate,
     topic: rowObj.Topic || rowObj.topic || '',
     draftOwner: rowObj['Draft Owner'] || rowObj.draft_owner || '',
     designOwner: rowObj['Design Owner'] || rowObj.design_owner || '',
@@ -7733,7 +7746,7 @@ async function getDealerKitSheetRows(sheetName: string) {
   const spreadsheetId = SPREADSHEET_IDS.DEALER_KIT;
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `${sheetName}!A:AZ`,
+    range: `'${sheetName}'!A:AZ`,
     valueRenderOption: 'UNFORMATTED_VALUE',
   });
 
@@ -7753,6 +7766,110 @@ function buildNextCode(existingValues: string[], prefix: string): string {
   }, 0);
 
   return `${prefix}${String(maxNumber + 1).padStart(3, '0')}`;
+}
+
+export async function getDealerKitTracking() {
+  try {
+    const { rows } = await getDealerKitSheetRows(SHEETS.DEALER_KIT_TRACKING);
+    if (!rows.length) return [];
+
+    const headers = rows[0].map((h: string) => String(h).trim());
+    return rows.slice(1).map((row) => {
+      const obj = rowToObject(headers, row);
+      return {
+        dealerId: obj['Dealer ID'] || obj.dealer_id || '',
+        contentId: obj['Content ID'] || obj.content_id || '',
+        status: obj.Status || obj.status || '',
+        link: obj.Link || obj.link || '',
+        doneBy: obj['Done By'] || obj.done_by || '',
+      };
+    });
+  } catch (error) {
+    console.error('Error fetching Dealer Kit Tracking:', error);
+    return []; // Return empty array if sheet doesn't exist yet
+  }
+}
+
+export async function saveDealerKitTracking(payload: { dealerId: string; contentId: string; status: string; link?: string; doneBy?: string }) {
+  try {
+    const { sheets, spreadsheetId, rows } = await getDealerKitSheetRows(SHEETS.DEALER_KIT_TRACKING);
+    const headers = rows[0]?.map((h: string) => String(h).trim()) || [];
+    const targetHeaders = headers.length ? headers : ['Dealer ID', 'Content ID', 'Status', 'Link', 'Done By', 'Updated At'];
+
+    if (!headers.length) {
+      await sheets.spreadsheets.values.update({
+        spreadsheetId,
+        range: `'${SHEETS.DEALER_KIT_TRACKING}'!A1`,
+        valueInputOption: 'RAW',
+        requestBody: { values: [targetHeaders] },
+      });
+    }
+
+    const dealerIdIndex = targetHeaders.indexOf('Dealer ID');
+    const contentIdIndex = targetHeaders.indexOf('Content ID');
+    
+    // Find if the tracking record already exists
+    let rowIndex = -1;
+    if (dealerIdIndex !== -1 && contentIdIndex !== -1 && rows.length > 1) {
+      rowIndex = rows.findIndex((row, index) => 
+        index > 0 && 
+        String(row[dealerIdIndex] || '') === String(payload.dealerId) &&
+        String(row[contentIdIndex] || '') === String(payload.contentId)
+      );
+    }
+
+    const updatedAt = new Date().toISOString();
+    
+    if (rowIndex === -1) {
+      // Append new
+      const rowMap: Record<string, string> = {
+        'Dealer ID': payload.dealerId,
+        'Content ID': payload.contentId,
+        Status: payload.status,
+        Link: payload.link || '',
+        'Done By': payload.doneBy || '',
+        'Updated At': updatedAt,
+      };
+      const rowData = targetHeaders.map((h) => rowMap[h] ?? '');
+
+      await sheets.spreadsheets.values.append({
+        spreadsheetId,
+        range: `'${SHEETS.DEALER_KIT_TRACKING}'!A:E`,
+        valueInputOption: 'USER_ENTERED',
+        requestBody: { values: [rowData] },
+      });
+    } else {
+      // Update existing
+      const existingRow = rows[rowIndex] || [];
+      const rowMap: Record<string, string> = {};
+      targetHeaders.forEach((h, i) => { rowMap[h] = String(existingRow[i] ?? ''); });
+      
+      rowMap['Status'] = payload.status;
+      if (payload.link !== undefined) {
+        rowMap['Link'] = payload.link;
+      }
+      if (payload.doneBy !== undefined) {
+        rowMap['Done By'] = payload.doneBy;
+      }
+      rowMap['Updated At'] = updatedAt;
+      
+      const updatedRow = targetHeaders.map((h) => rowMap[h] ?? '');
+      const sheetRow = rowIndex + 1;
+      const range = `'${SHEETS.DEALER_KIT_TRACKING}'!A${sheetRow}:${getColLetter(targetHeaders.length - 1)}${sheetRow}`;
+
+      await sheets.spreadsheets.values.update({
+        spreadsheetId,
+        range,
+        valueInputOption: 'USER_ENTERED',
+        requestBody: { values: [updatedRow] },
+      });
+    }
+
+    return { success: true };
+  } catch (error) {
+    console.error('Error saving Dealer Kit Tracking:', error);
+    throw error;
+  }
 }
 
 export async function getDealerKitSummary() {
@@ -7847,7 +7964,7 @@ export async function createDealerKitDealer(payload: Record<string, unknown>) {
     if (!headers.length) {
       await sheets.spreadsheets.values.update({
         spreadsheetId,
-        range: `${SHEETS.DEALER_KIT_DEALERS}!A1`,
+        range: `'${SHEETS.DEALER_KIT_DEALERS}'!A1`,
         valueInputOption: 'RAW',
         requestBody: { values: [targetHeaders] },
       });
@@ -7891,7 +8008,7 @@ export async function createDealerKitDealer(payload: Record<string, unknown>) {
 
     await sheets.spreadsheets.values.append({
       spreadsheetId,
-      range: `${SHEETS.DEALER_KIT_DEALERS}!A:AZ`,
+      range: `'${SHEETS.DEALER_KIT_DEALERS}'!A:AZ`,
       valueInputOption: 'USER_ENTERED',
       requestBody: { values: [rowData] },
     });
@@ -7957,7 +8074,7 @@ export async function updateDealerKitDealer(dealerId: string, updates: Record<st
 
     const updatedRow = headers.map((header) => rowMap[header] ?? '');
     const sheetRow = rowIndex + 1;
-    const range = `${SHEETS.DEALER_KIT_DEALERS}!A${sheetRow}:${getColLetter(headers.length - 1)}${sheetRow}`;
+    const range = `'${SHEETS.DEALER_KIT_DEALERS}'!A${sheetRow}:${getColLetter(headers.length - 1)}${sheetRow}`;
 
     await sheets.spreadsheets.values.update({
       spreadsheetId,
@@ -8033,7 +8150,7 @@ export async function getDealerKitMonthlyFrequency() {
   }
 }
 
-export async function createDealerKitMonthlyFrequency(payload: Record<string, unknown>) {
+export async function createDealerKitMonthlyFrequency(payload: Record<string, unknown> | Record<string, unknown>[]) {
   try {
     const { sheets, spreadsheetId, rows } = await getDealerKitSheetRows(SHEETS.DEALER_KIT_MONTHLY);
     const headers = rows[0]?.map((header: string) => String(header).trim()) || [];
@@ -8042,7 +8159,7 @@ export async function createDealerKitMonthlyFrequency(payload: Record<string, un
     if (!headers.length) {
       await sheets.spreadsheets.values.update({
         spreadsheetId,
-        range: `${SHEETS.DEALER_KIT_MONTHLY}!A1`,
+        range: `'${SHEETS.DEALER_KIT_MONTHLY}'!A1`,
         valueInputOption: 'RAW',
         requestBody: { values: [targetHeaders] },
       });
@@ -8051,37 +8168,45 @@ export async function createDealerKitMonthlyFrequency(payload: Record<string, un
     const contentIdHeader = findHeader(targetHeaders, ['Content ID', 'content_id', 'id']) || 'Content ID';
     const contentIdIndex = targetHeaders.indexOf(contentIdHeader);
     const existingContentIds = rows.slice(1).map((row) => String(row[contentIdIndex] || ''));
-    const contentId = String(payload.contentId || buildNextCode(existingContentIds, 'C'));
+    const payloads = Array.isArray(payload) ? payload : [payload];
+    const rowDatas = [];
+    const newContentIds = [];
 
-    const rowMap: Record<string, unknown> = {
-      'Content ID': contentId,
-      Month: payload.month || '',
-      Medium: payload.medium || '',
-      'Content Type': payload.contentType || '',
-      'Due Date': payload.dueDate || '',
-      'Release Date': payload.releaseDate || '',
-      Topic: payload.topic || '',
-      'Draft Owner': payload.draftOwner || '',
-      'Design Owner': payload.designOwner || '',
-      'Approval Status': payload.approvalStatus || '',
-      'File Link': payload.fileLink || '',
-      'Print Qty': payload.printQty || '',
-      'Courier Qty': payload.courierQty || '',
-      'WhatsApp Target': payload.whatsappTarget || '',
-      'Production Status': payload.productionStatus || '',
-      Remarks: payload.remarks || '',
-    };
+    for (const item of payloads) {
+      const contentId = String(item.contentId || buildNextCode(existingContentIds, 'C'));
+      existingContentIds.push(contentId);
+      newContentIds.push(contentId);
 
-    const rowData = targetHeaders.map((header) => rowMap[header] ?? '');
+      const rowMap: Record<string, unknown> = {
+        'Content ID': contentId,
+        Month: item.month || '',
+        Medium: item.medium || '',
+        'Content Type': item.contentType || '',
+        'Due Date': item.dueDate || '',
+        'Release Date': item.releaseDate || '',
+        Topic: item.topic || '',
+        'Draft Owner': item.draftOwner || '',
+        'Design Owner': item.designOwner || '',
+        'Approval Status': item.approvalStatus || '',
+        'File Link': item.fileLink || '',
+        'Print Qty': item.printQty || '',
+        'Courier Qty': item.courierQty || '',
+        'WhatsApp Target': item.whatsappTarget || '',
+        'Production Status': item.productionStatus || '',
+        Remarks: item.remarks || '',
+      };
+
+      rowDatas.push(targetHeaders.map((header) => rowMap[header] ?? ''));
+    }
 
     await sheets.spreadsheets.values.append({
       spreadsheetId,
-      range: `${SHEETS.DEALER_KIT_MONTHLY}!A:AZ`,
+      range: `'${SHEETS.DEALER_KIT_MONTHLY}'!A:AZ`,
       valueInputOption: 'USER_ENTERED',
-      requestBody: { values: [rowData] },
+      requestBody: { values: rowDatas },
     });
 
-    return { success: true, contentId };
+    return { success: true, contentIds: newContentIds };
   } catch (error) {
     console.error('Error creating Dealer_Kit monthly frequency:', error);
     throw error;
@@ -8133,7 +8258,7 @@ export async function updateDealerKitMonthlyFrequency(contentId: string, updates
 
     const updatedRow = headers.map((header) => rowMap[header] ?? '');
     const sheetRow = rowIndex + 1;
-    const range = `${SHEETS.DEALER_KIT_MONTHLY}!A${sheetRow}:${getColLetter(headers.length - 1)}${sheetRow}`;
+    const range = `'${SHEETS.DEALER_KIT_MONTHLY}'!A${sheetRow}:${getColLetter(headers.length - 1)}${sheetRow}`;
 
     await sheets.spreadsheets.values.update({
       spreadsheetId,
@@ -8189,3 +8314,165 @@ export async function deleteDealerKitMonthlyFrequency(contentId: string) {
     throw error;
   }
 }
+
+export async function createDealerKitFestival(payload: Record<string, unknown>) {
+  try {
+    const { sheets, spreadsheetId, rows } = await getDealerKitSheetRows(SHEETS.DEALER_KIT_FESTIVALS);
+    const headers = rows[0]?.map((header: string) => String(header).trim()) || [];
+    const targetHeaders = headers.length ? headers : ['id', 'Month', 'Festival', 'Date', 'Medium', 'Status'];
+
+    if (!headers.length) {
+      await sheets.spreadsheets.values.update({
+        spreadsheetId,
+        range: `'${SHEETS.DEALER_KIT_FESTIVALS}'!A1`,
+        valueInputOption: 'RAW',
+        requestBody: { values: [targetHeaders] },
+      });
+    }
+
+    const idHeader = findHeader(targetHeaders, ['id', 'festival id']) || 'id';
+    const newId = String(payload.id || `fest-${Date.now()}`);
+
+    const rowMap: Record<string, unknown> = {
+      [idHeader]: newId,
+      Month: payload.month || '',
+      Festival: payload.festival || '',
+      Date: payload.date || '',
+      Medium: payload.medium || '',
+      Status: payload.status || '',
+    };
+
+    const rowData = targetHeaders.map((header) => rowMap[header] ?? '');
+
+    await sheets.spreadsheets.values.append({
+      spreadsheetId,
+      range: `'${SHEETS.DEALER_KIT_FESTIVALS}'!A:AZ`,
+      valueInputOption: 'USER_ENTERED',
+      requestBody: { values: [rowData] },
+    });
+
+    return { success: true, id: newId };
+  } catch (error) {
+    console.error('Error creating Dealer_Kit festival:', error);
+    throw error;
+  }
+}
+
+export async function updateDealerKitFestival(id: string, updates: Record<string, unknown>) {
+  try {
+    const { sheets, spreadsheetId, rows } = await getDealerKitSheetRows(SHEETS.DEALER_KIT_FESTIVALS);
+    if (!rows.length) throw new Error('Festival sheet is empty');
+
+    const headers = rows[0].map((header: string) => String(header).trim());
+    let rowIndex = -1;
+
+    const idHeader = findHeader(headers, ['id', 'festival id']);
+    if (idHeader) {
+      const idIndex = headers.indexOf(idHeader);
+      rowIndex = rows.findIndex((row, index) => index > 0 && String(row[idIndex] || '') === String(id));
+    }
+
+    if (rowIndex === -1 && id.startsWith('fest-')) {
+      const parts = id.split('-');
+      if (parts.length >= 2 && !isNaN(Number(parts[1]))) {
+        rowIndex = Number(parts[1]);
+        if (rowIndex >= rows.length) rowIndex = -1;
+      }
+    }
+
+    if (rowIndex === -1) throw new Error('Festival not found');
+
+    const existingRow = rows[rowIndex] || [];
+    const rowMap: Record<string, unknown> = {};
+    headers.forEach((header, index) => {
+      rowMap[header] = existingRow[index] ?? '';
+    });
+
+    const updateMap: Record<string, unknown> = {
+      Month: updates.month,
+      Festival: updates.festival,
+      Date: updates.date,
+      Medium: updates.medium,
+      Status: updates.status,
+    };
+
+    Object.entries(updateMap).forEach(([header, value]) => {
+      if (value !== undefined) {
+        const actualHeader = findHeader(headers, [header]);
+        if (actualHeader) {
+          rowMap[actualHeader] = value;
+        }
+      }
+    });
+
+    const updatedRow = headers.map((header) => rowMap[header] ?? '');
+    const sheetRow = rowIndex + 1;
+    // We assume getColLetter is defined or AZ is safe. AZ is safe since length is short
+    const range = `'${SHEETS.DEALER_KIT_FESTIVALS}'!A${sheetRow}:AZ${sheetRow}`;
+
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range,
+      valueInputOption: 'USER_ENTERED',
+      requestBody: { values: [updatedRow] },
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error('Error updating Dealer_Kit festival:', error);
+    throw error;
+  }
+}
+
+export async function deleteDealerKitFestival(id: string) {
+  try {
+    const { sheets, spreadsheetId, rows } = await getDealerKitSheetRows(SHEETS.DEALER_KIT_FESTIVALS);
+    if (!rows.length) throw new Error('Festival sheet is empty');
+
+    const headers = rows[0].map((header: string) => String(header).trim());
+    let rowIndex = -1;
+
+    const idHeader = findHeader(headers, ['id', 'festival id']);
+    if (idHeader) {
+      const idIndex = headers.indexOf(idHeader);
+      rowIndex = rows.findIndex((row, index) => index > 0 && String(row[idIndex] || '') === String(id));
+    }
+
+    if (rowIndex === -1 && id.startsWith('fest-')) {
+      const parts = id.split('-');
+      if (parts.length >= 2 && !isNaN(Number(parts[1]))) {
+        rowIndex = Number(parts[1]);
+        if (rowIndex >= rows.length) rowIndex = -1;
+      }
+    }
+
+    if (rowIndex === -1) throw new Error('Festival not found');
+
+    const metadata = await sheets.spreadsheets.get({ spreadsheetId });
+    const sheet = metadata.data.sheets?.find((item) => item.properties?.title === SHEETS.DEALER_KIT_FESTIVALS);
+    const sheetId = sheet?.properties?.sheetId;
+    if (sheetId === undefined) throw new Error('Festival sheet id not found');
+
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        requests: [{
+          deleteDimension: {
+            range: {
+              sheetId,
+              dimension: 'ROWS',
+              startIndex: rowIndex,
+              endIndex: rowIndex + 1,
+            }
+          }
+        }]
+      }
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error('Error deleting Dealer_Kit festival:', error);
+    throw error;
+  }
+}
+
