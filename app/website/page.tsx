@@ -1397,40 +1397,45 @@ export default function WebsitePage() {
                                       receivedQty: 0,
                                       pendingQty: n(orderedQty),
                                       mfgDate: '', expiryDate: '', img: '',
-                                      isComplete: false
+                                      isComplete: false,
+                                      _items: []
                                   }];
                               }
 
-                              const rows: any[] = [];
                               let totalReceived = 0;
-
                               invMatches.forEach((invMatch: any) => {
                                   totalReceived += n(invMatch['Received Qty'] || invMatch.Received_Qty);
                               });
                               const pendingQty = Math.max(0, n(orderedQty) - totalReceived);
                               const isComplete = pendingQty <= 0;
 
-                              invMatches.forEach((invMatch: any, mi: number) => {
-                                  const recQty = n(invMatch['Received Qty'] || invMatch.Received_Qty);
-                                  const wVal = invMatch['Weight/Size'] || invMatch.Weight_Size || invMatch.Weight || '';
-                                  const pVal = invMatch.Price || invMatch.PRICE || '';
+                              const firstInv = invMatches[0];
+                              const wVal = firstInv['Weight/Size'] || firstInv.Weight_Size || firstInv.Weight || '';
+                              const pVal = firstInv.Price || firstInv.PRICE || '';
 
-                                  rows.push({
-                                      key: `${ii}-inv-${mi}`,
-                                      prodName,
-                                      weightSize: wVal !== '' ? (String(wVal).toLowerCase().includes('kg') ? String(wVal) : `${wVal} kg`) : (itemGrm > 0 ? `${((itemGrm * recQty) / 1000).toFixed(2)} kg` : '—'),
-                                      priceVal: pVal !== '' ? (String(pVal).includes('$') ? String(pVal) : `$${pVal}`) : (itemPrice > 0 ? `$${(itemPrice * recQty).toFixed(2)}` : '—'),
-                                      orderedQty: invMatch['Order Qty'] || invMatch.Order_Qty || orderedQty,
-                                      receivedQty: recQty,
-                                      pendingQty: pendingQty,
-                                      mfgDate: invMatch['Mfg Date'] || invMatch.Mfg_Date || '',
-                                      expiryDate: invMatch['Expiry Date'] || invMatch.Expiry_Date || '',
-                                      img: formatImageUrl(invMatch.Image || invMatch.image || invMatch.IMAGE || invMatch['Product Image'] || ''),
-                                      isComplete: isComplete
-                                  });
-                              });
-
-                              return rows;
+                              return [{
+                                  key: `${ii}-inv-grouped`,
+                                  prodName,
+                                  weightSize: wVal !== '' ? (String(wVal).toLowerCase().includes('kg') ? String(wVal) : `${wVal} kg`) : (itemGrm > 0 ? `${((itemGrm * totalReceived) / 1000).toFixed(2)} kg` : '—'),
+                                  priceVal: pVal !== '' ? (String(pVal).includes('$') ? String(pVal) : `$${pVal}`) : (itemPrice > 0 ? `$${(itemPrice * totalReceived).toFixed(2)}` : '—'),
+                                  orderedQty: firstInv['Order Qty'] || firstInv.Order_Qty || orderedQty,
+                                  receivedQty: totalReceived,
+                                  pendingQty: pendingQty,
+                                  isComplete: isComplete,
+                                  _items: invMatches.map((invMatch: any) => {
+                                      const wVal = invMatch['Weight/Size'] || invMatch.Weight_Size || invMatch.Weight || '';
+                                      const pVal = invMatch.Price || invMatch.PRICE || '';
+                                      const recQty = n(invMatch['Received Qty'] || invMatch.Received_Qty);
+                                      return {
+                                          receivedQty: recQty,
+                                          mfgDate: invMatch['Mfg Date'] || invMatch.Mfg_Date || '',
+                                          expiryDate: invMatch['Expiry Date'] || invMatch.Expiry_Date || '',
+                                          img: formatImageUrl(invMatch.Image || invMatch.image || invMatch.IMAGE || invMatch['Product Image'] || ''),
+                                          weightSize: wVal !== '' ? (String(wVal).toLowerCase().includes('kg') ? String(wVal) : `${wVal} kg`) : (itemGrm > 0 ? `${((itemGrm * recQty) / 1000).toFixed(2)} kg` : '—'),
+                                          priceVal: pVal !== '' ? (String(pVal).includes('$') ? String(pVal) : `$${pVal}`) : (itemPrice > 0 ? `$${(itemPrice * recQty).toFixed(2)}` : '—'),
+                                      };
+                                  })
+                              }];
                             });
 
                             const calculatedPiTotal = piRows.reduce((sum, row) => {
@@ -1468,9 +1473,9 @@ export default function WebsitePage() {
                                           <th className="px-4 py-2.5 font-black text-slate-500 uppercase tracking-wider w-[240px]">Product Name</th>
                                           {activeTab !== 'Freshness' && (
                                             <>
+                                              <th className="px-4 py-2.5 font-black text-slate-500 uppercase tracking-wider text-right w-[110px]">Ordered Qty</th>
                                               <th className="px-4 py-2.5 font-black text-slate-500 uppercase tracking-wider text-center w-[110px]">Weight/Size</th>
                                               <th className="px-4 py-2.5 font-black text-slate-500 uppercase tracking-wider text-right w-[110px]">Price/FOB</th>
-                                              <th className="px-4 py-2.5 font-black text-slate-500 uppercase tracking-wider text-right w-[110px]">Ordered Qty</th>
                                               <th className="px-4 py-2.5 font-black text-slate-500 uppercase tracking-wider text-right w-[110px]">Received Qty</th>
                                               <th className="px-4 py-2.5 font-black text-slate-500 uppercase tracking-wider text-right w-[110px]">Pending Qty</th>
                                             </>
@@ -1491,85 +1496,171 @@ export default function WebsitePage() {
                                              <tr key={rowObj.key} className={`hover:bg-slate-50 transition-colors border-b border-slate-100 ${rowObj.isComplete ? '' : 'bg-orange-50/30'}`}>
                                                {/* Image Preview Column */}
                                                {activeTab === 'Freshness' && (
-                                               <td className="px-4 py-2.5">
-                                                 <div className="w-12 h-12 bg-white rounded-lg border border-slate-100 flex items-center justify-center overflow-hidden shrink-0 shadow-sm animate-fade-in">
-                                                   {rowObj.img ? (
-                                                     <img src={rowObj.img} referrerPolicy="no-referrer" className="max-w-full max-h-full object-contain hover:scale-110 transition-transform cursor-pointer" alt={rowObj.prodName} />
-                                                   ) : (
-                                                     <span className="text-lg">📦</span>
-                                                   )}
-                                                 </div>
+                                               <td className="px-4 py-2.5 align-top">
+                                                 {rowObj._items && rowObj._items.length > 0 ? (
+                                                   <div className="flex flex-col">
+                                                     {rowObj._items.map((subItem: any, idx: number) => (
+                                                       <div key={idx} className={`flex items-center min-h-[32px] ${idx > 0 ? "pt-2 border-t border-slate-200" : ""}`}>
+                                                         <div className="w-8 h-8 bg-white rounded-md border border-slate-100 flex items-center justify-center overflow-hidden shrink-0 shadow-sm animate-fade-in">
+                                                           {subItem.img ? (
+                                                             <img src={subItem.img} referrerPolicy="no-referrer" className="max-w-full max-h-full object-contain hover:scale-110 transition-transform cursor-pointer" alt={rowObj.prodName} />
+                                                           ) : (
+                                                             <span className="text-sm">📦</span>
+                                                           )}
+                                                         </div>
+                                                       </div>
+                                                     ))}
+                                                   </div>
+                                                 ) : (
+                                                   <div className="flex items-center min-h-[32px]">
+                                                     <div className="w-8 h-8 bg-white rounded-md border border-slate-100 flex items-center justify-center overflow-hidden shrink-0 shadow-sm animate-fade-in">
+                                                       <span className="text-sm">📦</span>
+                                                     </div>
+                                                   </div>
+                                                 )}
                                                </td>
                                                )}
 
                                                {/* Product Name Column */}
-                                               <td className="px-4 py-2.5">
-                                                 <span className="font-bold text-slate-700 block" title={rowObj.prodName}>
-                                                   {rowObj.prodName}
-                                                 </span>
+                                               <td className="px-4 py-2.5 align-top">
+                                                 <div className="flex items-center min-h-[32px]">
+                                                   <span className="font-bold text-slate-700 block" title={rowObj.prodName}>
+                                                     {rowObj.prodName}
+                                                   </span>
+                                                 </div>
                                                </td>
 
                                                {activeTab !== 'Freshness' && (
                                                  <>
-                                                   {/* Weight/Size Column */}
-                                                   <td className="px-4 py-2.5 text-center font-bold text-slate-600">
-                                                     {rowObj.weightSize}
-                                                   </td>
-
-                                                   {/* Price/FOB Column */}
-                                                   <td className="px-4 py-2.5 text-right font-black text-slate-700">
-                                                     {rowObj.priceVal}
-                                                   </td>
-
                                                    {/* Ordered Qty Column */}
-                                                   <td className="px-4 py-2.5 text-right font-black text-[#2874f0]">
-                                                     {rowObj.orderedQty}
+                                                   <td className="px-4 py-2.5 text-right font-black text-[#2874f0] align-top">
+                                                     <div className="flex items-center justify-end min-h-[32px]">
+                                                       {rowObj.orderedQty}
+                                                     </div>
                                                    </td>
 
-                                                   {/* Received Qty Column */}
-                                                   <td className="px-4 py-2.5 text-right font-black text-emerald-600">
-                                                     {rowObj.receivedQty === 0 && !rowObj.isComplete ? '—' : rowObj.receivedQty}
+                                                   {/* Weight/Size Column (STACKED if multiple) */}
+                                                   <td className="px-4 py-2.5 text-center font-bold text-slate-600 align-top">
+                                                     {rowObj._items && rowObj._items.length > 0 ? (
+                                                       <div className="flex flex-col h-full">
+                                                         {rowObj._items.map((subItem: any, idx: number) => (
+                                                           <div key={idx} className={`min-h-[32px] flex items-center justify-center ${idx > 0 ? "pt-2 border-t border-slate-200" : ""}`}>
+                                                             {subItem.weightSize}
+                                                           </div>
+                                                         ))}
+                                                       </div>
+                                                     ) : (
+                                                       <div className="flex items-center justify-center min-h-[32px]">
+                                                         {rowObj.weightSize}
+                                                       </div>
+                                                     )}
+                                                   </td>
+
+                                                   {/* Price/FOB Column (STACKED if multiple) */}
+                                                   <td className="px-4 py-2.5 text-right font-black text-slate-700 align-top">
+                                                     {rowObj._items && rowObj._items.length > 0 ? (
+                                                       <div className="flex flex-col h-full">
+                                                         {rowObj._items.map((subItem: any, idx: number) => (
+                                                           <div key={idx} className={`min-h-[32px] flex items-center justify-end ${idx > 0 ? "pt-2 border-t border-slate-200" : ""}`}>
+                                                             {subItem.priceVal}
+                                                           </div>
+                                                         ))}
+                                                       </div>
+                                                     ) : (
+                                                       <div className="flex items-center justify-end min-h-[32px]">
+                                                         {rowObj.priceVal}
+                                                       </div>
+                                                     )}
+                                                   </td>
+
+                                                   {/* Received Qty Column (STACKED if multiple) */}
+                                                   <td className="px-4 py-2.5 text-right font-black text-emerald-600 align-top">
+                                                     {rowObj._items && rowObj._items.length > 0 ? (
+                                                       <div className="flex flex-col h-full">
+                                                         {rowObj._items.map((subItem: any, idx: number) => (
+                                                           <div key={idx} className={`min-h-[32px] flex items-center justify-end ${idx > 0 ? "pt-2 border-t border-slate-200" : ""}`}>
+                                                             {subItem.receivedQty === 0 && !rowObj.isComplete ? '—' : subItem.receivedQty}
+                                                           </div>
+                                                         ))}
+                                                       </div>
+                                                     ) : (
+                                                       <div className="flex items-center justify-end min-h-[32px]">
+                                                         {rowObj.receivedQty === 0 && !rowObj.isComplete ? '—' : rowObj.receivedQty}
+                                                       </div>
+                                                     )}
                                                    </td>
 
                                                    {/* Pending Qty Column */}
-                                                   <td className="px-4 py-2.5 text-right font-black text-orange-500">
-                                                     {rowObj.pendingQty > 0 ? rowObj.pendingQty : '—'}
+                                                   <td className="px-4 py-2.5 text-right font-black text-orange-500 align-top">
+                                                     <div className="flex items-center justify-end min-h-[32px]">
+                                                       {rowObj.pendingQty > 0 ? rowObj.pendingQty : '—'}
+                                                     </div>
                                                    </td>
                                                  </>
                                                )}
 
                                                {activeTab === 'Freshness' && (
                                                  <>
-                                                   {/* Received Qty Column */}
-                                                   <td className="px-4 py-2.5 text-right font-black text-emerald-600">
-                                                     {rowObj.receivedQty === 0 && !rowObj.isComplete ? '—' : rowObj.receivedQty}
+                                                   {/* Received Qty Column (STACKED) */}
+                                                   <td className="px-4 py-2.5 text-right font-black text-emerald-600 align-top">
+                                                     {rowObj._items && rowObj._items.length > 0 ? (
+                                                       <div className="flex flex-col h-full">
+                                                         {rowObj._items.map((subItem: any, idx: number) => (
+                                                           <div key={idx} className={`min-h-[32px] flex items-center justify-end ${idx > 0 ? "pt-2 border-t border-slate-200" : ""}`}>
+                                                             {subItem.receivedQty === 0 && !rowObj.isComplete ? '—' : subItem.receivedQty}
+                                                           </div>
+                                                         ))}
+                                                       </div>
+                                                     ) : (
+                                                       <div className="flex items-center justify-end min-h-[32px]">
+                                                         {rowObj.receivedQty === 0 && !rowObj.isComplete ? '—' : rowObj.receivedQty}
+                                                       </div>
+                                                     )}
                                                    </td>
 
-                                                   {/* Mfg Date Column */}
-                                                   <td className="px-4 py-2.5 text-center font-semibold text-slate-500">
-                                                     {rowObj.mfgDate ? formatDateValue(String(rowObj.mfgDate), 'Mfg Date') : '—'}
+                                                   {/* Mfg Date Column (STACKED) */}
+                                                   <td className="px-4 py-2.5 text-center font-semibold text-slate-500 align-top">
+                                                     {rowObj._items && rowObj._items.length > 0 ? (
+                                                       <div className="flex flex-col h-full">
+                                                         {rowObj._items.map((subItem: any, idx: number) => (
+                                                           <div key={idx} className={`min-h-[32px] flex items-center justify-center ${idx > 0 ? "pt-2 border-t border-slate-200" : ""}`}>
+                                                             {subItem.mfgDate ? formatDateValue(String(subItem.mfgDate), 'Mfg Date') : '—'}
+                                                           </div>
+                                                         ))}
+                                                       </div>
+                                                     ) : '—'}
                                                    </td>
 
-                                                   {/* Expiry Date Column */}
-                                                   <td className="px-4 py-2.5 text-center font-semibold text-slate-500">
-                                                     {rowObj.expiryDate ? formatDateValue(String(rowObj.expiryDate), 'Expiry Date') : '—'}
+                                                   {/* Expiry Date Column (STACKED) */}
+                                                   <td className="px-4 py-2.5 text-center font-semibold text-slate-500 align-top">
+                                                     {rowObj._items && rowObj._items.length > 0 ? (
+                                                       <div className="flex flex-col h-full">
+                                                         {rowObj._items.map((subItem: any, idx: number) => (
+                                                           <div key={idx} className={`min-h-[32px] flex items-center justify-center ${idx > 0 ? "pt-2 border-t border-slate-200" : ""}`}>
+                                                             {subItem.expiryDate ? formatDateValue(String(subItem.expiryDate), 'Expiry Date') : '—'}
+                                                           </div>
+                                                         ))}
+                                                       </div>
+                                                     ) : '—'}
                                                    </td>
                                                  </>
                                                )}
 
                                                {/* Status Column */}
-                                               <td className="px-4 py-2.5 text-center">
-                                                 {rowObj.isComplete ? (
-                                                   <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-100 text-emerald-700 text-[10px] font-black rounded-full shadow-sm">
-                                                     <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>
-                                                     Completed
-                                                   </span>
-                                                 ) : (
-                                                   <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-orange-100 text-orange-700 text-[10px] font-black rounded-full shadow-sm animate-pulse">
-                                                     <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                                                     Pending
-                                                   </span>
-                                                 )}
+                                               <td className="px-4 py-2.5 text-center align-top">
+                                                 <div className="flex items-center justify-center min-h-[32px]">
+                                                   {rowObj.isComplete ? (
+                                                     <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-100 text-emerald-700 text-[10px] font-black rounded-full shadow-sm">
+                                                       <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>
+                                                       Completed
+                                                     </span>
+                                                   ) : (
+                                                     <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-orange-100 text-orange-700 text-[10px] font-black rounded-full shadow-sm animate-pulse">
+                                                       <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                                                       Pending
+                                                     </span>
+                                                   )}
+                                                 </div>
                                                </td>
                                              </tr>
                                            );

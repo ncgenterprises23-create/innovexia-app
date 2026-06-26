@@ -151,16 +151,36 @@ export default function ClientInterfacePage() {
     );
   }, [data, searchQuery, activeTab, invFilterParty, invFilterPI]);
 
-  const totalPages = Math.ceil(filteredData.length / ITEMS_PER_PAGE);
+  const groupedInventoryData = useMemo(() => {
+    if (activeTab !== 'Inventory') return filteredData;
+    const groups: Record<string, any> = {};
+    filteredData.forEach(row => {
+      const key = `${row['Party Name']}_${row['PI Number']}_${row['Product Name']}`;
+      if (!groups[key]) {
+        groups[key] = {
+          ...row,
+          _isGrouped: true,
+          _items: [row]
+        };
+      } else {
+        groups[key]._items.push(row);
+      }
+    });
+    return Object.values(groups);
+  }, [filteredData, activeTab]);
+
+  const dataToPaginate = activeTab === 'Inventory' ? groupedInventoryData : filteredData;
+
+  const totalPages = Math.ceil(dataToPaginate.length / ITEMS_PER_PAGE);
   const paginatedData = useMemo(() => {
     const start = (currentPage - 1) * ITEMS_PER_PAGE;
-    return filteredData.slice(start, start + ITEMS_PER_PAGE);
-  }, [filteredData, currentPage]);
+    return dataToPaginate.slice(start, start + ITEMS_PER_PAGE);
+  }, [dataToPaginate, currentPage]);
 
   const headers = useMemo(() => {
     if (activeTab === 'Client User') return ['Username', 'Password'];
     if (data.length === 0) return [];
-    let keys = Object.keys(data[0]);
+    let keys = Object.keys(data[0]).filter(k => k !== '_isGrouped' && k !== '_items');
     if (activeTab === 'Orders') {
         keys = keys.filter(k => k !== 'CI Number' && k !== 'CI_Number');
         const piIndex = keys.findIndex(k => k === 'PI Number' || k === 'PI_Number');
@@ -168,6 +188,16 @@ export default function ClientInterfacePage() {
             keys.splice(piIndex + 1, 0, 'CI Number');
         } else {
             keys.push('CI Number');
+        }
+    }
+    if (activeTab === 'Inventory') {
+        const prodIdx = keys.findIndex(k => k === 'Product Name');
+        const orderQtyIdx = keys.findIndex(k => k === 'Order Qty' || k === 'Order_Qty');
+        if (prodIdx !== -1 && orderQtyIdx !== -1) {
+            const orderQtyKey = keys[orderQtyIdx];
+            keys.splice(orderQtyIdx, 1);
+            const newProdIdx = keys.findIndex(k => k === 'Product Name');
+            keys.splice(newProdIdx + 1, 0, orderQtyKey);
         }
     }
     return keys;
@@ -384,6 +414,25 @@ export default function ClientInterfacePage() {
       'Received Qty': row['Received Qty'] || '',
       'Mfg Date': formatDateForLocalInput(row['Mfg Date']).split('T')[0] || '',
       'Expiry Date': formatDateForLocalInput(row['Expiry Date']).split('T')[0] || '',
+      'Product Image': null,
+    }]);
+    setShowInventoryModal(true);
+  };
+
+  const handleInventoryAddVariations = (row: any) => {
+    setInventoryEditItem(null);
+    setInventoryGlobal({
+      'Party Name': row['Party Name'] || '',
+      'PI Number': row['PI Number'] || '',
+    });
+    setInventoryItems([{
+      'Product Name': row['Product Name'] || '',
+      'Weight/Size': '',
+      'Order Qty': row['Order Qty'] || '',
+      'Price': '',
+      'Received Qty': '',
+      'Mfg Date': '',
+      'Expiry Date': '',
       'Product Image': null,
     }]);
     setShowInventoryModal(true);
@@ -795,10 +844,10 @@ export default function ClientInterfacePage() {
           </div>
 
           {/* Pagination Row - Before Table */}
-          {!loading && filteredData.length > 0 && (
+          {!loading && dataToPaginate.length > 0 && (
             <div className="flex items-center justify-between px-6 py-2 bg-white/80 dark:bg-gray-800/80 backdrop-blur-md rounded-xl border border-white/20 dark:border-gray-700/30 shadow-sm">
               <div className="text-xs text-gray-500 font-bold uppercase tracking-wider">
-                Showing <span className="text-[var(--theme-primary)] dark:text-[var(--theme-primary)]">{(currentPage - 1) * ITEMS_PER_PAGE + 1} - {Math.min(currentPage * ITEMS_PER_PAGE, filteredData.length)}</span> of {filteredData.length} entries
+                Showing <span className="text-[var(--theme-primary)] dark:text-[var(--theme-primary)]">{(currentPage - 1) * ITEMS_PER_PAGE + 1} - {Math.min(currentPage * ITEMS_PER_PAGE, dataToPaginate.length)}</span> of {dataToPaginate.length} entries
               </div>
               
               <div className="flex items-center gap-2">
@@ -923,23 +972,66 @@ export default function ClientInterfacePage() {
                             </td>
                         )}
                         {activeTab === 'Inventory' && (
-                            <td className="px-4 py-2.5 text-xs whitespace-nowrap">
-                                <div className="flex gap-2">
-                                    <button 
-                                        onClick={() => handleInventoryEdit(row)}
-                                        title="Edit"
-                                        className="p-1.5 bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-lg hover:scale-110 transition-transform"
-                                    >
-                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
-                                    </button>
-                                    <button 
-                                        onClick={() => handleInventoryDelete(row)}
-                                        title="Delete"
-                                        className="p-1.5 bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 rounded-lg hover:scale-110 transition-transform"
-                                    >
-                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                                    </button>
-                                </div>
+                            <td className="px-4 py-2.5 text-xs whitespace-nowrap align-top">
+                                {row._isGrouped ? (
+                                    <div className="flex flex-col h-full">
+                                        <div className="flex flex-col gap-2 flex-grow">
+                                            {row._items.map((subItem: any, idx: number) => (
+                                                <div key={idx} className={`flex gap-2 items-center min-h-[32px] ${idx > 0 ? "pt-2 border-t border-gray-100 dark:border-gray-700/50" : ""}`}>
+                                                    <button 
+                                                        onClick={() => handleInventoryEdit(subItem)}
+                                                        title="Edit"
+                                                        className="p-1.5 bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-lg hover:scale-110 transition-transform"
+                                                    >
+                                                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                                                    </button>
+                                                    <button 
+                                                        onClick={() => handleInventoryDelete(subItem)}
+                                                        title="Delete"
+                                                        className="p-1.5 bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 rounded-lg hover:scale-110 transition-transform"
+                                                    >
+                                                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                                                    </button>
+                                                    {idx === 0 && (
+                                                        <button 
+                                                            onClick={() => handleInventoryAddVariations(subItem)}
+                                                            title="Add New Variation"
+                                                            className="px-2 py-1 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 font-bold rounded-lg hover:scale-105 transition-transform flex items-center gap-1 border border-emerald-200 dark:border-emerald-800"
+                                                        >
+                                                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
+                                                            Add
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div className="flex gap-2">
+                                        <button 
+                                            onClick={() => handleInventoryEdit(row)}
+                                            title="Edit"
+                                            className="p-1.5 bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-lg hover:scale-110 transition-transform"
+                                        >
+                                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                                        </button>
+                                        <button 
+                                            onClick={() => handleInventoryDelete(row)}
+                                            title="Delete"
+                                            className="p-1.5 bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 rounded-lg hover:scale-110 transition-transform"
+                                        >
+                                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                                        </button>
+                                        <button 
+                                            onClick={() => handleInventoryAddVariations(row)}
+                                            title="Add New Variation"
+                                            className="px-2 py-1 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 font-bold rounded-lg hover:scale-105 transition-transform flex items-center gap-1 border border-emerald-200 dark:border-emerald-800"
+                                        >
+                                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
+                                            Add
+                                        </button>
+                                    </div>
+                                )}
                             </td>
                         )}
                         {activeTab === 'Tracker' && (
@@ -982,43 +1074,63 @@ export default function ClientInterfacePage() {
                                 </div>
                             </td>
                         )}
-                        {headers.map((header) => (
-                          <td key={header} className="px-4 py-2.5 text-xs text-gray-700 dark:text-gray-300 whitespace-nowrap">
-                            {row[header] === null || row[header] === undefined ? (
-                              <span className="text-gray-300 dark:text-gray-600">—</span>
-                            ) : header === 'Line_Items' ? (
-                                <button 
-                                    onClick={() => {
-                                        try {
-                                            const items = typeof row[header] === 'string' ? JSON.parse(row[header]) : row[header];
-                                            setViewLineItems(Array.isArray(items) ? items : []);
-                                        } catch (e) {
-                                            console.error('Failed to parse line items', e);
-                                            setViewLineItems([]);
-                                        }
-                                    }}
-                                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[var(--theme-primary)]/20 text-gray-900 dark:text-white font-bold rounded-lg text-xs hover:bg-[var(--theme-primary)]/40 transition-colors"
-                                >
-                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" /></svg>
-                                    View Items
-                                </button>
-                            ) : isUrl(String(row[header])) ? (
-                                <a 
-                                    href={String(row[header])} 
-                                    target="_blank" 
-                                    rel="noopener noreferrer"
-                                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 font-bold rounded-lg hover:scale-105 transition-transform border border-indigo-100 dark:border-indigo-800"
-                                >
-                                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
-                                    View Image
-                                </a>
-                            ) : header.toLowerCase() === 'cont_fill' || header.toLowerCase() === 'cont fill' ? (
-                                <span className="text-[var(--theme-primary)] font-black">{(parseFloat(String(row[header] || '0')) * 100).toFixed(2)}%</span>
-                            ) : (
-                              formatDateValue(String(row[header]), header)
-                            )}
-                          </td>
-                        ))}
+                        {headers.map((header) => {
+                            const renderCellContent = (item: any) => {
+                                if (item[header] === null || item[header] === undefined) return <span className="text-gray-300 dark:text-gray-600">—</span>;
+                                if (header === 'Line_Items') return (
+                                    <button 
+                                        onClick={() => {
+                                            try {
+                                                const items = typeof item[header] === 'string' ? JSON.parse(item[header]) : item[header];
+                                                setViewLineItems(Array.isArray(items) ? items : []);
+                                            } catch (e) {
+                                                console.error('Failed to parse line items', e);
+                                                setViewLineItems([]);
+                                            }
+                                        }}
+                                        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[var(--theme-primary)]/20 text-gray-900 dark:text-white font-bold rounded-lg text-xs hover:bg-[var(--theme-primary)]/40 transition-colors"
+                                    >
+                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" /></svg>
+                                        View Items
+                                    </button>
+                                );
+                                if (isUrl(String(item[header]))) return (
+                                    <a 
+                                        href={String(item[header])} 
+                                        target="_blank" 
+                                        rel="noopener noreferrer"
+                                        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 font-bold rounded-lg hover:scale-105 transition-transform border border-indigo-100 dark:border-indigo-800"
+                                    >
+                                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                                        View Image
+                                    </a>
+                                );
+                                if (header.toLowerCase() === 'cont_fill' || header.toLowerCase() === 'cont fill') return <span className="text-[var(--theme-primary)] font-black">{(parseFloat(String(item[header] || '0')) * 100).toFixed(2)}%</span>;
+                                return formatDateValue(String(item[header]), header);
+                            };
+
+                            const isStackedColumn = activeTab === 'Inventory' && ['Weight/Size', 'Price', 'Received Qty', 'Mfg Date', 'Expiry Date', 'Product Image', 'created_at'].includes(header);
+
+                            return (
+                                <td key={header} className="px-4 py-2.5 text-xs text-gray-700 dark:text-gray-300 whitespace-nowrap align-top">
+                                    {row._isGrouped && isStackedColumn ? (
+                                        <div className="flex flex-col h-full">
+                                            <div className="flex flex-col gap-2 flex-grow">
+                                                {row._items.map((subItem: any, idx: number) => (
+                                                    <div key={idx} className={`flex items-center min-h-[32px] ${idx > 0 ? "pt-2 border-t border-gray-100 dark:border-gray-700/50" : ""}`}>
+                                                        {renderCellContent(subItem)}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <div className="flex items-center min-h-[32px]">
+                                            {renderCellContent(row)}
+                                        </div>
+                                    )}
+                                </td>
+                            );
+                        })}
                       </tr>
                     ))}
                   </tbody>

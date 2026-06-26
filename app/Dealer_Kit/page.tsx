@@ -6,11 +6,12 @@ import LayoutWrapper from '@/components/LayoutWrapper';
 import { useToast } from '@/components/ToastProvider';
 import { useLoader } from '@/components/LoaderProvider';
 import { useThemeColor } from '@/components/ThemeColorProvider';
+import { ensureSessionId } from '@/utils/session';
 import {
   Loader2, Pencil, Plus, Trash2, RefreshCcw, Search, CalendarDays,
   Users, Megaphone, FileText, Truck, BadgeCheck, Sparkles, ArrowRight,
   MapPin, Globe2, Link2, X, ClipboardList, Layers3,
-  User, Phone, MessageCircle, Building2, Map, Languages, Tag, MessageSquare, Clock
+  User, Phone, MessageCircle, Building2, Map, Languages, Tag, MessageSquare, Clock, Info
 } from 'lucide-react';
 
 interface DealerSummary {
@@ -159,22 +160,19 @@ function YesNoToggle({
       role="switch"
       aria-checked={isYes}
       onClick={() => onChange(isYes ? 'No' : 'Yes')}
-      className={`group inline-flex w-full items-center justify-between rounded-2xl border px-3 py-2.5 text-sm font-black transition ${
-        isYes
+      className={`group inline-flex w-full items-center justify-between rounded-2xl border px-3 py-2.5 text-sm font-black transition ${isYes
           ? 'border-emerald-300 bg-emerald-50 text-emerald-800'
           : 'border-rose-300 bg-rose-50 text-rose-800'
-      }`}
+        }`}
     >
       <span className="uppercase tracking-[0.12em]">{isYes ? 'Yes' : 'No'}</span>
       <span
-        className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${
-          isYes ? 'bg-emerald-500' : 'bg-rose-500'
-        }`}
+        className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${isYes ? 'bg-emerald-500' : 'bg-rose-500'
+          }`}
       >
         <span
-          className={`inline-block h-5 w-5 rounded-full bg-white shadow transition-transform ${
-            isYes ? 'translate-x-5' : 'translate-x-1'
-          }`}
+          className={`inline-block h-5 w-5 rounded-full bg-white shadow transition-transform ${isYes ? 'translate-x-5' : 'translate-x-1'
+            }`}
         />
       </span>
     </button>
@@ -293,8 +291,12 @@ export default function DealerKitPage() {
   const [trackingData, setTrackingData] = useState<TrackingStatus[]>([]);
 
   const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'Overdue' | 'Upcoming' | 'Scheduled'>('all');
-  const [monthFilter, setMonthFilter] = useState('all');
+  const [dealerSearch, setDealerSearch] = useState('');
+  const [monthFilter, setMonthFilter] = useState(() => new Date().toLocaleString('en-US', { month: 'long' }));
+
+  const [infoModalOpen, setInfoModalOpen] = useState(false);
+  const [infoModalData, setInfoModalData] = useState<{title: string; remark: string} | null>(null);
+  const [loggedInUser, setLoggedInUser] = useState<string>('');
 
   const [dealerModalOpen, setDealerModalOpen] = useState(false);
   const [dealerModalMode, setDealerModalMode] = useState<ModalMode>('add');
@@ -307,7 +309,8 @@ export default function DealerKitPage() {
   });
 
   const [monthlyModalOpen, setMonthlyModalOpen] = useState(false);
-  const [batchItems, setBatchItems] = useState<{ contentId?: string; medium: string; contentType: string; dueDate: string; remarks: string }[]>([]);
+  const [monthlyModalMode, setMonthlyModalMode] = useState<ModalMode>('add');
+  const [batchItems, setBatchItems] = useState<{ contentId?: string; month: string; medium: string; contentType: string; dueDate: string; remarks: string }[]>([]);
 
   const [trackingModalOpen, setTrackingModalOpen] = useState(false);
   const [trackingForm, setTrackingForm] = useState<{ dealerId: string; contentId: string; status: string; link: string; doneBy: string; dealerName: string; contentName: string; month: string } | null>(null);
@@ -352,11 +355,29 @@ export default function DealerKitPage() {
 
   useEffect(() => {
     fetchAll();
+    
+    // Fetch logged in user
+    const checkAuth = async () => {
+      try {
+        const sessionId = ensureSessionId();
+        const response = await fetch('/api/auth', { headers: { 'x-session-id': sessionId } });
+        const data = await response.json();
+        if (data.authenticated && data.user) {
+          setLoggedInUser(data.user.full_name || data.user.username || '');
+        }
+      } catch (e) {
+        // ignore
+      }
+    };
+    checkAuth();
   }, []);
 
   const filteredDealers = useMemo(() => {
-    if (!search.trim()) return dealers;
-    const q = search.toLowerCase();
+    let q = search.toLowerCase();
+    if (activeTab === 'monthly') {
+      q = dealerSearch.toLowerCase();
+    }
+    if (!q.trim()) return dealers;
     return dealers.filter((dealer) =>
       [
         dealer.dealerId,
@@ -378,52 +399,68 @@ export default function DealerKitPage() {
         .toLowerCase()
         .includes(q)
     );
-  }, [dealers, search]);
+  }, [dealers, search, dealerSearch, activeTab]);
 
   const monthlyMonths = useMemo(() => {
-    const set = new Set(monthlyPlans.map((plan) => plan.month).filter(Boolean));
+    const set = new Set(
+      monthlyPlans.map((plan) => {
+        if (!plan.dueDate) return '';
+        return new Date(plan.dueDate).toLocaleString('en-US', { month: 'long' });
+      }).filter(Boolean)
+    );
+    const currentM = new Date().toLocaleString('en-US', { month: 'long' });
+    set.add(currentM);
     return Array.from(set);
   }, [monthlyPlans]);
 
   const filteredMonthlyPlans = useMemo(() => {
     return monthlyPlans.filter((plan) => {
-      if (statusFilter !== 'all' && plan.status !== statusFilter) return false;
-      if (monthFilter !== 'all' && plan.month !== monthFilter) return false;
+      const derivedMonth = plan.dueDate ? new Date(plan.dueDate).toLocaleString('en-US', { month: 'long' }) : '';
+      if (monthFilter !== 'all') {
+        if (derivedMonth.toLowerCase() !== monthFilter.toLowerCase()) return false;
+      }
 
       if (!search.trim()) return true;
       const q = search.toLowerCase();
-      return [plan.contentId, plan.month, plan.topic, plan.medium, plan.contentType, plan.draftOwner, plan.designOwner]
+      return [plan.contentId, derivedMonth, plan.topic, plan.medium, plan.contentType, plan.draftOwner, plan.designOwner]
         .join(' ')
         .toLowerCase()
         .includes(q);
     });
-  }, [monthlyPlans, statusFilter, monthFilter, search]);
+  }, [monthlyPlans, monthFilter, search]);
 
-  const completionPercent = useMemo(() => {
-    if (!monthlyPlans.length) return 0;
-    const complete = monthlyPlans.filter((plan) => {
-      const status = (plan.approvalStatus || '').toLowerCase();
-      const production = (plan.productionStatus || '').toLowerCase();
-      return status.includes('approved') || status.includes('completed') || production.includes('done');
-    }).length;
+  const stats = useMemo(() => {
+    const totalDealers = dealers.length;
+    const activeDealers = dealers.filter((d) => String(d.activeInKit).toLowerCase() === 'yes').length || totalDealers;
+    const totalTasks = totalDealers * monthlyPlans.length;
+    const completedTasks = trackingData.filter((t) => t.status === 'Done').length;
+    const pendingTasks = Math.max(0, totalTasks - completedTasks);
+    const completionPercent = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
+    
+    const videos = monthlyPlans.filter(p => p.contentType?.toLowerCase().includes('video')).length;
+    const insightLetters = monthlyPlans.filter(p => p.contentType?.toLowerCase().includes('insight letter') || p.contentType?.toLowerCase().includes('report')).length;
+    const whatsappCampaigns = monthlyPlans.filter(p => p.medium?.toLowerCase().includes('whatsapp')).length;
+    const courierCampaigns = monthlyPlans.filter(p => p.medium?.toLowerCase().includes('courier')).length;
+    const festivalWhatsapp = festivals.filter(f => f.medium?.toLowerCase().includes('whatsapp')).length;
+    const annualCycle = monthlyPlans.length > 0 ? `${monthlyMonths.length} Months` : '-';
 
-    return Math.round((complete / monthlyPlans.length) * 100);
-  }, [monthlyPlans]);
+    return {
+      totalDealers, activeDealers, completedTasks, pendingTasks, completionPercent,
+      videos, insightLetters, whatsappCampaigns, courierCampaigns, festivalWhatsapp, annualCycle,
+      totalTasks
+    };
+  }, [dealers, monthlyPlans, trackingData, festivals, monthlyMonths]);
 
   const cards = useMemo(() => {
-    const fallbackDealerCount = dealers.length;
-    const overdueCount = monthlyPlans.filter((plan) => plan.status === 'Overdue').length;
-    const upcomingCount = monthlyPlans.filter((plan) => plan.status === 'Upcoming').length;
-
     return [
-      { label: 'Total Dealers', value: summary.dealerCount ?? fallbackDealerCount },
-      { label: 'Active Dealers', value: summary.activeDealers ?? dealers.filter((dealer) => String(dealer.activeInKit).toLowerCase() === 'yes').length },
-      { label: 'Pending Content', value: summary.pendingContent ?? overdueCount + upcomingCount },
-      { label: 'Completed Content', value: summary.completedContent ?? Math.max(monthlyPlans.length - overdueCount - upcomingCount, 0) },
-      { label: 'Upcoming Dispatches', value: summary.upcomingDispatches ?? upcomingCount },
-      { label: 'Completion', value: `${completionPercent}%` },
+      { label: 'Total Dealers', value: stats.totalDealers },
+      { label: 'Active Dealers', value: stats.activeDealers },
+      { label: 'Pending Content', value: stats.pendingTasks },
+      { label: 'Completed Content', value: stats.completedTasks },
+      { label: 'Total Campaigns', value: monthlyPlans.length },
+      { label: 'Completion', value: `${stats.completionPercent}%` },
     ];
-  }, [summary, dealers, monthlyPlans, completionPercent]);
+  }, [stats, monthlyPlans]);
 
   const openAddDealerModal = () => {
     setDealerModalMode('add');
@@ -445,15 +482,29 @@ export default function DealerKitPage() {
   };
 
   const BATCH_TEMPLATE = [
-    { medium: 'WhatsApp', contentType: 'Festival Greeting', remarks: 'Send on festival morning or evening before' },
-    { medium: 'WhatsApp', contentType: 'Video 1', remarks: '30-60 sec; dealer education/product' },
-    { medium: 'Courier', contentType: 'Insight Letter', remarks: 'Print 10 extra copies' },
-    { medium: 'Courier', contentType: 'Special Report', remarks: 'Send inside monthly packet' },
-    { medium: 'WhatsApp', contentType: 'Video 2', remarks: '30-60 sec; send after 5 PM' },
+    { month: '', medium: 'WhatsApp', contentType: 'Festival Greeting', remarks: 'Send on festival morning or evening before' },
+    { month: '', medium: 'WhatsApp', contentType: 'Video 1', remarks: '30-60 sec; dealer education/product' },
+    { month: '', medium: 'Courier', contentType: 'Insight Letter', remarks: 'Print 10 extra copies' },
+    { month: '', medium: 'Courier', contentType: 'Special Report', remarks: 'Send inside monthly packet' },
+    { month: '', medium: 'WhatsApp', contentType: 'Video 2', remarks: '30-60 sec; send after 5 PM' },
   ];
 
   const openAddMonthlyModal = () => {
+    setMonthlyModalMode('add');
     setBatchItems(BATCH_TEMPLATE.map(t => ({ ...t, dueDate: '' })));
+    setMonthlyModalOpen(true);
+  };
+
+  const openEditMonthlyModal = (plan: MonthlyPlan) => {
+    setMonthlyModalMode('edit');
+    setBatchItems([{
+      contentId: plan.contentId,
+      month: plan.month || '',
+      medium: plan.medium || '',
+      contentType: plan.contentType || '',
+      dueDate: plan.dueDate || '',
+      remarks: plan.remarks || '',
+    }]);
     setMonthlyModalOpen(true);
   };
 
@@ -504,22 +555,31 @@ export default function DealerKitPage() {
       setSaving(true);
       loader.showLoader();
 
-      const payloads = batchItems.map(item => ({
-        medium: item.medium,
-        contentType: item.contentType,
-        dueDate: item.dueDate,
-        remarks: item.remarks,
-      }));
+      const payloads = batchItems.map(item => {
+        let derivedMonth = item.month;
+        if (!derivedMonth && item.dueDate) {
+          derivedMonth = new Date(item.dueDate).toLocaleString('en-US', { month: 'long' });
+        }
+        return {
+          contentId: item.contentId,
+          month: derivedMonth,
+          medium: item.medium,
+          contentType: item.contentType,
+          dueDate: item.dueDate,
+          remarks: item.remarks,
+        };
+      });
 
+      const method = monthlyModalMode === 'add' ? 'POST' : 'PUT';
       const response = await fetch('/api/dealer-kit/monthly-frequency', {
-        method: 'POST',
+        method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payloads),
       });
 
-      if (!response.ok) throw new Error('Failed to create new plan items');
+      if (!response.ok) throw new Error(`Failed to ${monthlyModalMode === 'add' ? 'create' : 'update'} plan items`);
 
-      toast.success('Batch plan created');
+      toast.success(monthlyModalMode === 'add' ? 'Batch plan created' : 'Plan updated');
       setMonthlyModalOpen(false);
       await fetchAll();
     } catch (error: any) {
@@ -586,7 +646,8 @@ export default function DealerKitPage() {
   };
 
   const openTrackingModal = (dealer: Dealer, plan: MonthlyPlan, tracking?: TrackingStatus) => {
-    let defaultDoneBy = tracking?.doneBy || '';
+    let defaultDoneBy = tracking?.doneBy || loggedInUser;
+    
     if (!defaultDoneBy && typeof window !== 'undefined') {
       try {
         const erpUserStr = localStorage.getItem('erp_logged_user');
@@ -596,17 +657,18 @@ export default function DealerKitPage() {
         } else {
           defaultDoneBy = localStorage.getItem('user_name') || '';
         }
-      } catch (e) {}
+      } catch (e) { }
     }
+
     setTrackingForm({
       dealerId: dealer.dealerId,
       contentId: plan.contentId,
-      status: tracking?.status || 'Pending',
+      status: 'Done',
       link: tracking?.link || '',
       doneBy: defaultDoneBy,
-      dealerName: dealer.firmName,
-      contentName: plan.contentType,
-      month: plan.dueDate ? new Date(plan.dueDate).toLocaleString('en-US', { month: 'long' }) : 'Unscheduled'
+      dealerName: dealer.firmName || dealer.contactPerson || dealer.dealerId,
+      contentName: plan.contentType || '',
+      month: plan.dueDate ? new Date(plan.dueDate).toLocaleString('en-US', { month: 'long' }) : '',
     });
     setTrackingModalOpen(true);
   };
@@ -621,6 +683,9 @@ export default function DealerKitPage() {
         body: JSON.stringify({
           dealerId: trackingForm.dealerId,
           contentId: trackingForm.contentId,
+          dealerName: trackingForm.dealerName,
+          month: trackingForm.month,
+          contentName: trackingForm.contentName,
           status: trackingForm.status,
           link: trackingForm.link,
           doneBy: trackingForm.doneBy,
@@ -628,7 +693,7 @@ export default function DealerKitPage() {
       });
 
       if (!response.ok) throw new Error('Failed to update tracking');
-      
+
       toast.success('Status updated');
       setTrackingModalOpen(false);
       await fetchAll();
@@ -714,7 +779,7 @@ export default function DealerKitPage() {
 
   const monthlyPlansByMonth = useMemo(() => {
     const grouped: Record<string, MonthlyPlan[]> = {};
-    const sortedPlans = [...filteredMonthlyPlans].sort((a,b) => new Date(a.dueDate||0).getTime() - new Date(b.dueDate||0).getTime());
+    const sortedPlans = [...filteredMonthlyPlans].sort((a, b) => new Date(a.dueDate || 0).getTime() - new Date(b.dueDate || 0).getTime());
     sortedPlans.forEach(plan => {
       const m = plan.dueDate ? new Date(plan.dueDate).toLocaleString('en-US', { month: 'long' }) : 'Unscheduled';
       if (!grouped[m]) grouped[m] = [];
@@ -804,9 +869,8 @@ export default function DealerKitPage() {
                     <button
                       key={tab.key}
                       onClick={() => setActiveTab(tab.key as ActiveTab)}
-                      className={`inline-flex shrink-0 items-center gap-2 rounded-2xl border px-4 py-2.5 text-sm font-black transition-all ${
-                        isActive ? tab.activeClass : tab.idleClass
-                      }`}
+                      className={`inline-flex shrink-0 items-center gap-2 rounded-2xl border px-4 py-2.5 text-sm font-black transition-all ${isActive ? tab.activeClass : tab.idleClass
+                        }`}
                     >
                       {tab.icon}
                       {tab.label}
@@ -826,30 +890,7 @@ export default function DealerKitPage() {
                   />
                 </div>
 
-                {activeTab === 'monthly' && (
-                  <div className="flex gap-2">
-                    <select
-                      value={statusFilter}
-                      onChange={(e) => setStatusFilter(e.target.value as any)}
-                      className="rounded-2xl border border-gray-200 bg-white/90 px-4 py-2.5 text-sm font-semibold shadow-sm outline-none focus:border-[var(--theme-primary)] focus:ring-4 focus:ring-[var(--theme-primary)]/15"
-                    >
-                      <option value="all">All Status</option>
-                      <option value="Overdue">Overdue</option>
-                      <option value="Upcoming">Upcoming</option>
-                      <option value="Scheduled">Scheduled</option>
-                    </select>
-                    <select
-                      value={monthFilter}
-                      onChange={(e) => setMonthFilter(e.target.value)}
-                      className="rounded-2xl border border-gray-200 bg-white/90 px-4 py-2.5 text-sm font-semibold shadow-sm outline-none focus:border-[var(--theme-primary)] focus:ring-4 focus:ring-[var(--theme-primary)]/15"
-                    >
-                      <option value="all">All Months</option>
-                      {monthlyMonths.map((month) => (
-                        <option key={month} value={month}>{month}</option>
-                      ))}
-                    </select>
-                  </div>
-                )}
+
               </div>
             </div>
           </div>
@@ -879,27 +920,27 @@ export default function DealerKitPage() {
                       <div className="grid gap-3 sm:grid-cols-2">
                         <div className="rounded-2xl bg-gradient-to-br from-sky-50 to-white p-4 border border-sky-100">
                           <p className="text-[11px] font-black uppercase tracking-[0.18em] text-sky-600">Annual Cycle</p>
-                          <p className="mt-2 text-lg font-black text-gray-900">{summary.annualCycle || '-'}</p>
+                          <p className="mt-2 text-lg font-black text-gray-900">{stats.annualCycle}</p>
                         </div>
                         <div className="rounded-2xl bg-gradient-to-br from-emerald-50 to-white p-4 border border-emerald-100">
                           <p className="text-[11px] font-black uppercase tracking-[0.18em] text-emerald-600">Festival WhatsApp</p>
-                          <p className="mt-2 text-lg font-black text-gray-900">{summary.festivalWhatsapp ?? 0}</p>
+                          <p className="mt-2 text-lg font-black text-gray-900">{stats.festivalWhatsapp}</p>
                         </div>
                         <div className="rounded-2xl bg-gradient-to-br from-violet-50 to-white p-4 border border-violet-100">
                           <p className="text-[11px] font-black uppercase tracking-[0.18em] text-violet-600">Videos</p>
-                          <p className="mt-2 text-lg font-black text-gray-900">{summary.videos ?? 0}</p>
+                          <p className="mt-2 text-lg font-black text-gray-900">{stats.videos}</p>
                         </div>
                         <div className="rounded-2xl bg-gradient-to-br from-rose-50 to-white p-4 border border-rose-100">
                           <p className="text-[11px] font-black uppercase tracking-[0.18em] text-rose-600">Insight Letters</p>
-                          <p className="mt-2 text-lg font-black text-gray-900">{summary.insightLetters ?? 0}</p>
+                          <p className="mt-2 text-lg font-black text-gray-900">{stats.insightLetters}</p>
                         </div>
                         <div className="rounded-2xl bg-gradient-to-br from-amber-50 to-white p-4 border border-amber-100">
                           <p className="text-[11px] font-black uppercase tracking-[0.18em] text-amber-600">WhatsApp Campaigns</p>
-                          <p className="mt-2 text-lg font-black text-gray-900">{summary.whatsappCampaigns ?? 0}</p>
+                          <p className="mt-2 text-lg font-black text-gray-900">{stats.whatsappCampaigns}</p>
                         </div>
                         <div className="rounded-2xl bg-gradient-to-br from-cyan-50 to-white p-4 border border-cyan-100">
                           <p className="text-[11px] font-black uppercase tracking-[0.18em] text-cyan-600">Courier Campaigns</p>
-                          <p className="mt-2 text-lg font-black text-gray-900">{summary.courierCampaigns ?? 0}</p>
+                          <p className="mt-2 text-lg font-black text-gray-900">{stats.courierCampaigns}</p>
                         </div>
                       </div>
                     </SectionCard>
@@ -912,9 +953,9 @@ export default function DealerKitPage() {
                     >
                       <div className="space-y-4">
                         {[
-                          { label: 'Pending content', value: summary.pendingContent ?? 0, color: 'from-amber-400 to-orange-500' },
-                          { label: 'Completed content', value: summary.completedContent ?? 0, color: 'from-emerald-400 to-green-500' },
-                          { label: 'Upcoming dispatches', value: summary.upcomingDispatches ?? 0, color: 'from-sky-400 to-blue-500' },
+                          { label: 'Pending tasks', value: stats.pendingTasks, color: 'from-amber-400 to-orange-500' },
+                          { label: 'Completed tasks', value: stats.completedTasks, color: 'from-emerald-400 to-green-500' },
+                          { label: 'Total tasks', value: stats.totalTasks, color: 'from-sky-400 to-blue-500' },
                         ].map((item) => (
                           <div key={item.label} className="space-y-2 rounded-2xl border border-gray-100 bg-gray-50/80 p-4">
                             <div className="flex items-center justify-between text-sm font-bold text-gray-700">
@@ -1110,32 +1151,28 @@ export default function DealerKitPage() {
                                 <td className="px-4 py-3 text-gray-700 align-top">
                                   <div className="space-y-3">
                                     <div className="flex flex-wrap gap-2">
-                                      <span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-black uppercase tracking-wider ${
-                                        String(dealer.whatsappConsent).toLowerCase() === 'yes'
+                                      <span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-black uppercase tracking-wider ${String(dealer.whatsappConsent).toLowerCase() === 'yes'
                                           ? 'border-emerald-200 bg-emerald-100 text-emerald-700'
                                           : 'border-rose-200 bg-rose-100 text-rose-700'
-                                      }`} title="WhatsApp Consent">
+                                        }`} title="WhatsApp Consent">
                                         WA
                                       </span>
-                                      <span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-black uppercase tracking-wider ${
-                                        String(dealer.numberSavedCuboc).toLowerCase() === 'yes'
+                                      <span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-black uppercase tracking-wider ${String(dealer.numberSavedCuboc).toLowerCase() === 'yes'
                                           ? 'border-sky-200 bg-sky-100 text-sky-700'
                                           : 'border-gray-200 bg-gray-100 text-gray-500'
-                                      }`} title="Number Saved in Cuboc">
+                                        }`} title="Number Saved in Cuboc">
                                         Cuboc
                                       </span>
-                                      <span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-black uppercase tracking-wider ${
-                                        String(dealer.courierAddressVerified).toLowerCase() === 'yes'
+                                      <span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-black uppercase tracking-wider ${String(dealer.courierAddressVerified).toLowerCase() === 'yes'
                                           ? 'border-violet-200 bg-violet-100 text-violet-700'
                                           : 'border-gray-200 bg-gray-100 text-gray-500'
-                                      }`} title="Courier Address Verified">
+                                        }`} title="Courier Address Verified">
                                         Verified
                                       </span>
-                                      <span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-black uppercase tracking-wider ${
-                                        String(dealer.activeInKit).toLowerCase() === 'yes'
+                                      <span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-black uppercase tracking-wider ${String(dealer.activeInKit).toLowerCase() === 'yes'
                                           ? 'border-amber-200 bg-amber-100 text-amber-700'
                                           : 'border-gray-200 bg-gray-100 text-gray-500'
-                                      }`} title="Active in KIT">
+                                        }`} title="Active in KIT">
                                         Active
                                       </span>
                                     </div>
@@ -1201,21 +1238,45 @@ export default function DealerKitPage() {
                           <p className="text-xs font-black uppercase tracking-[0.18em] text-violet-700">Monthly plan</p>
                           <p className="text-sm text-gray-600">Track due dates, release dates, and production status.</p>
                         </div>
-                        <motion.button
-                          whileHover={{ scale: 1.02 }}
-                          whileTap={{ scale: 0.98 }}
-                          onClick={openAddMonthlyModal}
-                          className="inline-flex items-center gap-2 rounded-2xl bg-[var(--theme-secondary)] px-4 py-2.5 text-sm font-black text-gray-900 shadow-lg shadow-[var(--theme-secondary)]/30 hover:bg-[var(--theme-tertiary)]"
-                        >
-                          <Plus className="h-4 w-4" /> Add Monthly Batch
-                        </motion.button>
+                        <div className="flex flex-wrap items-center gap-3">
+                          <div className="relative">
+                            <input 
+                              list="dealer-names" 
+                              value={dealerSearch} 
+                              onChange={(e) => setDealerSearch(e.target.value)} 
+                              placeholder="Filter by Dealer..."
+                              className="rounded-xl border border-violet-200 bg-white/90 px-3 py-2 text-sm font-semibold shadow-sm outline-none focus:border-violet-500 min-w-[200px]"
+                            />
+                            <datalist id="dealer-names">
+                              {dealers.map(d => <option key={d.dealerId} value={d.firmName || d.contactPerson || d.dealerId} />)}
+                            </datalist>
+                          </div>
+                          <select
+                            value={monthFilter}
+                            onChange={(e) => setMonthFilter(e.target.value)}
+                            className="rounded-xl border border-violet-200 bg-white/90 px-3 py-2 text-sm font-semibold shadow-sm outline-none focus:border-violet-500"
+                          >
+                            <option value="all">All Months</option>
+                            {monthlyMonths.map((month) => (
+                              <option key={month} value={month}>{month}</option>
+                            ))}
+                          </select>
+                          <motion.button
+                            whileHover={{ scale: 1.02 }}
+                            whileTap={{ scale: 0.98 }}
+                            onClick={openAddMonthlyModal}
+                            className="inline-flex items-center gap-2 rounded-xl bg-[var(--theme-secondary)] px-4 py-2 text-sm font-black text-gray-900 shadow-sm shadow-[var(--theme-secondary)]/30 hover:bg-[var(--theme-tertiary)]"
+                          >
+                            <Plus className="h-4 w-4" /> Add Monthly Batch
+                          </motion.button>
+                        </div>
                       </div>
 
-                      <div className="overflow-auto">
+                      <div className="overflow-auto max-h-[65vh] border-b border-gray-100 shadow-inner rounded-b-2xl">
                         <table className="w-full text-sm whitespace-nowrap">
-                          <thead className="bg-gray-50 text-gray-700">
+                          <thead className="bg-gray-50 text-gray-700 sticky top-0 z-30 shadow-sm">
                             <tr>
-                              <th className="px-4 py-3 text-left text-[11px] font-black uppercase tracking-[0.18em] border-r border-gray-200 bg-gray-50 sticky left-0 z-20" rowSpan={3}>
+                              <th className="px-4 py-3 text-left text-[11px] font-black uppercase tracking-[0.18em] border-r border-b border-gray-200 bg-gray-50 sticky left-0 z-40" rowSpan={4}>
                                 Dealer Name
                               </th>
                               {Object.entries(monthlyPlansByMonth).map(([month, plans]) => (
@@ -1225,7 +1286,7 @@ export default function DealerKitPage() {
                               ))}
                             </tr>
                             <tr>
-                              {Object.entries(monthlyPlansByMonth).map(([month, plans]) => 
+                              {Object.entries(monthlyPlansByMonth).map(([month, plans]) =>
                                 plans.map(plan => (
                                   <th key={`date-${plan.contentId}`} className="px-4 py-2 text-center text-xs font-bold border-b border-r border-gray-300">
                                     {formatDate(plan.dueDate)}
@@ -1234,9 +1295,41 @@ export default function DealerKitPage() {
                               )}
                             </tr>
                             <tr>
-                              {Object.entries(monthlyPlansByMonth).map(([month, plans]) => 
+                              {Object.entries(monthlyPlansByMonth).map(([month, plans]) =>
                                 plans.map(plan => (
-                                  <th key={`type-${plan.contentId}`} className="px-4 py-2 text-center text-[11px] font-bold uppercase tracking-[0.1em] border-b border-r border-gray-300">
+                                  <th key={`medium-${plan.contentId}`} className="px-4 py-2 border-b border-r border-gray-300">
+                                    <div className="flex items-center justify-between gap-2">
+                                      <span className="text-[11px] font-bold tracking-[0.1em] text-gray-500 uppercase">{plan.medium}</span>
+                                      <div className="flex items-center gap-0.5">
+                                        <button 
+                                          onClick={() => {
+                                            setInfoModalData({
+                                              title: `Remarks - ${plan.contentType}`,
+                                              remark: plan.remarks || 'No remarks provided.'
+                                            });
+                                            setInfoModalOpen(true);
+                                          }} 
+                                          className="p-1 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition" 
+                                          title="View Remarks"
+                                        >
+                                          <Info className="h-3 w-3" />
+                                        </button>
+                                        <button onClick={() => openEditMonthlyModal(plan)} className="p-1 rounded-md text-sky-500 hover:text-sky-700 hover:bg-sky-50 transition" title="Edit Plan">
+                                          <Pencil className="h-3 w-3" />
+                                        </button>
+                                        <button onClick={() => deleteMonthly(plan.contentId)} className="p-1 rounded-md text-rose-500 hover:text-rose-700 hover:bg-rose-50 transition" title="Delete Plan" disabled={deletingKey === plan.contentId}>
+                                          {deletingKey === plan.contentId ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
+                                        </button>
+                                      </div>
+                                    </div>
+                                  </th>
+                                ))
+                              )}
+                            </tr>
+                            <tr>
+                              {Object.entries(monthlyPlansByMonth).map(([month, plans]) =>
+                                plans.map(plan => (
+                                  <th key={`type-${plan.contentId}`} className="px-4 py-2 text-center text-[11px] font-bold uppercase tracking-[0.1em] border-b border-r border-gray-300 text-gray-700">
                                     {plan.contentType}
                                   </th>
                                 ))
@@ -1249,11 +1342,11 @@ export default function DealerKitPage() {
                                 <td className="px-4 py-3 font-black text-gray-900 border-r border-gray-300 sticky left-0 bg-white z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.05)]">
                                   {dealer.firmName || dealer.contactPerson}
                                 </td>
-                                {Object.entries(monthlyPlansByMonth).map(([month, plans]) => 
+                                {Object.entries(monthlyPlansByMonth).map(([month, plans]) =>
                                   plans.map(plan => {
                                     const tracking = trackingData.find(t => t.dealerId === dealer.dealerId && t.contentId === plan.contentId);
                                     const isDone = tracking?.status === 'Done';
-                                    
+
                                     return (
                                       <td key={`cell-${dealer.dealerId}-${plan.contentId}`} className="px-4 py-3 text-center border-r border-gray-300 min-w-[120px]">
                                         <div className={`flex items-center justify-between gap-2 rounded-xl px-3 py-2 transition ${isDone ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-gray-50 text-gray-500 border border-gray-200'}`}>
@@ -1377,11 +1470,10 @@ export default function DealerKitPage() {
                                 key={lang}
                                 type="button"
                                 onClick={() => setDealerForm((s) => ({ ...s, preferredLanguage: lang }))}
-                                className={`rounded-2xl border px-3 py-2.5 text-sm font-black transition ${
-                                  dealerForm.preferredLanguage === lang
+                                className={`rounded-2xl border px-3 py-2.5 text-sm font-black transition ${dealerForm.preferredLanguage === lang
                                     ? 'border-[var(--theme-primary)] bg-[var(--theme-primary)]/15 text-gray-900'
                                     : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
-                                }`}
+                                  }`}
                               >
                                 {lang}
                               </button>
@@ -1458,7 +1550,7 @@ export default function DealerKitPage() {
                 <div className="flex items-start justify-between gap-4">
                   <div>
                     <p className="text-[11px] font-black uppercase tracking-[0.2em] text-gray-900/75">Monthly plan form</p>
-                    <h3 className="mt-1 text-2xl font-black">Add Monthly Batch</h3>
+                    <h3 className="mt-1 text-2xl font-black">{monthlyModalMode === 'add' ? 'Add Monthly Batch' : 'Edit Monthly Plan'}</h3>
                     <p className="mt-1 text-sm font-medium text-gray-900/80">Track production, approvals and dispatches with a brighter workflow sheet.</p>
                   </div>
                   <button
@@ -1488,42 +1580,90 @@ export default function DealerKitPage() {
                             <th className="px-4 py-3 text-left font-black uppercase tracking-[0.18em] text-[11px]">Content Type</th>
                             <th className="px-4 py-3 text-left font-black uppercase tracking-[0.18em] text-[11px] w-48">Due Date</th>
                             <th className="px-4 py-3 text-left font-black uppercase tracking-[0.18em] text-[11px]">Remarks</th>
+                            <th className="px-4 py-3 text-right font-black uppercase tracking-[0.18em] text-[11px]">Action</th>
                           </tr>
                         </thead>
                         <tbody>
                           {batchItems.map((item, i) => (
                             <tr key={i} className="border-t border-gray-100 hover:bg-gray-50">
                               <td className="px-4 py-3 font-black text-gray-900">{item.contentId || (i + 1)}</td>
-                              <td className="px-4 py-3 text-gray-700">{item.medium}</td>
-                              <td className="px-4 py-3 text-gray-700">{item.contentType}</td>
                               <td className="px-4 py-3">
-                                <InputShell 
-                                  type="date" 
-                                  value={item.dueDate ? String(item.dueDate).slice(0, 10) : ''} 
+                                <InputShell
+                                  value={item.medium}
                                   onChange={(e) => {
                                     const newItems = [...batchItems];
-                                    newItems[i].dueDate = e.target.value;
+                                    newItems[i].medium = e.target.value;
                                     setBatchItems(newItems);
-                                  }} 
+                                  }}
+                                  placeholder="WhatsApp"
                                   className="py-1.5"
                                 />
                               </td>
                               <td className="px-4 py-3">
-                                <InputShell 
-                                  value={item.remarks} 
+                                <InputShell
+                                  value={item.contentType}
+                                  onChange={(e) => {
+                                    const newItems = [...batchItems];
+                                    newItems[i].contentType = e.target.value;
+                                    setBatchItems(newItems);
+                                  }}
+                                  placeholder="Greeting"
+                                  className="py-1.5"
+                                />
+                              </td>
+                              <td className="px-4 py-3">
+                                <InputShell
+                                  type="date"
+                                  value={item.dueDate ? String(item.dueDate).slice(0, 10) : ''}
+                                  onChange={(e) => {
+                                    const newItems = [...batchItems];
+                                    newItems[i].dueDate = e.target.value;
+                                    setBatchItems(newItems);
+                                  }}
+                                  className="py-1.5"
+                                />
+                              </td>
+                              <td className="px-4 py-3">
+                                <InputShell
+                                  value={item.remarks}
                                   onChange={(e) => {
                                     const newItems = [...batchItems];
                                     newItems[i].remarks = e.target.value;
                                     setBatchItems(newItems);
-                                  }} 
-                                  placeholder="Remarks" 
+                                  }}
+                                  placeholder="Remarks"
                                   className="py-1.5"
                                 />
+                              </td>
+                              <td className="px-4 py-3 text-right">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const newItems = [...batchItems];
+                                    newItems.splice(i, 1);
+                                    setBatchItems(newItems);
+                                  }}
+                                  className="rounded-xl border border-rose-200 bg-rose-50 p-1.5 text-rose-700 hover:bg-rose-100"
+                                  title="Remove Row"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </button>
                               </td>
                             </tr>
                           ))}
                         </tbody>
                       </table>
+                      <div className="border-t border-gray-100 bg-gray-50/50 p-3">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setBatchItems([...batchItems, { month: '', medium: '', contentType: '', dueDate: '', remarks: '' }]);
+                          }}
+                          className="inline-flex items-center gap-2 rounded-xl bg-white px-3 py-1.5 text-sm font-black text-gray-700 shadow-sm border border-gray-200 hover:bg-gray-50 hover:text-gray-900 transition"
+                        >
+                          <Plus className="h-4 w-4" /> Add Row
+                        </button>
+                      </div>
                     </div>
                   </SectionCard>
                 </div>
@@ -1634,48 +1774,22 @@ export default function DealerKitPage() {
 
               <div className="bg-gradient-to-b from-white to-emerald-50/30 p-6">
                 <div className="grid gap-5">
-                  <Field label="Status">
-                    <div className="grid grid-cols-2 gap-3">
-                      <button
-                        onClick={() => setTrackingForm(prev => prev ? { ...prev, status: 'Pending' } : null)}
-                        className={`rounded-xl border-2 px-4 py-3 text-sm font-black transition ${
-                          trackingForm.status === 'Pending' 
-                            ? 'border-gray-900 bg-gray-900 text-white shadow-md' 
-                            : 'border-gray-200 bg-white text-gray-500 hover:border-gray-300'
-                        }`}
-                      >
-                        Pending
-                      </button>
-                      <button
-                        onClick={() => setTrackingForm(prev => prev ? { ...prev, status: 'Done' } : null)}
-                        className={`rounded-xl border-2 px-4 py-3 text-sm font-black transition ${
-                          trackingForm.status === 'Done' 
-                            ? 'border-emerald-500 bg-emerald-500 text-white shadow-md shadow-emerald-500/20' 
-                            : 'border-gray-200 bg-white text-gray-500 hover:border-gray-300'
-                        }`}
-                      >
-                        Done
-                      </button>
-                    </div>
-                  </Field>
-                  
-                  <div className={`transition-all duration-300 ${trackingForm.status === 'Done' ? 'opacity-100 max-h-[300px]' : 'opacity-40 max-h-[100px]'}`}>
+                  <div className="transition-all duration-300 opacity-100 max-h-[300px]">
                     <Field label="Content Link (Optional)" hint="Video URL, Google Drive link, etc.">
                       <div className="relative mb-4">
                         <Link2 className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-                        <InputShell 
+                        <InputShell
                           className="pl-11"
                           placeholder="https://..."
                           value={trackingForm.link}
                           onChange={(e) => setTrackingForm(prev => prev ? { ...prev, link: e.target.value } : null)}
-                          disabled={trackingForm.status !== 'Done'}
                         />
                       </div>
                     </Field>
                     <Field label="Done By" hint="Person who completed this task">
                       <div className="relative">
                         <User className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-                        <InputShell 
+                        <InputShell
                           className="pl-11"
                           placeholder="Your Name"
                           value={trackingForm.doneBy}
@@ -1700,6 +1814,40 @@ export default function DealerKitPage() {
           </div>
         )}
       </AnimatePresence>
+
+      {/* Info Modal */}
+      <AnimatePresence>
+        {infoModalOpen && infoModalData && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white w-full max-w-md rounded-2xl shadow-2xl overflow-hidden flex flex-col"
+            >
+              <div className="bg-sky-500 px-6 py-4 flex items-center justify-between">
+                <h2 className="text-xl font-bold text-white">{infoModalData.title}</h2>
+                <button onClick={() => setInfoModalOpen(false)} className="text-white hover:bg-sky-600 p-1.5 rounded-lg transition">
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+              <div className="p-6">
+                <p className="text-gray-700 whitespace-pre-wrap">{infoModalData.remark}</p>
+              </div>
+              <div className="px-6 py-4 border-t border-gray-100 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setInfoModalOpen(false)}
+                  className="px-4 py-2 font-bold text-gray-700 hover:bg-gray-100 rounded-xl transition"
+                >
+                  Close
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
 
       <style jsx>{`
         .hide-scrollbar::-webkit-scrollbar {

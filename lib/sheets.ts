@@ -7682,6 +7682,15 @@ function getDealerKitStatus(dueDate: unknown): DealerKitStatus {
   return 'Scheduled';
 }
 
+function formatDateForFrontend(value: unknown): string {
+  const d = toDate(value);
+  if (!d) return '';
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 function mapDealerKitDealerRow(rowObj: any) {
   return {
     dealerId: rowObj['Dealer ID'] || rowObj.dealer_id || rowObj.id || '',
@@ -7700,19 +7709,10 @@ function mapDealerKitDealerRow(rowObj: any) {
     numberSavedCuboc: rowObj['Number Saved Cuboc?'] || rowObj.number_saved_cuboc || '',
     courierAddressVerified: rowObj['Courier Address Verified'] || rowObj.courier_address_verified || '',
     activeInKit: rowObj['Active in KIT?'] || rowObj['Active KIT?'] || rowObj.active_in_kit || rowObj.active_kit || '',
-    lastOrderDate: rowObj['Last Order Date'] || rowObj.last_order_date || '',
+    lastOrderDate: formatDateForFrontend(rowObj['Last Order Date'] || rowObj.last_order_date),
     potentialProductInterest: rowObj['Potential Product Interest'] || rowObj.Interest || rowObj.potential_product_interest || rowObj.interest || '',
     notes: rowObj.Notes || rowObj.notes || '',
   };
-}
-
-function formatDateForFrontend(value: unknown): string {
-  const d = toDate(value);
-  if (!d) return '';
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
 }
 
 function mapDealerKitMonthlyRow(rowObj: any) {
@@ -7790,11 +7790,11 @@ export async function getDealerKitTracking() {
   }
 }
 
-export async function saveDealerKitTracking(payload: { dealerId: string; contentId: string; status: string; link?: string; doneBy?: string }) {
+export async function saveDealerKitTracking(payload: { dealerId: string; contentId: string; dealerName?: string; month?: string; contentName?: string; status: string; link?: string; doneBy?: string }) {
   try {
     const { sheets, spreadsheetId, rows } = await getDealerKitSheetRows(SHEETS.DEALER_KIT_TRACKING);
     const headers = rows[0]?.map((h: string) => String(h).trim()) || [];
-    const targetHeaders = headers.length ? headers : ['Dealer ID', 'Content ID', 'Status', 'Link', 'Done By', 'Updated At'];
+    const targetHeaders = headers.length ? headers : ['Dealer ID', 'Content ID', 'Dealer Name', 'Month', 'Content Type', 'Status', 'Link', 'Done By', 'Updated At'];
 
     if (!headers.length) {
       await sheets.spreadsheets.values.update({
@@ -7825,6 +7825,9 @@ export async function saveDealerKitTracking(payload: { dealerId: string; content
       const rowMap: Record<string, string> = {
         'Dealer ID': payload.dealerId,
         'Content ID': payload.contentId,
+        'Dealer Name': payload.dealerName || '',
+        'Month': payload.month || '',
+        'Content Type': payload.contentName || '',
         Status: payload.status,
         Link: payload.link || '',
         'Done By': payload.doneBy || '',
@@ -7845,6 +7848,9 @@ export async function saveDealerKitTracking(payload: { dealerId: string; content
       targetHeaders.forEach((h, i) => { rowMap[h] = String(existingRow[i] ?? ''); });
       
       rowMap['Status'] = payload.status;
+      if (payload.dealerName !== undefined) rowMap['Dealer Name'] = payload.dealerName;
+      if (payload.month !== undefined) rowMap['Month'] = payload.month;
+      if (payload.contentName !== undefined) rowMap['Content Type'] = payload.contentName;
       if (payload.link !== undefined) {
         rowMap['Link'] = payload.link;
       }

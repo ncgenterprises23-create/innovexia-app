@@ -21,6 +21,9 @@ export async function POST(request: Request) {
     await saveDealerKitTracking({
       dealerId: body.dealerId,
       contentId: body.contentId,
+      dealerName: body.dealerName,
+      month: body.month,
+      contentName: body.contentName,
       status: body.status,
       link: body.link,
       doneBy: body.doneBy,
