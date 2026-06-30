@@ -52,6 +52,8 @@ export async function POST(request: NextRequest) {
       folderId = GOOGLE_DRIVE_FOLDERS.CHECKLIST_ATTACHMENTS;
     } else if (uploadType === 'order' || uploadType === 'inventory') {
       folderId = GOOGLE_DRIVE_FOLDERS.ORDERS;
+    } else if (uploadType === 'dealer_kit') {
+      folderId = GOOGLE_DRIVE_FOLDERS.DEALER_KIT;
     }
 
     // Generate unique filename

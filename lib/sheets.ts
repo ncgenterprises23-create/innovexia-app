@@ -7731,7 +7731,7 @@ function mapDealerKitMonthlyRow(rowObj: any) {
     draftOwner: rowObj['Draft Owner'] || rowObj.draft_owner || '',
     designOwner: rowObj['Design Owner'] || rowObj.design_owner || '',
     approvalStatus: rowObj['Approval Status'] || rowObj.approval_status || '',
-    fileLink: rowObj['File Link'] || rowObj.file_link || '',
+    fileLink: rowObj['Attachment'] || rowObj.attachment || rowObj['File Link'] || rowObj.file_link || '',
     printQty: toNumber(rowObj['Print Qty'] || rowObj.print_qty),
     courierQty: toNumber(rowObj['Courier Qty'] || rowObj.courier_qty),
     whatsappTarget: toNumber(rowObj['WhatsApp Target'] || rowObj.whatsapp_target),
@@ -7781,6 +7781,7 @@ export async function getDealerKitTracking() {
         contentId: obj['Content ID'] || obj.content_id || '',
         status: obj.Status || obj.status || '',
         link: obj.Link || obj.link || '',
+        comments: obj.Comments || obj.comments || '',
         doneBy: obj['Done By'] || obj.done_by || '',
       };
     });
@@ -7790,11 +7791,11 @@ export async function getDealerKitTracking() {
   }
 }
 
-export async function saveDealerKitTracking(payload: { dealerId: string; contentId: string; dealerName?: string; month?: string; contentName?: string; status: string; link?: string; doneBy?: string }) {
+export async function saveDealerKitTracking(payload: { dealerId: string; contentId: string; dealerName?: string; month?: string; contentName?: string; status: string; link?: string; doneBy?: string; comments?: string }) {
   try {
     const { sheets, spreadsheetId, rows } = await getDealerKitSheetRows(SHEETS.DEALER_KIT_TRACKING);
     const headers = rows[0]?.map((h: string) => String(h).trim()) || [];
-    const targetHeaders = headers.length ? headers : ['Dealer ID', 'Content ID', 'Dealer Name', 'Month', 'Content Type', 'Status', 'Link', 'Done By', 'Updated At'];
+    const targetHeaders = headers.length ? headers : ['Dealer ID', 'Content ID', 'Dealer Name', 'Month', 'Content Type', 'Status', 'Link', 'Done By', 'Comments', 'Updated At'];
 
     if (!headers.length) {
       await sheets.spreadsheets.values.update({
@@ -7821,7 +7822,6 @@ export async function saveDealerKitTracking(payload: { dealerId: string; content
     const updatedAt = new Date().toISOString();
     
     if (rowIndex === -1) {
-      // Append new
       const rowMap: Record<string, string> = {
         'Dealer ID': payload.dealerId,
         'Content ID': payload.contentId,
@@ -7831,6 +7831,7 @@ export async function saveDealerKitTracking(payload: { dealerId: string; content
         Status: payload.status,
         Link: payload.link || '',
         'Done By': payload.doneBy || '',
+        'Comments': payload.comments || '',
         'Updated At': updatedAt,
       };
       const rowData = targetHeaders.map((h) => rowMap[h] ?? '');
@@ -7856,6 +7857,9 @@ export async function saveDealerKitTracking(payload: { dealerId: string; content
       }
       if (payload.doneBy !== undefined) {
         rowMap['Done By'] = payload.doneBy;
+      }
+      if (payload.comments !== undefined) {
+        rowMap['Comments'] = payload.comments;
       }
       rowMap['Updated At'] = updatedAt;
       
@@ -8195,6 +8199,7 @@ export async function createDealerKitMonthlyFrequency(payload: Record<string, un
         'Design Owner': item.designOwner || '',
         'Approval Status': item.approvalStatus || '',
         'File Link': item.fileLink || '',
+        Attachment: item.fileLink || '',
         'Print Qty': item.printQty || '',
         'Courier Qty': item.courierQty || '',
         'WhatsApp Target': item.whatsappTarget || '',
@@ -8249,6 +8254,7 @@ export async function updateDealerKitMonthlyFrequency(contentId: string, updates
       'Design Owner': updates.designOwner,
       'Approval Status': updates.approvalStatus,
       'File Link': updates.fileLink,
+      Attachment: updates.fileLink,
       'Print Qty': updates.printQty,
       'Courier Qty': updates.courierQty,
       'WhatsApp Target': updates.whatsappTarget,

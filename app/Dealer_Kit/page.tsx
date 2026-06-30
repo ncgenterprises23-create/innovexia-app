@@ -85,6 +85,7 @@ interface TrackingStatus {
   contentId: string;
   status: string;
   link: string;
+  comments?: string;
 }
 
 
@@ -310,10 +311,11 @@ export default function DealerKitPage() {
 
   const [monthlyModalOpen, setMonthlyModalOpen] = useState(false);
   const [monthlyModalMode, setMonthlyModalMode] = useState<ModalMode>('add');
-  const [batchItems, setBatchItems] = useState<{ contentId?: string; month: string; medium: string; contentType: string; dueDate: string; remarks: string }[]>([]);
+  const [batchItems, setBatchItems] = useState<{ contentId?: string; month: string; medium: string; contentType: string; dueDate: string; remarks: string; fileLink?: string; isUploading?: boolean }[]>([]);
 
   const [trackingModalOpen, setTrackingModalOpen] = useState(false);
-  const [trackingForm, setTrackingForm] = useState<{ dealerId: string; contentId: string; status: string; link: string; doneBy: string; dealerName: string; contentName: string; month: string } | null>(null);
+  const [trackingForm, setTrackingForm] = useState<{ dealerId: string; contentId: string; status: string; link: string; comments: string; doneBy: string; dealerName: string; contentName: string; month: string } | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
 
   const [saving, setSaving] = useState(false);
   const [deletingKey, setDeletingKey] = useState<string | null>(null);
@@ -482,11 +484,11 @@ export default function DealerKitPage() {
   };
 
   const BATCH_TEMPLATE = [
-    { month: '', medium: 'WhatsApp', contentType: 'Festival Greeting', remarks: 'Send on festival morning or evening before' },
-    { month: '', medium: 'WhatsApp', contentType: 'Video 1', remarks: '30-60 sec; dealer education/product' },
-    { month: '', medium: 'Courier', contentType: 'Insight Letter', remarks: 'Print 10 extra copies' },
-    { month: '', medium: 'Courier', contentType: 'Special Report', remarks: 'Send inside monthly packet' },
-    { month: '', medium: 'WhatsApp', contentType: 'Video 2', remarks: '30-60 sec; send after 5 PM' },
+    { month: '', medium: 'WhatsApp', contentType: 'Festival Greeting', remarks: 'Send on festival morning or evening before', fileLink: '' },
+    { month: '', medium: 'WhatsApp', contentType: 'Video 1', remarks: '30-60 sec; dealer education/product', fileLink: '' },
+    { month: '', medium: 'Courier', contentType: 'Insight Letter', remarks: 'Print 10 extra copies', fileLink: '' },
+    { month: '', medium: 'Courier', contentType: 'Special Report', remarks: 'Send inside monthly packet', fileLink: '' },
+    { month: '', medium: 'WhatsApp', contentType: 'Video 2', remarks: '30-60 sec; send after 5 PM', fileLink: '' },
   ];
 
   const openAddMonthlyModal = () => {
@@ -504,6 +506,7 @@ export default function DealerKitPage() {
       contentType: plan.contentType || '',
       dueDate: plan.dueDate || '',
       remarks: plan.remarks || '',
+      fileLink: plan.fileLink || '',
     }]);
     setMonthlyModalOpen(true);
   };
@@ -567,6 +570,7 @@ export default function DealerKitPage() {
           contentType: item.contentType,
           dueDate: item.dueDate,
           remarks: item.remarks,
+          fileLink: item.fileLink,
         };
       });
 
@@ -665,12 +669,56 @@ export default function DealerKitPage() {
       contentId: plan.contentId,
       status: 'Done',
       link: tracking?.link || '',
+      comments: tracking?.comments || '',
       doneBy: defaultDoneBy,
       dealerName: dealer.firmName || dealer.contactPerson || dealer.dealerId,
       contentName: plan.contentType || '',
       month: plan.dueDate ? new Date(plan.dueDate).toLocaleString('en-US', { month: 'long' }) : '',
     });
     setTrackingModalOpen(true);
+  };
+
+  const handleBatchFileUpload = async (e: React.ChangeEvent<HTMLInputElement>, index: number) => {
+    if (!e.target.files || e.target.files.length === 0) return;
+    const file = e.target.files[0];
+    
+    try {
+      const newItems = [...batchItems];
+      newItems[index] = { ...newItems[index], isUploading: true };
+      setBatchItems(newItems);
+
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('type', 'dealer_kit');
+
+      const response = await fetch('/api/upload', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const result = await response.json();
+        throw new Error(result.error || 'Upload failed');
+      }
+
+      const result = await response.json();
+      setBatchItems(prev => {
+        const updated = [...prev];
+        updated[index] = { ...updated[index], fileLink: result.url, isUploading: false };
+        return updated;
+      });
+      toast.success('File uploaded successfully');
+    } catch (error: any) {
+      console.error('Upload error:', error);
+      toast.error(error.message || 'Failed to upload file');
+      setBatchItems(prev => {
+        const updated = [...prev];
+        if(updated[index]) updated[index] = { ...updated[index], isUploading: false };
+        return updated;
+      });
+    } finally {
+      e.target.value = '';
+    }
   };
 
   const saveTracking = async () => {
@@ -688,6 +736,7 @@ export default function DealerKitPage() {
           contentName: trackingForm.contentName,
           status: trackingForm.status,
           link: trackingForm.link,
+          comments: trackingForm.comments,
           doneBy: trackingForm.doneBy,
         }),
       });
@@ -1288,7 +1337,7 @@ export default function DealerKitPage() {
                             <tr>
                               {Object.entries(monthlyPlansByMonth).map(([month, plans]) =>
                                 plans.map(plan => (
-                                  <th key={`date-${plan.contentId}`} className="px-4 py-2 text-center text-xs font-bold border-b border-r border-gray-300">
+                                  <th key={`date-${plan.contentId}`} className="px-4 py-2 text-center text-xs font-bold border-b border-r border-gray-300 bg-sky-50">
                                     {formatDate(plan.dueDate)}
                                   </th>
                                 ))
@@ -1297,23 +1346,26 @@ export default function DealerKitPage() {
                             <tr>
                               {Object.entries(monthlyPlansByMonth).map(([month, plans]) =>
                                 plans.map(plan => (
-                                  <th key={`medium-${plan.contentId}`} className="px-4 py-2 border-b border-r border-gray-300">
+                                  <th key={`medium-${plan.contentId}`} className="px-4 py-2 border-b border-r border-gray-300 bg-rose-50">
                                     <div className="flex items-center justify-between gap-2">
                                       <span className="text-[11px] font-bold tracking-[0.1em] text-gray-500 uppercase">{plan.medium}</span>
                                       <div className="flex items-center gap-0.5">
-                                        <button 
-                                          onClick={() => {
-                                            setInfoModalData({
-                                              title: `Remarks - ${plan.contentType}`,
-                                              remark: plan.remarks || 'No remarks provided.'
-                                            });
-                                            setInfoModalOpen(true);
-                                          }} 
-                                          className="p-1 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition" 
-                                          title="View Remarks"
-                                        >
-                                          <Info className="h-3 w-3" />
-                                        </button>
+                                        {plan.fileLink && (
+                                          <a href={plan.fileLink} target="_blank" rel="noreferrer" className="p-1 rounded-md text-emerald-500 hover:text-emerald-700 hover:bg-emerald-50 transition" title="View Attachment">
+                                            <Link2 className="h-3 w-3" />
+                                          </a>
+                                        )}
+                                        {plan.remarks && (
+                                          <div className="group relative flex items-center">
+                                            <div className="p-1 rounded-md text-sky-500 hover:text-sky-700 hover:bg-sky-50 transition cursor-help">
+                                              <Info className="h-3 w-3" />
+                                            </div>
+                                            <div className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 -translate-x-1/2 w-48 opacity-0 transition-opacity group-hover:opacity-100 bg-gray-900 text-white text-[11px] font-normal normal-case tracking-normal rounded-lg py-2 px-3 text-center shadow-xl whitespace-normal">
+                                              {plan.remarks}
+                                              <div className="absolute top-full left-1/2 -ml-1.5 border-[6px] border-transparent border-t-gray-900"></div>
+                                            </div>
+                                          </div>
+                                        )}
                                         <button onClick={() => openEditMonthlyModal(plan)} className="p-1 rounded-md text-sky-500 hover:text-sky-700 hover:bg-sky-50 transition" title="Edit Plan">
                                           <Pencil className="h-3 w-3" />
                                         </button>
@@ -1329,7 +1381,7 @@ export default function DealerKitPage() {
                             <tr>
                               {Object.entries(monthlyPlansByMonth).map(([month, plans]) =>
                                 plans.map(plan => (
-                                  <th key={`type-${plan.contentId}`} className="px-4 py-2 text-center text-[11px] font-bold uppercase tracking-[0.1em] border-b border-r border-gray-300 text-gray-700">
+                                  <th key={`type-${plan.contentId}`} className="px-4 py-2 text-center text-[11px] font-bold uppercase tracking-[0.1em] border-b border-r border-gray-300 text-gray-700 bg-amber-50">
                                     {plan.contentType}
                                   </th>
                                 ))
@@ -1356,6 +1408,17 @@ export default function DealerKitPage() {
                                               <a href={tracking.link} target="_blank" rel="noreferrer" className="text-emerald-600 hover:text-emerald-800 hover:bg-emerald-100 p-1 rounded-md" title="View Video/Link">
                                                 <Link2 className="h-3.5 w-3.5" />
                                               </a>
+                                            )}
+                                            {tracking?.comments && (
+                                              <div className="group relative flex items-center">
+                                                <div className="text-amber-500 hover:text-amber-700 hover:bg-amber-50 p-1 rounded-md cursor-help">
+                                                  <MessageSquare className="h-3.5 w-3.5" />
+                                                </div>
+                                                <div className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 -translate-x-1/2 w-48 opacity-0 transition-opacity group-hover:opacity-100 bg-gray-900 text-white text-[11px] font-normal normal-case tracking-normal rounded-lg py-2 px-3 text-center shadow-xl whitespace-normal">
+                                                  {tracking.comments}
+                                                  <div className="absolute top-full left-1/2 -ml-1.5 border-[6px] border-transparent border-t-gray-900"></div>
+                                                </div>
+                                              </div>
                                             )}
                                             <button
                                               onClick={() => openTrackingModal(dealer, plan, tracking)}
@@ -1580,6 +1643,7 @@ export default function DealerKitPage() {
                             <th className="px-4 py-3 text-left font-black uppercase tracking-[0.18em] text-[11px]">Content Type</th>
                             <th className="px-4 py-3 text-left font-black uppercase tracking-[0.18em] text-[11px] w-48">Due Date</th>
                             <th className="px-4 py-3 text-left font-black uppercase tracking-[0.18em] text-[11px]">Remarks</th>
+                            <th className="px-4 py-3 text-left font-black uppercase tracking-[0.18em] text-[11px] w-24">Upload</th>
                             <th className="px-4 py-3 text-right font-black uppercase tracking-[0.18em] text-[11px]">Action</th>
                           </tr>
                         </thead>
@@ -1634,6 +1698,40 @@ export default function DealerKitPage() {
                                   placeholder="Remarks"
                                   className="py-1.5"
                                 />
+                              </td>
+                              <td className="px-4 py-3">
+                                {item.fileLink ? (
+                                  <div className="flex items-center gap-1 bg-emerald-50 rounded border border-emerald-200 px-2 py-1">
+                                    <a href={item.fileLink} target="_blank" rel="noreferrer" className="text-emerald-600 hover:text-emerald-800" title="View File">
+                                      <Link2 className="h-4 w-4" />
+                                    </a>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const newItems = [...batchItems];
+                                        newItems[i].fileLink = '';
+                                        setBatchItems(newItems);
+                                      }}
+                                      className="text-rose-500 hover:text-rose-700 p-1"
+                                      title="Remove"
+                                    >
+                                      <Trash2 className="h-3 w-3" />
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <div className="relative">
+                                    <input
+                                      type="file"
+                                      onChange={(e) => handleBatchFileUpload(e, i)}
+                                      className="absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0"
+                                      disabled={item.isUploading}
+                                    />
+                                    <div className={`flex items-center justify-center gap-1 rounded-xl border border-dashed border-gray-300 bg-gray-50 px-2 py-1.5 text-xs font-semibold text-gray-500 transition ${item.isUploading ? 'opacity-50' : 'hover:border-violet-300 hover:bg-violet-50 hover:text-violet-600'}`}>
+                                      {item.isUploading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />}
+                                      {item.isUploading ? '...' : 'Upload'}
+                                    </div>
+                                  </div>
+                                )}
                               </td>
                               <td className="px-4 py-3 text-right">
                                 <button
@@ -1774,18 +1872,19 @@ export default function DealerKitPage() {
 
               <div className="bg-gradient-to-b from-white to-emerald-50/30 p-6">
                 <div className="grid gap-5">
-                  <div className="transition-all duration-300 opacity-100 max-h-[300px]">
-                    <Field label="Content Link (Optional)" hint="Video URL, Google Drive link, etc.">
-                      <div className="relative mb-4">
-                        <Link2 className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-                        <InputShell
-                          className="pl-11"
-                          placeholder="https://..."
-                          value={trackingForm.link}
-                          onChange={(e) => setTrackingForm(prev => prev ? { ...prev, link: e.target.value } : null)}
+                  <div className="transition-all duration-300 opacity-100 flex flex-col gap-5">
+                    <Field label="Comments Received" hint="Any comments received from dealer">
+                      <div className="relative">
+                        <MessageSquare className="absolute left-4 top-3 h-4 w-4 text-gray-400" />
+                        <TextAreaShell
+                          className="pl-11 min-h-[80px]"
+                          placeholder="Comments..."
+                          value={trackingForm.comments}
+                          onChange={(e) => setTrackingForm(prev => prev ? { ...prev, comments: e.target.value } : null)}
                         />
                       </div>
                     </Field>
+
                     <Field label="Done By" hint="Person who completed this task">
                       <div className="relative">
                         <User className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />

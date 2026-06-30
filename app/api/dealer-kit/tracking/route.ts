@@ -27,6 +27,7 @@ export async function POST(request: Request) {
       status: body.status,
       link: body.link,
       doneBy: body.doneBy,
+      comments: body.comments,
     });
 
     return NextResponse.json({ success: true });
