@@ -33,8 +33,7 @@ export default function Sidebar({ isOpen, setIsOpen }: SidebarProps) {
         { label: 'Todo', icon: 'check', href: '/todo', roles: ['Admin', 'Manager', 'Employee'] },
       ]
     },
-    { label: 'MOM', icon: 'document', href: '/mom', roles: ['Admin', 'Manager'] },
-    { label: 'Lead to Sales', icon: 'trending', href: '/lead-to-sales', roles: ['Admin', 'Manager', 'Employee'] },
+
     {
       label: 'CRM', icon: 'clipboard', roles: ['Admin', 'Manager'], children: [
         { label: 'CRM', icon: 'users', href: '/crm', roles: ['Admin', 'Manager'] },
@@ -70,7 +69,7 @@ export default function Sidebar({ isOpen, setIsOpen }: SidebarProps) {
       roles: ['Admin', 'Manager'],
       children: [
         { label: 'Export FMS', icon: 'clipboard', href: '/export-fms', roles: ['Admin', 'Manager'] },
-        { label: 'Sales Export FMS', icon: 'package', href: '/sales-export-purchase-enquiry-fms', roles: ['Admin', 'Manager'] },
+
         { label: 'IGST Refund', icon: 'currency-dollar', href: '/igst-refund', roles: ['Admin', 'Manager'] },
       ]
     },

@@ -589,7 +589,7 @@ export default function Dashboard() {
           <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
             {[
               { label: 'Delegation', icon: '📋', color: 'from-blue-500 to-blue-700', link: '/delegation', desc: 'Task Flow' },
-              { label: 'Sales CRM', icon: '💼', color: 'from-indigo-500 to-indigo-700', link: '/lead-to-sales', desc: 'Leads' },
+
               { label: 'NBD Ops', icon: '⚙️', color: 'from-emerald-500 to-teal-700', link: '/nbd', desc: 'Operations' },
               { label: 'Team', icon: '👥', color: 'from-rose-500 to-pink-700', link: '/users', desc: 'Users' },
               { label: 'Collection', icon: '💳', color: 'from-amber-500 to-orange-700', link: '/collection', desc: 'Ledger' },

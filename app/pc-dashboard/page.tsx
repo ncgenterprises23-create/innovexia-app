@@ -63,7 +63,7 @@ export default function PCDashboardPage() {
                 '/api/rm-defects', '/api/rm-defects-config',
                 '/api/fms-product-search', '/api/fms-product-search-config',
                 '/api/export-fms', '/api/export-fms-config',
-                '/api/sales-export-purchase-enquiry-fms', '/api/sales-export-purchase-enquiry-fms-config',
+
                 '/api/igst-refund', '/api/igst-refund-config',
                 '/api/collection', '/api/collection/doer',
                 '/api/payable', '/api/payable/doer'
@@ -187,8 +187,7 @@ export default function PCDashboardPage() {
             parseFms('RM Defects', data[15], data[16], 11, 'rmdefect');
             parseFms('New Product Search', data[17], data[18], 11, 'productsearch');
             parseFms('Export FMS', data[19], data[20], 11, 'exportfms');
-            parseFms('Sales Export FMS', data[21], data[22], 11, 'salesexportfms');
-            parseFms('IGST Refund', data[23], data[24], 11, 'igstrefund');
+            parseFms('IGST Refund', data[21], data[22], 11, 'igstrefund');
 
             // Parse Collection & Payable
             const parseCollectionPayable = (moduleName: string, ledgerData: any, doerData: any, typeStr: string) => {
@@ -247,8 +246,8 @@ export default function PCDashboardPage() {
                 });
             };
 
-            parseCollectionPayable('Collection', data[25], data[26], 'collection');
-            parseCollectionPayable('Payable', data[27], data[28], 'payable');
+            parseCollectionPayable('Collection', data[23], data[24], 'collection');
+            parseCollectionPayable('Payable', data[25], data[26], 'payable');
 
             setTasks(allTasks);
             categorizeTasks(allTasks);
@@ -294,7 +293,7 @@ export default function PCDashboardPage() {
         console.log('--- PC DASHBOARD TASK CATEGORIZATION ---');
         console.log('All Tasks Length:', allTasks.length);
         console.log('Job Work FMS:', allTasks.filter(t => t.sourceModule === 'Job Work').length);
-        console.log('Sales Export FMS:', allTasks.filter(t => t.sourceModule === 'Sales Export FMS').length);
+
         console.log('Collection:', allTasks.filter(t => t.sourceModule === 'Collection').length);
         console.log('Payable:', allTasks.filter(t => t.sourceModule === 'Payable').length);
         
@@ -349,7 +348,7 @@ export default function PCDashboardPage() {
         const ALL_SYSTEMS = [
             'Delegation', 'Checklist', 'Todo', 'O2D', 'CRM', 'Client Complain', 
             'Purchase FMS', 'Factory Req.', 'Job Work', 'RM Defects', 
-            'New Product Search', 'Export FMS', 'Sales Export FMS', 'IGST Refund',
+            'New Product Search', 'Export FMS', 'IGST Refund',
             'Collection', 'Payable'
         ];
         const statsMap = new Map<string, { daily: number, delayed: number, pending: number }>();

@@ -181,7 +181,7 @@ export default function ScorePage() {
                 jwRes, jwCfgRes,
                 rmdRes, rmdCfgRes,
                 exportRes, exportCfgRes,
-                salesExportEnquiryRes, salesExportEnquiryCfgRes,
+
                 collRes, collDoerRes,
                 payRes, payDoerRes
             ] = await Promise.all([
@@ -204,8 +204,7 @@ export default function ScorePage() {
                 fetch('/api/rm-defects-config', { headers }),
                 fetch('/api/export-fms', { headers }),
                 fetch('/api/export-fms-config', { headers }),
-                fetch('/api/sales-export-purchase-enquiry-fms', { headers }),
-                fetch('/api/sales-export-purchase-enquiry-fms-config', { headers }),
+
                 fetch('/api/collection', { headers }),
                 fetch('/api/collection/doer', { headers }),
                 fetch('/api/payable', { headers }),
@@ -221,7 +220,7 @@ export default function ScorePage() {
                 jwData, jwCfgData,
                 rmdData, rmdCfgData,
                 exportData, exportCfgData,
-                salesExportEnquiryData, salesExportEnquiryCfgData,
+
                 collData, collDoerData,
                 payData, payDoerData
             ] = await Promise.all([
@@ -233,7 +232,7 @@ export default function ScorePage() {
                 jwRes.json(), jwCfgRes.json(),
                 rmdRes.json(), rmdCfgRes.json(),
                 exportRes.json(), exportCfgRes.json(),
-                salesExportEnquiryRes.json(), salesExportEnquiryCfgRes.json(),
+
                 collRes.json(), collDoerRes.json(),
                 payRes.json(), payDoerRes.json()
             ]);
@@ -265,8 +264,7 @@ export default function ScorePage() {
             setRMDefectConfig(rmdCfgData.config && Array.isArray(rmdCfgData.config) ? rmdCfgData.config : []);
 
             setExportFmsConfig(exportCfgData.config && Array.isArray(exportCfgData.config) ? exportCfgData.config : []);
-            setAllSalesExportEnquiryData(extractData(salesExportEnquiryData));
-            setSalesExportEnquiryConfig(salesExportEnquiryCfgData.config && Array.isArray(salesExportEnquiryCfgData.config) ? salesExportEnquiryCfgData.config : []);
+
 
             setAllCollectionData(collData.data || []);
             setCollectionDoer(collDoerData.doer || '');
@@ -944,7 +942,7 @@ export default function ScorePage() {
             jobwork: 'Job Work',
             rmdefect: 'RM Defects',
             exportfms: 'Export FMS',
-            salesexportenquiry: 'Sales Export Purchase Enquiry FMS',
+
             collection: 'Collections',
             payable: 'Amount Payable'
         };
