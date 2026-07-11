@@ -1744,7 +1744,7 @@ function ChecklistContent() {
 
               <div className="overflow-x-auto">
                 <table className="w-full">
-                  <thead>
+                  <thead className="whitespace-nowrap">
                     <tr className="bg-[var(--theme-primary)] border-b border-gray-200 dark:border-gray-600">
                       <th onClick={() => handleSort('id')} className="px-6 py-4 text-left text-sm font-semibold text-gray-900 cursor-pointer hover:bg-[var(--theme-secondary)] transition-colors">
                         <div className="flex items-center gap-2">
@@ -1754,7 +1754,7 @@ function ChecklistContent() {
                           )}
                         </div>
                       </th>
-                      <th onClick={() => handleSort('question')} className="px-6 py-4 text-left text-sm font-semibold text-gray-900 cursor-pointer hover:bg-[var(--theme-secondary)] transition-colors">
+                      <th onClick={() => handleSort('question')} className="px-6 py-4 text-left text-sm font-semibold text-gray-900 cursor-pointer hover:bg-[var(--theme-secondary)] transition-colors w-full min-w-[400px]">
                         <div className="flex items-center gap-2">
                           Question/Task
                           {sortColumn === 'question' && (
@@ -1822,7 +1822,7 @@ function ChecklistContent() {
                       <th className="px-6 py-4 text-left text-sm font-semibold text-gray-900">Actions</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+                  <tbody className="divide-y divide-gray-200 dark:divide-gray-700 whitespace-nowrap">
                     {paginatedChecklists.length === 0 ? (
                       <tr>
                         <td colSpan={11} className="px-6 py-12 text-center">
@@ -1850,7 +1850,7 @@ function ChecklistContent() {
                             </span>
                           </td>
                           <td className="px-6 py-4">
-                            <p className="font-semibold text-gray-900 dark:text-white max-w-xs truncate">
+                            <p className="font-semibold text-gray-900 dark:text-white whitespace-normal break-words">
                               {checklist.question}
                             </p>
                           </td>
@@ -2385,12 +2385,12 @@ function ChecklistContent() {
 
               <div className="overflow-x-auto">
                 <table className="w-full">
-                  <thead>
+                  <thead className="whitespace-nowrap">
                     <tr className="bg-[var(--theme-primary)] border-b border-gray-200 dark:border-gray-600">
                       <th className="px-6 py-4 text-left text-sm font-semibold text-gray-900">
                         Group ID
                       </th>
-                      <th className="px-6 py-4 text-left text-sm font-semibold text-gray-900">
+                      <th className="px-6 py-4 text-left text-sm font-semibold text-gray-900 w-full min-w-[400px]">
                         Question/Task
                       </th>
                       <th className="px-6 py-4 text-left text-sm font-semibold text-gray-900">
@@ -2418,7 +2418,7 @@ function ChecklistContent() {
                       <th className="px-6 py-4 text-left text-sm font-semibold text-gray-900">Actions</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+                  <tbody className="divide-y divide-gray-200 dark:divide-gray-700 whitespace-nowrap">
                     {paginatedChecklists.length === 0 ? (
                       <tr>
                         <td colSpan={11} className="px-6 py-12 text-center">
@@ -2446,7 +2446,7 @@ function ChecklistContent() {
                             </span>
                           </td>
                           <td className="px-6 py-4">
-                            <p className="font-semibold text-gray-900 dark:text-white max-w-xs truncate">
+                            <p className="font-semibold text-gray-900 dark:text-white whitespace-normal break-words">
                               {checklist.question}
                             </p>
                           </td>

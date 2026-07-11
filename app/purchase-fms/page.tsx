@@ -35,6 +35,7 @@ interface PurchaseFMSOrder {
     Actual_5?: string | null;
     Status_5?: string | null;
     Cancelled?: string | null;
+    Recieved_Qty_4?: string | number;
 }
 
 const STAGES = [
@@ -97,7 +98,7 @@ export default function PurchaseFMSPage() {
     const [appliedFilters, setAppliedFilters] = useState({ Item_name: '', Party_Name: '', Po_No: '' });
     const [selectedItems, setSelectedItems] = useState<Set<number>>(new Set());
     const [itemsToMarkDone, setItemsToMarkDone] = useState<Set<number>>(new Set());
-    const [bulkUpdates, setBulkUpdates] = useState<Record<number, { Remark?: string, Next_Follow_Up_Date?: string, Lead_Time_2?: string }>>({});
+    const [bulkUpdates, setBulkUpdates] = useState<Record<number, { Remark?: string, Next_Follow_Up_Date?: string, Lead_Time_2?: string, Recieved_Qty_4?: string | number }>>({});
 
     const toast = useToast();
     const loader = useLoader();
@@ -474,6 +475,9 @@ export default function PurchaseFMSPage() {
                 if (rowUpdate.Lead_Time_2 !== undefined) {
                     updatedData.Lead_Time_2 = rowUpdate.Lead_Time_2;
                 }
+                if (rowUpdate.Recieved_Qty_4 !== undefined) {
+                    updatedData.Recieved_Qty_4 = rowUpdate.Recieved_Qty_4;
+                }
 
                 // Dynamic Step 3 Completion Logic: 
                 // If in Step 3 and a next follow-up date is provided, we NEVER mark it as done, even if toggled.
@@ -481,6 +485,15 @@ export default function PurchaseFMSPage() {
                 let isMarkingDone = itemsToMarkDone.has(order.id);
                 if (currentStep === 3 && rowUpdate.Next_Follow_Up_Date) {
                     isMarkingDone = false;
+                }
+                
+                // Dynamic Step 4 Completion Logic:
+                if (currentStep === 4) {
+                    const currentRecievedQty = Number(rowUpdate.Recieved_Qty_4 ?? order.Recieved_Qty_4 ?? 0);
+                    const moq = Number(order.MOQ ?? 0);
+                    if (currentRecievedQty !== moq) {
+                        isMarkingDone = false;
+                    }
                 }
 
                 if (isMarkingDone && currentStep <= 4) {
@@ -1204,6 +1217,8 @@ export default function PurchaseFMSPage() {
                                                     </th>
                                                     <th className="px-6 py-4 text-[11px] font-black text-white uppercase tracking-[0.2em] whitespace-nowrap text-center">ADC</th>
                                                     <th className="px-6 py-4 text-[11px] font-black text-white uppercase tracking-[0.2em] whitespace-nowrap text-center">MOQ</th>
+                                                    <th className="px-6 py-4 text-[11px] font-black text-green-200 uppercase tracking-[0.2em] whitespace-nowrap text-center bg-black/10">Total Recv</th>
+                                                    <th className="px-6 py-4 text-[11px] font-black text-orange-200 uppercase tracking-[0.2em] whitespace-nowrap text-center bg-black/10">Pending</th>
                                                     <th className="px-6 py-4 text-[11px] font-black text-white uppercase tracking-[0.2em] whitespace-nowrap text-center">Po No.</th>
                                                     {STAGES.map((s) => (
                                                         <Fragment key={s.step}>
@@ -1293,6 +1308,12 @@ export default function PurchaseFMSPage() {
                                                             </td>
                                                             <td className="px-6 py-5 border-r border-slate-50 dark:border-slate-700/50 text-center font-bold text-[var(--theme-primary)] text-[13px]">
                                                                 {order.MOQ}
+                                                            </td>
+                                                            <td className="px-6 py-5 border-r border-slate-50 dark:border-slate-700/50 text-center font-bold text-green-600 dark:text-green-400 text-[13px] bg-green-50/50 dark:bg-green-900/10">
+                                                                {order.Recieved_Qty_4 || 0}
+                                                            </td>
+                                                            <td className="px-6 py-5 border-r border-slate-50 dark:border-slate-700/50 text-center font-bold text-orange-600 dark:text-orange-400 text-[13px] bg-orange-50/50 dark:bg-orange-900/10">
+                                                                {Math.max(0, Number(order.MOQ || 0) - Number(order.Recieved_Qty_4 || 0))}
                                                             </td>
                                                             <td className="px-6 py-5 border-r border-slate-50 dark:border-slate-700/50 text-[12px] font-bold text-slate-400 uppercase tracking-widest leading-none text-center">
                                                                 {order['Po No.']}
@@ -1496,7 +1517,7 @@ export default function PurchaseFMSPage() {
                                                                 </div>
 
                                                                 {/* Item-specific inputs based on Step */}
-                                                                {(stepNum === 2 || stepNum === 3) && (
+                                                                {(stepNum === 2 || stepNum === 3 || stepNum === 4) && (
                                                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1 border-t border-slate-50 dark:border-slate-700/50 mt-1">
                                                                         {stepNum === 2 && (
                                                                             <div className="col-span-full">
@@ -1585,6 +1606,22 @@ export default function PurchaseFMSPage() {
                                                                                         />
                                                                                     </div>
                                                                                 </div>
+                                                                            </div>
+                                                                        )}
+                                                                        
+                                                                        {stepNum === 4 && (
+                                                                            <div className="col-span-full">
+                                                                                <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1 block">Received Qty (MOQ: {item.MOQ || 0})</label>
+                                                                                <input
+                                                                                    type="number"
+                                                                                    value={bulkUpdates[item.id]?.Recieved_Qty_4 ?? (item.Recieved_Qty_4 || '')}
+                                                                                    onChange={(e) => setBulkUpdates(prev => ({
+                                                                                        ...prev,
+                                                                                        [item.id]: { ...prev[item.id], Recieved_Qty_4: e.target.value }
+                                                                                    }))}
+                                                                                    className="w-full px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-[11px] font-bold text-slate-900 dark:text-white outline-none focus:ring-1 focus:ring-[var(--theme-primary)]"
+                                                                                    placeholder="Enter received qty..."
+                                                                                />
                                                                             </div>
                                                                         )}
                                                                     </div>
