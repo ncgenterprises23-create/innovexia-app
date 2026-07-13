@@ -31,7 +31,7 @@ interface RMDefect {
     Planned_3?: string; Actual_3?: string; Status_3?: string;
     Planned_4?: string; Actual_4?: string; Status_4?: string;
     Planned_5?: string; Actual_5?: string; Status_5?: string;
-    Planned_6?: string; Actual_6?: string; Status_6?: string;
+    Planned_6?: string; Actual_6?: string; Status_6?: string; Lead_Time_6?: string | number;
     Planned_7?: string; Actual_7?: string; Status_7?: string;
     Planned_8?: string; Actual_8?: string; Status_8?: string;
     Planned_9?: string; Actual_9?: string; Status_9?: string;
@@ -109,6 +109,7 @@ export default function RMDefectsPage() {
     const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
     const [itemsToMarkDone, setItemsToMarkDone] = useState<Set<string>>(new Set());
     const [isBulkUpdateModalOpen, setIsBulkUpdateModalOpen] = useState(false);
+    const [leadTimes, setLeadTimes] = useState<Record<string, number>>({});
 
     const [stepConfigs, setStepConfigs] = useState<StepConfig[]>([]);
     const [systemUsers, setSystemUsers] = useState<any[]>([]);
@@ -348,7 +349,19 @@ export default function RMDefectsPage() {
                     updatedData[`Actual_${currentStep}`] = now;
                     updatedData[`Status_${currentStep}`] = 'Completed';
 
-                    if (currentStep < 9) {
+                    if (currentStep === 6) {
+                        const days = leadTimes[item.id] || 0;
+                        updatedData['Lead_Time_6'] = days;
+                        // For step 6, step 7 is planned based on Lead_Time_6 in days
+                        if (days > 0) {
+                            const nextPlanned = getNextPlannedTime(new Date(now), days, 'days').toISOString();
+                            updatedData[`Planned_7`] = nextPlanned;
+                        } else {
+                            const nextConfig = stepConfigs.find(c => c.step === 7);
+                            const nextPlanned = getNextPlannedTime(new Date(now), nextConfig?.tatValue || 24, nextConfig?.tatUnit || 'hours').toISOString();
+                            updatedData[`Planned_7`] = nextPlanned;
+                        }
+                    } else if (currentStep < 9) {
                         const nextStep = currentStep + 1;
                         const nextConfig = stepConfigs.find(c => c.step === nextStep);
                         const nextPlanned = getNextPlannedTime(new Date(now), nextConfig?.tatValue || 24, nextConfig?.tatUnit || 'hours').toISOString();
@@ -922,6 +935,11 @@ export default function RMDefectsPage() {
                                                                         {delay.text}
                                                                     </div>
                                                                 )}
+                                                                {s.step === 6 && item.Lead_Time_6 && (
+                                                                    <div className="mt-1 text-[9px] text-center font-black text-[var(--theme-primary)] bg-[var(--theme-primary)]/10 rounded-md px-1.5 py-0.5 w-full uppercase tracking-widest border border-[var(--theme-primary)]/20 shadow-sm">
+                                                                        Lead: {item.Lead_Time_6} Day{Number(item.Lead_Time_6) !== 1 ? 's' : ''}
+                                                                    </div>
+                                                                )}
                                                             </div>
                                                         </td>
                                                     );
@@ -1165,6 +1183,19 @@ export default function RMDefectsPage() {
                                                                         <div className="w-11 h-6 bg-gray-200 dark:bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-emerald-500"></div>
                                                                     </label>
                                                                 </div>
+                                                                {stage.step === 6 && itemsToMarkDone.has(item.id) && (
+                                                                    <div className="mt-2">
+                                                                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-1">Lead Time (Days) <span className="text-red-500">*</span></label>
+                                                                        <input 
+                                                                            type="number"
+                                                                            min="0"
+                                                                            value={leadTimes[item.id] || ''}
+                                                                            onChange={(e) => setLeadTimes({ ...leadTimes, [item.id]: parseInt(e.target.value) || 0 })}
+                                                                            className="w-full px-3 py-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg text-xs outline-none focus:border-[var(--theme-primary)] transition-all"
+                                                                            placeholder="Enter lead time..."
+                                                                        />
+                                                                    </div>
+                                                                )}
                                                             </div>
                                                         </div>
                                                     ))}
