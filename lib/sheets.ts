@@ -35,6 +35,7 @@ export const SPREADSHEET_IDS = {
   FMS_PRODUCT_SEARCH: '150XDtKwHl3TjMj8INwFIAcMVoOSWjydPkHxJkiE7ZXM',
   SALES_EXPORT_PURCHASE_ENQUIRY_FMS: '1NEy9qSv-9fCGVOjkW9cfgVZNdJbta79lcxIJ6xe_msE',
   IGST_REFUND: '1pmf0FcgLs_U_883CGwl6KWkwfg4a9Cq1RhVfMpijqh0',
+  DIY_REQUIREMENT: '1yCL1jFQtPqJLlSY_V92jY5WqPc0JZEDZtX-rmB93Ous',
 };
 
 // Backward compatibility
@@ -84,6 +85,8 @@ const SHEETS = {
   SALES_EXPORT_PURCHASE_ENQUIRY_FMS_CONFIG: 'Step Configuration',
   IGST_REFUND: 'IGST',
   IGST_REFUND_CONFIG: 'Step Configuration',
+  DIY_REQUIREMENT: 'Diy Requirement',
+  DIY_REQUIREMENT_CONFIG: 'Step Configuration',
 };
 
 // Initialize Google Sheets API client with OAuth
@@ -8488,3 +8491,327 @@ export async function deleteDealerKitFestival(id: string) {
   }
 }
 
+
+
+// DIY REQUIREMENT OPERATIONS
+
+export async function getDiyRequirementConfig() {
+  try {
+    const sheets = await getGoogleSheetsClient();
+    const sheetName = SHEETS.DIY_REQUIREMENT_CONFIG;
+
+    try {
+      const response = await sheets.spreadsheets.values.get({
+        spreadsheetId: SPREADSHEET_IDS.DIY_REQUIREMENT,
+        range: `${sheetName}!A:E`,
+        valueRenderOption: 'UNFORMATTED_VALUE',
+      });
+
+      const rows = response.data.values;
+      if (!rows || rows.length <= 1) return [];
+
+      const headers = rows[0];
+      const dataRows = rows.slice(1);
+
+      return dataRows.map(row => ({
+        step: parseInt(row[0]),
+        stepName: row[1],
+        doerName: row[2],
+        tatValue: parseInt(row[3]),
+        tatUnit: row[4]
+      })).sort((a, b) => a.step - b.step);
+    } catch (error: any) {
+      if (error.code === 400 || (error.message && error.message.includes('Unable to parse range'))) {
+        return [];
+      }
+      throw error;
+    }
+  } catch (error) {
+    console.error('Error fetching Diy Requirement step config:', error);
+    return [];
+  }
+}
+
+export async function updateDiyRequirementConfig(config: any[]) {
+  try {
+    const sheets = await getGoogleSheetsClient();
+    const sheetName = SHEETS.DIY_REQUIREMENT_CONFIG;
+
+    const headers = ['step', 'step_name', 'doer_name', 'tat_value', 'tat_unit'];
+    const rows = [
+      headers,
+      ...config.map(c => [c.step, c.stepName, c.doerName, c.tatValue, c.tatUnit])
+    ];
+
+    try {
+      await sheets.spreadsheets.values.get({
+        spreadsheetId: SPREADSHEET_IDS.DIY_REQUIREMENT,
+        range: `${sheetName}!A1`,
+      });
+    } catch (error: any) {
+      if (error.code === 400 || (error.message && error.message.includes('Unable to parse range'))) {
+        await sheets.spreadsheets.batchUpdate({
+          spreadsheetId: SPREADSHEET_IDS.DIY_REQUIREMENT,
+          requestBody: {
+            requests: [{
+              addSheet: {
+                properties: { title: sheetName }
+              }
+            }]
+          }
+        });
+      }
+    }
+
+    await sheets.spreadsheets.values.clear({
+      spreadsheetId: SPREADSHEET_IDS.DIY_REQUIREMENT,
+      range: `${sheetName}!A:E`,
+    });
+
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SPREADSHEET_IDS.DIY_REQUIREMENT,
+      range: `${sheetName}!A1`,
+      valueInputOption: 'RAW',
+      requestBody: { values: rows },
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error('Error updating Diy Requirement step config:', error);
+    throw error;
+  }
+}
+
+export async function getDiyRequirements() {
+  try {
+    const sheets = await getGoogleSheetsClient();
+    const sheetName = SHEETS.DIY_REQUIREMENT;
+
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_IDS.DIY_REQUIREMENT,
+      range: `${sheetName}!A:AZ`,
+      valueRenderOption: 'UNFORMATTED_VALUE',
+    });
+
+    const rows = response.data.values;
+    if (!rows || rows.length === 0) return [];
+
+    const headers = rows[0];
+    const dataRows = rows.slice(1);
+
+    return dataRows
+      .map(row => rowToObject(headers, row))
+      .filter(o => o.id)
+      .sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
+  } catch (error) {
+    console.error('Error fetching Diy Requirements:', error);
+    throw error;
+  }
+}
+
+export async function createDiyRequirement(data: any) {
+  try {
+    const sheets = await getGoogleSheetsClient();
+    const sheetName = SHEETS.DIY_REQUIREMENT;
+
+    const [headerResponse, allData, configRes] = await Promise.all([
+      sheets.spreadsheets.values.get({
+        spreadsheetId: SPREADSHEET_IDS.DIY_REQUIREMENT,
+        range: `${sheetName}!A1:AZ1`,
+        valueRenderOption: 'UNFORMATTED_VALUE',
+      }),
+      sheets.spreadsheets.values.get({
+        spreadsheetId: SPREADSHEET_IDS.DIY_REQUIREMENT,
+        range: `${sheetName}!A:A`,
+        valueRenderOption: 'UNFORMATTED_VALUE',
+      }),
+      sheets.spreadsheets.values.get({
+        spreadsheetId: SPREADSHEET_IDS.DIY_REQUIREMENT,
+        range: `${SHEETS.DIY_REQUIREMENT_CONFIG}!A:E`,
+        valueRenderOption: 'UNFORMATTED_VALUE',
+      }).catch(() => ({ data: { values: [] } })),
+    ]);
+
+    let headers = headerResponse.data.values?.[0] || [];
+
+    if (headers.length === 0) {
+      const defaultHeaders = [
+        'id', 'requirement_type', 'requirement', 'new_product', 'created_at', 'updated_at', 'Cancelled',
+        'Planned_1', 'Actual_1', 'Status_1',
+        'Planned_2', 'Actual_2', 'Status_2', 'lead_time_2',
+        'Planned_3', 'Actual_3', 'Status_3',
+        'Planned_4', 'Actual_4', 'Status_4', 'Next_Follow_Up_Date_4', 'remark_4',
+        'Planned_5', 'Actual_5', 'Status_5',
+        'Planned_6', 'Actual_6', 'Status_6',
+        'Planned_7', 'Actual_7', 'Status_7', 'lead_time_7',
+        'Planned_8', 'Actual_8', 'Status_8', 'Next_Follow_Up_Date_8', 'remark_8',
+        'Planned_9', 'Actual_9', 'Status_9'
+      ];
+      await sheets.spreadsheets.values.update({
+        spreadsheetId: SPREADSHEET_IDS.DIY_REQUIREMENT,
+        range: `${sheetName}!A1`,
+        valueInputOption: 'RAW',
+        requestBody: { values: [defaultHeaders] },
+      });
+      headers = defaultHeaders;
+    }
+
+    const rows = allData.data.values || [];
+    const maxId = rows.length > 1 ? Math.max(...rows.slice(1).map((row: any) => parseInt(row[0]) || 0)) : 0;
+    const newId = maxId + 1;
+
+    const nowDate = new Date();
+    const now = formatToSheetDate(nowDate);
+
+    let planned1: string | undefined = undefined;
+    try {
+      const configRows = (configRes as any).data.values || [];
+      if (configRows.length > 1) {
+        const step1Row = configRows.slice(1).find((r: any) => parseInt(r[0]) === 1);
+        if (step1Row) {
+          const tatValue = parseInt(step1Row[3]) || 0;
+          const tatUnit = (step1Row[4] || 'hours').toLowerCase();
+          if (tatValue > 0) {
+            const planned = new Date(nowDate);
+            if (tatUnit === 'hours') {
+              planned.setTime(planned.getTime() + tatValue * 60 * 60 * 1000);
+            } else if (tatUnit === 'days') {
+              planned.setTime(planned.getTime() + tatValue * 24 * 60 * 60 * 1000);
+            }
+            planned1 = formatToSheetDate(planned);
+          }
+        }
+      }
+    } catch (configErr) {
+      console.warn('Could not compute Planned_1:', configErr);
+    }
+
+    const newRequirement = {
+      id: newId,
+      ...data,
+      created_at: now,
+      updated_at: now,
+      ...(planned1 ? { Planned_1: planned1 } : {}),
+    };
+
+    const rowData = objectToRow(headers, newRequirement);
+
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: SPREADSHEET_IDS.DIY_REQUIREMENT,
+      range: `${sheetName}!A:AZ`,
+      valueInputOption: 'RAW',
+      requestBody: { values: [rowData] },
+    });
+
+    return newRequirement;
+  } catch (error) {
+    console.error('Error creating Diy Requirement:', error);
+    throw error;
+  }
+}
+
+export async function updateDiyRequirement(id: number, data: any) {
+  try {
+    const sheets = await getGoogleSheetsClient();
+    const sheetName = SHEETS.DIY_REQUIREMENT;
+
+    const headersRes = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_IDS.DIY_REQUIREMENT,
+      range: `${sheetName}!A1:AZ1`,
+      valueRenderOption: 'UNFORMATTED_VALUE',
+    });
+    const headers = headersRes.data.values?.[0];
+    if (!headers) throw new Error('Headers not found');
+
+    const idRes = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_IDS.DIY_REQUIREMENT,
+      range: `${sheetName}!A:A`,
+      valueRenderOption: 'UNFORMATTED_VALUE',
+    });
+    const ids = idRes.data.values || [];
+    const rowIndex = ids.findIndex((row: any) => parseInt(row[0]) === id);
+
+    if (rowIndex === -1) throw new Error('Requirement not found');
+    const actualRow = rowIndex + 1;
+
+    const getColLetter = (index: number) => {
+      let letter = '';
+      while (index >= 0) {
+        letter = String.fromCharCode((index % 26) + 65) + letter;
+        index = Math.floor(index / 26) - 1;
+      }
+      return letter;
+    };
+
+    const updateData = {
+      ...data,
+      updated_at: formatToSheetDate(new Date())
+    };
+
+    const valueRanges = Object.entries(updateData).map(([key, value]) => {
+      const colIndex = headers.indexOf(key);
+      if (colIndex === -1) return null;
+
+      return {
+        range: `${sheetName}!${getColLetter(colIndex)}${actualRow}`,
+        values: [[value === null || value === undefined ? '' : value]]
+      };
+    }).filter(req => req !== null) as any[];
+
+    if (valueRanges.length > 0) {
+      await sheets.spreadsheets.values.batchUpdate({
+        spreadsheetId: SPREADSHEET_IDS.DIY_REQUIREMENT,
+        requestBody: {
+          valueInputOption: 'RAW',
+          data: valueRanges
+        }
+      });
+    }
+
+    return { id, ...updateData };
+  } catch (error) {
+    console.error('Error updating Diy Requirement:', error);
+    throw error;
+  }
+}
+
+export async function deleteDiyRequirement(id: number) {
+  try {
+    const sheets = await getGoogleSheetsClient();
+    const sheetName = SHEETS.DIY_REQUIREMENT;
+
+    const idRes = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_IDS.DIY_REQUIREMENT,
+      range: `${sheetName}!A:A`,
+      valueRenderOption: 'UNFORMATTED_VALUE',
+    });
+    const ids = idRes.data.values || [];
+    const rowIndex = ids.findIndex((row: any) => parseInt(row[0]) === id);
+
+    if (rowIndex === -1) throw new Error('Requirement not found');
+    const actualRow = rowIndex + 1;
+
+    const sheetId = await getSheetId(sheets, SPREADSHEET_IDS.DIY_REQUIREMENT, sheetName);
+
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId: SPREADSHEET_IDS.DIY_REQUIREMENT,
+      requestBody: {
+        requests: [{
+          deleteDimension: {
+            range: {
+              sheetId,
+              dimension: 'ROWS',
+              startIndex: actualRow - 1,
+              endIndex: actualRow
+            }
+          }
+        }]
+      }
+    });
+
+    return { id };
+  } catch (error) {
+    console.error('Error deleting Diy Requirement:', error);
+    throw error;
+  }
+}

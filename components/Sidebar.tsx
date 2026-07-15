@@ -57,6 +57,7 @@ export default function Sidebar({ isOpen, setIsOpen }: SidebarProps) {
         { label: 'Scrap Sales', icon: 'clipboard', href: '/scrap-sales', roles: ['Admin', 'Manager'] },
         { label: 'Purchase FMS', icon: 'clock', href: '/purchase-fms', roles: ['Admin', 'Manager'] },
         { label: 'Factory Requirement', icon: 'document', href: '/factory-requirements', roles: ['Admin', 'Manager'] },
+        { label: 'Diy Requirement FMS', icon: 'document', href: '/diy-requirement-fms', roles: ['Admin', 'Manager'] },
         { label: 'New Product Search FMS', icon: 'package', href: '/fms-product-search', roles: ['Admin', 'Manager'] },
         { label: 'Job Work', icon: 'clipboard-check', href: '/job-work', roles: ['Admin', 'Manager'] },
         { label: 'RM Defects', icon: 'alert', href: '/rm-defects', roles: ['Admin', 'Manager'] },

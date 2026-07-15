@@ -110,6 +110,7 @@ export default function RMDefectsPage() {
     const [itemsToMarkDone, setItemsToMarkDone] = useState<Set<string>>(new Set());
     const [isBulkUpdateModalOpen, setIsBulkUpdateModalOpen] = useState(false);
     const [leadTimes, setLeadTimes] = useState<Record<string, number>>({});
+    const [step6Statuses, setStep6Statuses] = useState<Record<string, "Ok" | "Not Ok">>({});
 
     const [stepConfigs, setStepConfigs] = useState<StepConfig[]>([]);
     const [systemUsers, setSystemUsers] = useState<any[]>([]);
@@ -379,6 +380,7 @@ export default function RMDefectsPage() {
             await Promise.all(updatePromises);
             toast.success('Bulk updates applied');
             setItemsToMarkDone(new Set());
+            setStep6Statuses({});
             setSelectedItems(new Set());
             setIsBulkUpdateModalOpen(false);
             fetchData();
