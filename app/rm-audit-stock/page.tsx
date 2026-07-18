@@ -14,6 +14,7 @@ interface AuditItem {
   rawMaterial: string;
   liveStock: string;
   actualStock: string;
+  unit?: string;
 }
 
 const TABS = [
@@ -49,7 +50,8 @@ export default function RMAuditStockPage() {
                         id: Math.random().toString(),
                         rawMaterial: d.item_name || d.sku_code || '-',
                         liveStock: String(live + transit),
-                        actualStock: ''
+                        actualStock: '',
+                        unit: d.unit || 'PCS'
                     };
                 });
                 
@@ -88,7 +90,8 @@ export default function RMAuditStockPage() {
             ...item,
             liveStock: live,
             actualStock: actual,
-            diff: parseFloat((actual - live).toFixed(2))
+            diff: parseFloat((actual - live).toFixed(2)),
+            unit: item.unit || 'PCS'
         };
     });
 
@@ -249,6 +252,7 @@ export default function RMAuditStockPage() {
                         <div className="flex-1">Raw Material</div>
                         <div className="w-32">Live Stock</div>
                         <div className="w-32">Actual Stock</div>
+                        <div className="w-20">Unit</div>
                         <div className="w-24">Diff (Auto)</div>
                     </div>
 
@@ -296,7 +300,21 @@ export default function RMAuditStockPage() {
                                     : 'border-gray-200 dark:border-gray-700 focus:border-blue-500 focus:ring-blue-500 placeholder-gray-300'
                               }`}
                             />
-                            
+
+                            <div className="w-full md:w-20 px-2">
+                              <select
+                                value={item.unit || 'PCS'}
+                                onChange={(e) => handleItemChange(item.id, 'unit' as any, e.target.value)}
+                                className="w-full md:w-20 px-2 py-2 text-sm bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all text-center"
+                              >
+                                <option value="PCS">PCS</option>
+                                <option value="KG">KG</option>
+                                <option value="G">G</option>
+                                <option value="M">M</option>
+                                <option value="L">L</option>
+                              </select>
+                            </div>
+
                             <div className="w-full md:w-24 px-3 py-2 rounded-lg flex items-center justify-center">
                                 <span className="text-xs text-gray-400 md:hidden mr-2">Diff:</span>
                                 <span className={`text-sm font-black ${diffColor}`}>

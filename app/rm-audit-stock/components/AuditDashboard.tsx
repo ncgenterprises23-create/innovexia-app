@@ -263,7 +263,7 @@ export default function AuditDashboard() {
                 {shortageReport.slice(0, 15).map((s, i) => (
                   <tr key={i} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
                     <td className="p-3 font-semibold text-gray-900 dark:text-white">{s.rawMaterial}</td>
-                    <td className="p-3 font-bold text-red-500">{s.diff}</td>
+                    <td className="p-3 font-bold text-red-500">{`${s.diff}${s.unit ? ' ' + s.unit : ''}`}</td>
                   </tr>
                 ))}
               </tbody>
@@ -289,7 +289,7 @@ export default function AuditDashboard() {
                 {excessStockReport.slice(0, 15).map((s, i) => (
                   <tr key={i} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
                     <td className="p-3 font-semibold text-gray-900 dark:text-white">{s.rawMaterial}</td>
-                    <td className="p-3 font-bold text-orange-500">+{s.diff}</td>
+                    <td className="p-3 font-bold text-orange-500">{`+${s.diff}${s.unit ? ' ' + s.unit : ''}`}</td>
                   </tr>
                 ))}
               </tbody>
@@ -319,10 +319,10 @@ export default function AuditDashboard() {
                 {rawMaterialSummary.map((s, i) => (
                   <tr key={i} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
                     <td className="p-3 font-semibold text-gray-900 dark:text-white">{s.rawMaterial}</td>
-                    <td className="p-3 text-gray-600 dark:text-gray-400">{s.liveStock}</td>
-                    <td className="p-3 text-gray-600 dark:text-gray-400">{s.actualStock}</td>
+                    <td className="p-3 text-gray-600 dark:text-gray-400">{`${s.liveStock}${s.unit ? ' ' + s.unit : ''}`}</td>
+                    <td className="p-3 text-gray-600 dark:text-gray-400">{`${s.actualStock}${s.unit ? ' ' + s.unit : ''}`}</td>
                     <td className={`p-3 font-bold ${s.diff > 0 ? 'text-emerald-500' : s.diff < 0 ? 'text-red-500' : 'text-gray-500'}`}>
-                        {s.diff > 0 ? '+' : ''}{s.diff}
+                        {s.diff > 0 ? '+' : ''}{`${s.diff}${s.unit ? ' ' + s.unit : ''}`}
                     </td>
                   </tr>
                 ))}
@@ -378,18 +378,30 @@ export default function AuditDashboard() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
-                {analytics.weeklyMatrix.data.map((row: any, i: number) => (
+                    {analytics.weeklyMatrix.data.map((row: any, i: number) => (
                   <tr key={i} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
                     <td className="p-3 font-semibold text-gray-900 dark:text-white sticky left-0 bg-white dark:bg-gray-800 border-r border-gray-100 dark:border-gray-700 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.05)] z-10">
                       {row.material}
                     </td>
                     {analytics.weeklyMatrix.weeks.map((week: string) => {
-                       const val = row[week];
-                       const isNum = typeof val === 'number';
-                       const color = !isNum ? 'text-gray-400' : val > 0 ? 'text-emerald-500 font-bold' : val < 0 ? 'text-red-500 font-bold' : 'text-gray-500';
+                       const raw = row[week];
+                       let display = '-';
+                       let num: number | null = null;
+                       let unit = '';
+                       if (raw && typeof raw === 'object' && 'value' in raw) {
+                         num = raw.value;
+                         unit = raw.unit || '';
+                         display = `${num}${unit ? ' ' + unit : ''}`;
+                       } else if (typeof raw === 'number') {
+                         num = raw;
+                         display = String(raw);
+                       } else {
+                         display = raw;
+                       }
+                       const color = num === null ? 'text-gray-400' : num > 0 ? 'text-emerald-500 font-bold' : num < 0 ? 'text-red-500 font-bold' : 'text-gray-500';
                        return (
                          <td key={week} className={`p-3 text-center ${color}`}>
-                           {val}
+                           {display}
                          </td>
                        )
                     })}
@@ -422,12 +434,24 @@ export default function AuditDashboard() {
                       {row.material}
                     </td>
                     {analytics.monthlyMatrix.months.map((month: string) => {
-                       const val = row[month];
-                       const isNum = typeof val === 'number';
-                       const color = !isNum ? 'text-gray-400' : val > 0 ? 'text-emerald-500 font-bold' : val < 0 ? 'text-red-500 font-bold' : 'text-gray-500';
+                       const raw = row[month];
+                       let display = '-';
+                       let num: number | null = null;
+                       let unit = '';
+                       if (raw && typeof raw === 'object' && 'value' in raw) {
+                         num = raw.value;
+                         unit = raw.unit || '';
+                         display = `${num}${unit ? ' ' + unit : ''}`;
+                       } else if (typeof raw === 'number') {
+                         num = raw;
+                         display = String(raw);
+                       } else {
+                         display = raw;
+                       }
+                       const color = num === null ? 'text-gray-400' : num > 0 ? 'text-emerald-500 font-bold' : num < 0 ? 'text-red-500 font-bold' : 'text-gray-500';
                        return (
                          <td key={month} className={`p-3 text-center ${color}`}>
-                           {val}
+                           {display}
                          </td>
                        )
                     })}

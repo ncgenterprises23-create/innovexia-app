@@ -17,7 +17,7 @@ export async function GET() {
     const sheets = await getGoogleSheetsClient();
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_ID,
-      range: `${SHEET_NAME}!A2:J`,
+      range: `${SHEET_NAME}!A2:K`,
     });
 
     const rows = response.data.values || [];
@@ -31,7 +31,8 @@ export async function GET() {
       rawMaterial: row[6] || '',
       liveStock: parseFloat(row[7]) || 0,
       actualStock: parseFloat(row[8]) || 0,
-      diff: parseFloat(row[9]) || 0
+      diff: parseFloat(row[9]) || 0,
+      unit: row[10] || ''
     }));
 
     return NextResponse.json(data);
@@ -63,7 +64,7 @@ export async function POST(req: Request) {
     // Ensure headers exist
     const headerResponse = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_ID,
-      range: `${SHEET_NAME}!A1:J1`,
+      range: `${SHEET_NAME}!A1:K1`,
     }).catch(e => {
         console.error("Error getting headers", e);
         return null;
@@ -72,10 +73,10 @@ export async function POST(req: Request) {
     const headers = headerResponse?.data?.values?.[0] || [];
 
     if (headers.length === 0) {
-      const defaultHeaders = ['Timestamp', 'Date', 'Week', 'Month', 'Quarter', 'Year', 'Raw Materials', 'Live Stock', 'Actual Stock', 'Diff'];
+      const defaultHeaders = ['Timestamp', 'Date', 'Week', 'Month', 'Quarter', 'Year', 'Raw Materials', 'Live Stock', 'Actual Stock', 'Diff', 'Unit'];
       await sheets.spreadsheets.values.update({
         spreadsheetId: SPREADSHEET_ID,
-        range: `${SHEET_NAME}!A1:J1`,
+        range: `${SHEET_NAME}!A1:K1`,
         valueInputOption: 'USER_ENTERED',
         requestBody: {
           values: [defaultHeaders],
@@ -97,13 +98,14 @@ export async function POST(req: Request) {
       item.rawMaterial,
       item.liveStock || 0,
       item.actualStock || 0,
-      item.diff || 0
+      item.diff || 0,
+      item.unit || ''
     ]);
 
     if (rowsToAppend.length > 0) {
         await sheets.spreadsheets.values.append({
         spreadsheetId: SPREADSHEET_ID,
-        range: `${SHEET_NAME}!A:J`,
+        range: `${SHEET_NAME}!A:K`,
         valueInputOption: 'USER_ENTERED',
         requestBody: {
             values: rowsToAppend,

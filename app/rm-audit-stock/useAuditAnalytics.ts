@@ -11,6 +11,7 @@ export interface AuditRecord {
   liveStock: number;
   actualStock: number;
   diff: number;
+  unit?: string;
 }
 
 export function useAuditAnalytics() {
@@ -107,6 +108,7 @@ export function useAuditAnalytics() {
           liveStock: 0,
           actualStock: 0,
           diff: 0,
+          unit: d.unit || '',
           checks: 0,
           matches: 0,
           excessCount: 0,
@@ -122,6 +124,8 @@ export function useAuditAnalytics() {
       s.actualStock += d.actualStock;
       s.diff += d.diff;
       s.checks += 1;
+      // preserve unit if present (prefer first seen)
+      if (!s.unit && d.unit) s.unit = d.unit;
       if (d.diff === 0) s.matches += 1;
       else s.mismatches += 1;
       
@@ -165,6 +169,7 @@ export function useAuditAnalytics() {
 
       return {
         ...s,
+          unit: s.unit || '',
         variancePercent: parseFloat(variancePercent.toFixed(2)),
         status,
         impact,
@@ -291,7 +296,12 @@ export function useAuditAnalytics() {
       const row: any = { material };
       availableWeeks.forEach(week => {
         const item = filteredData.find(d => d.rawMaterial === material && `${d.year}-${d.week}` === week);
-        row[week] = item ? parseFloat(item.diff.toFixed(2)) : '-';
+        if (item) {
+          const val = parseFloat(item.diff.toFixed(2));
+          row[week] = { value: val, unit: item.unit || '' };
+        } else {
+          row[week] = '-';
+        }
       });
       matrix.push(row);
     });
@@ -310,7 +320,8 @@ export function useAuditAnalytics() {
         const matchingItems = filteredData.filter(d => d.rawMaterial === material && `${d.month} ${String(d.year).slice(-2)}` === month);
         if (matchingItems.length > 0) {
            const totalDiff = matchingItems.reduce((acc, curr) => acc + curr.diff, 0);
-           row[month] = parseFloat(totalDiff.toFixed(2));
+           const unit = matchingItems[0].unit || '';
+           row[month] = { value: parseFloat(totalDiff.toFixed(2)), unit };
         } else {
            row[month] = '-';
         }
