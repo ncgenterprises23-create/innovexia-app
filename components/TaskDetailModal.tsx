@@ -105,9 +105,11 @@ export default function TaskDetailModal({ isOpen, onClose, title, tasks, type }:
 
                                         const title = type === 'delegation'
                                             ? (task.description || task.delegation_name || task.task_title || 'Untitled Delegation')
-                                            : (type === 'collection' || type === 'payable')
-                                                ? `${task.party_name || task.Name || task['Party Name'] || 'Item'} - ${task.step_name}`
-                                                : `${task.material_name || task.party_name || task.Party_Name || task.Item_name || task['Item Name'] || task.client_name || task['Client Name'] || task.Name || task.requirement || task['Job Work Name'] || task.Company_Name || task.vendor_name || task['Po No.'] || 'Item'} - Step ${task.step_number}: ${task.step_name}`;
+                                            : type === 'checklist'
+                                                ? (task.question || task.title || 'Untitled Checklist')
+                                                : (type === 'collection' || type === 'payable')
+                                                    ? `${task.party_name || task.Name || task['Party Name'] || 'Item'} - ${task.step_name}`
+                                                    : `${task.material_name || task.party_name || task.Party_Name || task.Item_name || task['Item Name'] || task.client_name || task['Client Name'] || task.Name || task.requirement || task['Job Work Name'] || task.Company_Name || task.vendor_name || task['Po No.'] || 'Item'} - Step ${task.step_number}: ${task.step_name}`;
 
                                         const dueDate = isFms ? task.planned_date : task.due_date;
                                         const completedDate = isFms ? (task.actual_date || null) : (task.updated_at || null);
