@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import LayoutWrapper from '@/components/LayoutWrapper';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
-  ClipboardCheck, Save, CalendarDays, BarChart3, ClipboardList, PackageSearch, Search
+  ClipboardCheck, Save, CalendarDays, BarChart3, ClipboardList, PackageSearch, Search, Tag, Box, Layers, Archive
 } from 'lucide-react';
 import { useToast } from '@/components/ToastProvider';
 import AuditDashboard from './components/AuditDashboard';
@@ -15,6 +15,7 @@ interface AuditItem {
   liveStock: string;
   actualStock: string;
   unit?: string;
+  category?: string;
 }
 
 const TABS = [
@@ -31,38 +32,56 @@ export default function RMAuditStockPage() {
   const [items, setItems] = useState<AuditItem[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [imsData, setImsData] = useState<any[]>([]);
+  const [categoriesMap, setCategoriesMap] = useState<Record<string,string>>({});
+  const [categoriesList, setCategoriesList] = useState<string[]>([]);
+  const [activeCategory, setActiveCategory] = useState<string>('All');
   const [searchQuery, setSearchQuery] = useState('');
 
   useEffect(() => {
-    // Fetch Live Stock data from IMS
-    const fetchImsData = async () => {
-        try {
-            const res = await fetch('/api/ims-rm?sheetName=Live%20Stock');
-            if (res.ok) {
-                const data = await res.json();
-                setImsData(data);
-                
-                // Initialize items from IMS data
-                const initialItems = data.map((d: any) => {
-                    const live = Number(d.live_stock) || 0;
-                    const transit = Number(d.material_in_transit) || 0;
-                    return {
-                        id: Math.random().toString(),
-                        rawMaterial: d.item_name || d.sku_code || '-',
-                        liveStock: String(live + transit),
-                        actualStock: '',
-                        unit: d.unit || 'PCS'
-                    };
-                });
-                
-                // Filter out empty rows
-                setItems(initialItems.filter((i: any) => i.rawMaterial && i.rawMaterial !== '-'));
-            }
-        } catch (error) {
-            console.error("Failed to fetch IMS data", error);
-        }
+    // Fetch Live Stock data + Category mapping in parallel
+    const fetchAll = async () => {
+      try {
+        const [imsRes, catRes] = await Promise.all([
+          fetch('/api/ims-rm?sheetName=Live%20Stock'),
+          fetch('/api/rm-audit-stock/categories')
+        ]);
+
+        const imsDataJson = imsRes.ok ? await imsRes.json() : [];
+        const catJson = catRes.ok ? await catRes.json() : { mapping: [] };
+
+        const map: Record<string,string> = {};
+        (catJson.mapping || []).forEach((m: any) => {
+          if (m.itemName) map[m.itemName.toLowerCase().trim()] = m.category || 'Others';
+        });
+
+        setCategoriesMap(map);
+        const cats = Array.from(new Set(['All', ...Object.values(map), 'Others']));
+        setCategoriesList(cats);
+
+        setImsData(imsDataJson);
+
+        // Initialize items from IMS data, using category mapping
+        const initialItems = (imsDataJson || []).map((d: any) => {
+          const live = Number(d.live_stock) || 0;
+          const transit = Number(d.material_in_transit) || 0;
+          const name = (d.item_name || d.sku_code || '-').toString();
+          const cat = map[name.toLowerCase().trim()] || 'Others';
+          return {
+            id: Math.random().toString(),
+            rawMaterial: name,
+            liveStock: String(live + transit),
+            actualStock: '',
+            unit: d.unit || 'PCS',
+            category: cat
+          };
+        });
+
+        setItems(initialItems.filter((i: any) => i.rawMaterial && i.rawMaterial !== '-'));
+      } catch (error) {
+        console.error("Failed to fetch IMS or Category data", error);
+      }
     };
-    fetchImsData();
+    fetchAll();
   }, []);
 
   const handleItemChange = (id: string, field: keyof AuditItem, value: string) => {
@@ -125,7 +144,8 @@ export default function RMAuditStockPage() {
   };
 
   const filteredItems = items.filter(item => 
-      item.rawMaterial.toLowerCase().includes(searchQuery.toLowerCase())
+      item.rawMaterial.toLowerCase().includes(searchQuery.toLowerCase()) &&
+      (activeCategory === 'All' ? true : ((item.category || 'Others') === activeCategory))
   );
 
   return (
@@ -246,6 +266,28 @@ export default function RMAuditStockPage() {
                     </div>
                   </div>
                   
+                  {/* Category Tabs */}
+                  <div className="mb-3 flex gap-2 items-center overflow-x-auto">
+                    {(categoriesList || []).map((c) => {
+                      const isActive = activeCategory === c;
+                      // simple icon selection
+                      const icon = c === 'Others' ? <Tag size={14} /> : c === 'ALUMINIUM' ? <Box size={14} /> : c === 'BOX' ? <Archive size={14} /> : <Layers size={14} />;
+                      const count = items.filter(it => (it.category || 'Others') === c).length;
+                      return (
+                        <button
+                          key={c}
+                          title={`${c} (${count})`}
+                          onClick={() => setActiveCategory(c)}
+                          className={`flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold transition-all whitespace-nowrap ${isActive ? 'bg-white dark:bg-gray-700 shadow-sm' : 'bg-gray-100 dark:bg-gray-800/40'}`}
+                        >
+                          <span className={`${isActive ? 'text-blue-600' : 'text-gray-500'}`}>{icon}</span>
+                          <span>{c}</span>
+                          <span className="text-[11px] text-gray-500 ml-1">({count})</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  
                   <div className="space-y-3 max-h-[600px] overflow-y-auto custom-scrollbar pr-2">
                     {/* Header Row for Inputs */}
                     <div className="hidden md:flex gap-3 px-3 pb-2 border-b border-gray-100 dark:border-gray-700 text-xs font-semibold text-gray-500 uppercase tracking-wide">
@@ -268,19 +310,20 @@ export default function RMAuditStockPage() {
                       return (
                         <div 
                           key={item.id}
-                          className={`flex flex-col md:flex-row gap-3 p-3 bg-white dark:bg-gray-800/80 border rounded-xl items-start md:items-center transition-colors ${
+                          className={`flex flex-col md:flex-row gap-3 p-2 bg-white dark:bg-gray-800/80 border rounded-xl items-start md:items-center transition-colors ${
                               item.actualStock !== '' 
                                 ? 'border-blue-200 dark:border-blue-500/30 shadow-sm' 
                                 : 'border-gray-100 dark:border-gray-700'
                           }`}
                         >
                           <div className="w-full md:flex-1 flex items-center gap-3 overflow-hidden">
-                             <div className="w-8 h-8 rounded-lg bg-blue-50 dark:bg-blue-500/10 flex items-center justify-center flex-shrink-0">
-                                 <PackageSearch className="text-blue-500" size={16} />
+                             <div className="w-6 h-6 rounded bg-blue-50 dark:bg-blue-500/10 flex items-center justify-center flex-shrink-0 text-xs">
+                                 <PackageSearch className="text-blue-500" size={14} />
                              </div>
-                             <span className="text-sm font-bold text-gray-700 dark:text-gray-200 truncate">
-                                 {item.rawMaterial}
-                             </span>
+                             <div className="flex items-center gap-2">
+                               <span className="text-sm font-bold text-gray-700 dark:text-gray-200 truncate">{item.rawMaterial}</span>
+                               <span className="text-[10px] px-2 py-0.5 rounded bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300">{item.category}</span>
+                             </div>
                           </div>
                           
                           <div className="flex gap-3 w-full md:w-auto items-center">
@@ -294,7 +337,7 @@ export default function RMAuditStockPage() {
                               placeholder="Actual Stock"
                               value={item.actualStock}
                               onChange={(e) => handleItemChange(item.id, 'actualStock', e.target.value)}
-                              className={`w-full md:w-32 px-3 py-2.5 text-sm bg-white dark:bg-gray-900 border rounded-lg focus:ring-2 outline-none transition-all dark:text-white text-center font-bold ${
+                              className={`w-full md:w-32 px-2 py-2 text-sm bg-white dark:bg-gray-900 border rounded-lg focus:ring-2 outline-none transition-all dark:text-white text-center font-bold ${
                                   item.actualStock !== '' 
                                     ? 'border-blue-400 focus:ring-blue-500 text-blue-700 dark:text-blue-400' 
                                     : 'border-gray-200 dark:border-gray-700 focus:border-blue-500 focus:ring-blue-500 placeholder-gray-300'

@@ -125,6 +125,22 @@ export default function AuditDashboard() {
         <select value={filters.selectedMaterial} onChange={e => filters.setSelectedMaterial(e.target.value)} className="bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-1.5 text-sm font-medium outline-none">
             {filters.materials.map((m: string) => <option key={m} value={m}>{m === 'All' ? 'All Materials' : m}</option>)}
         </select>
+        {/* Category tabs (compact) */}
+        <div className="w-full md:w-auto flex items-center gap-2 overflow-x-auto">
+          {(filters.categories || []).slice(0, 50).map((c: string) => {
+            const isActive = filters.selectedCategory === c;
+            return (
+              <button
+                key={c}
+                onClick={() => filters.setSelectedCategory(c)}
+                className={`flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold transition-all whitespace-nowrap ${isActive ? 'bg-white dark:bg-gray-700 shadow-sm' : 'bg-gray-100 dark:bg-gray-800/40'}`}
+              >
+                <span className={`${isActive ? 'text-blue-600' : 'text-gray-500'}`}>{c === 'Others' ? '●' : '●'}</span>
+                <span>{c}</span>
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {/* KPI Cards */}

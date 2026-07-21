@@ -12,6 +12,7 @@ export interface AuditRecord {
   actualStock: number;
   diff: number;
   unit?: string;
+  category?: string;
 }
 
 export function useAuditAnalytics() {
@@ -24,6 +25,7 @@ export function useAuditAnalytics() {
   const [selectedMonth, setSelectedMonth] = useState<string>('All');
   const [selectedWeek, setSelectedWeek] = useState<string>('All');
   const [selectedMaterial, setSelectedMaterial] = useState<string>('All');
+  const [selectedCategory, setSelectedCategory] = useState<string>('All');
 
   useEffect(() => {
     const fetchData = async () => {
@@ -46,6 +48,7 @@ export function useAuditAnalytics() {
   const months = useMemo(() => ['All', ...Array.from(new Set(data.map(d => d.month)))], [data]);
   const weeks = useMemo(() => ['All', ...Array.from(new Set(data.map(d => d.week))).sort()], [data]);
   const materials = useMemo(() => ['All', ...Array.from(new Set(data.map(d => d.rawMaterial))).sort()], [data]);
+  const categories = useMemo(() => ['All', ...Array.from(new Set(data.map(d => d.category || 'Others'))).sort()], [data]);
 
   // Filtered Data
   const filteredData = useMemo(() => {
@@ -55,9 +58,10 @@ export function useAuditAnalytics() {
       if (selectedMonth !== 'All' && d.month !== selectedMonth) return false;
       if (selectedWeek !== 'All' && d.week !== selectedWeek) return false;
       if (selectedMaterial !== 'All' && d.rawMaterial !== selectedMaterial) return false;
+      if (selectedCategory !== 'All' && (d.category || 'Others') !== selectedCategory) return false;
       return true;
     });
-  }, [data, selectedYear, selectedQuarter, selectedMonth, selectedWeek, selectedMaterial]);
+  }, [data, selectedYear, selectedQuarter, selectedMonth, selectedWeek, selectedMaterial, selectedCategory]);
 
   // 1. Executive Summary
   const executiveSummary = useMemo(() => {
@@ -109,6 +113,7 @@ export function useAuditAnalytics() {
           actualStock: 0,
           diff: 0,
           unit: d.unit || '',
+          category: d.category || 'Others',
           checks: 0,
           matches: 0,
           excessCount: 0,
@@ -126,6 +131,8 @@ export function useAuditAnalytics() {
       s.checks += 1;
       // preserve unit if present (prefer first seen)
       if (!s.unit && d.unit) s.unit = d.unit;
+      // preserve category if present
+      if (!s.category && d.category) s.category = d.category;
       if (d.diff === 0) s.matches += 1;
       else s.mismatches += 1;
       
@@ -340,7 +347,8 @@ export function useAuditAnalytics() {
         quarters, selectedQuarter, setSelectedQuarter,
         months, selectedMonth, setSelectedMonth,
         weeks, selectedWeek, setSelectedWeek,
-        materials, selectedMaterial, setSelectedMaterial
+        materials, selectedMaterial, setSelectedMaterial,
+        categories, selectedCategory, setSelectedCategory
     },
 
     // Metrics
