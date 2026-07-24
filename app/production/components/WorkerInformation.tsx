@@ -274,16 +274,18 @@ export default function WorkerInformation() {
                   </div>
                   <div className="flex gap-1 bg-gray-50/50 dark:bg-gray-900/40 p-1 rounded-xl border border-gray-100 dark:border-gray-700/50">
                     <button
-                      onClick={() => handleOpenModal(worker)}
-                      className="p-2 text-gray-400 hover:text-indigo-600 hover:bg-white dark:hover:bg-gray-800 rounded-lg transition-all shadow-sm active:scale-90"
+                      onClick={(e) => { e.stopPropagation(); handleOpenModal(worker); }}
+                      className="relative z-20 p-2 text-gray-400 hover:text-indigo-600 hover:bg-white dark:hover:bg-gray-800 rounded-lg transition-all shadow-sm active:scale-90"
                       title="Edit"
+                      aria-label="Edit worker"
                     >
                       <Edit2 size={14} />
                     </button>
                     <button
-                      onClick={() => handleOpenDeleteModal(worker)}
-                      className="p-2 text-gray-400 hover:text-red-500 hover:bg-white dark:hover:bg-gray-800 rounded-lg transition-all shadow-sm active:scale-90"
+                      onClick={(e) => { e.stopPropagation(); handleOpenDeleteModal(worker); }}
+                      className="relative z-20 p-2 text-gray-400 hover:text-red-500 hover:bg-white dark:hover:bg-gray-800 rounded-lg transition-all shadow-sm active:scale-90"
                       title="Delete"
+                      aria-label="Delete worker"
                     >
                       <Trash2 size={14} />
                     </button>
