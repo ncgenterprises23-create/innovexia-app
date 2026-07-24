@@ -66,7 +66,10 @@ export default function PCDashboardPage() {
 
                 '/api/igst-refund', '/api/igst-refund-config',
                 '/api/collection', '/api/collection/doer',
-                '/api/payable', '/api/payable/doer'
+                '/api/payable', '/api/payable/doer',
+                '/api/dealer-kit/dealers',
+                '/api/dealer-kit/monthly-frequency',
+                '/api/dealer-kit/tracking',
             ];
 
             const responses = await Promise.allSettled(
@@ -249,6 +252,60 @@ export default function PCDashboardPage() {
             parseCollectionPayable('Collection', data[23], data[24], 'collection');
             parseCollectionPayable('Payable', data[25], data[26], 'payable');
 
+            // Dealer Kit monthly follow-up tasks (dealer × plan by matching category)
+            const dkDealers = Array.isArray(data[27]?.data) ? data[27].data : [];
+            const dkPlans = Array.isArray(data[28]?.data) ? data[28].data : [];
+            const dkTracking = Array.isArray(data[29]?.tracking) ? data[29].tracking : [];
+
+            dkPlans.forEach((plan: any) => {
+                const planCat = String(plan.category || '').trim().toLowerCase();
+                const dueDate = plan.dueDate ? parseDateString(plan.dueDate) || new Date(plan.dueDate) : null;
+                const dueValid = dueDate && !Number.isNaN(dueDate.getTime()) ? dueDate : null;
+
+                dkDealers.forEach((dealer: any) => {
+                    const dealerCat = String(dealer.category || '').trim().toLowerCase();
+                    if (planCat !== dealerCat) return;
+
+                    const tracking = dkTracking.find(
+                        (t: any) =>
+                            String(t.dealerId) === String(dealer.dealerId) &&
+                            String(t.contentId) === String(plan.contentId)
+                    );
+                    const isDone = String(tracking?.status || '').toLowerCase() === 'done';
+                    const firm = dealer.firmName || dealer.contactPerson || dealer.dealerId || 'Dealer';
+                    const contentLabel = [plan.contentType, plan.medium].filter(Boolean).join(' · ') || 'Content';
+
+                    allTasks.push({
+                        id: `dealerkit-${dealer.dealerId}-${plan.contentId}`,
+                        title: `${firm} — ${contentLabel}`,
+                        sourceModule: 'Dealer Kit',
+                        status: isDone ? 'Completed' : 'Pending',
+                        dueDate: dueValid,
+                        updatedDate: null,
+                        doerName: dealer.relationshipOwner || tracking?.doneBy || 'Unassigned',
+                        rawTaskData: {
+                            type: 'dealerkit',
+                            dealerId: dealer.dealerId,
+                            contentId: plan.contentId,
+                            dealerName: firm,
+                            contentName: plan.contentType || '',
+                            medium: plan.medium || '',
+                            category: dealer.category || plan.category || '',
+                            month: dueValid ? dueValid.toLocaleString('en-US', { month: 'long' }) : (plan.month || ''),
+                            status: isDone ? 'Completed' : 'Pending',
+                            due_date: plan.dueDate || '',
+                            planned_date: plan.dueDate || '',
+                            actual_date: isDone ? plan.dueDate || null : null,
+                            step_name: contentLabel,
+                            step_number: 1,
+                            party_name: firm,
+                            link: tracking?.link || plan.fileLink || '',
+                            remarks: plan.remarks || '',
+                        },
+                    });
+                });
+            });
+
             setTasks(allTasks);
             categorizeTasks(allTasks);
 
@@ -349,7 +406,7 @@ export default function PCDashboardPage() {
             'Delegation', 'Checklist', 'Todo', 'O2D', 'CRM', 'Client Complain', 
             'Purchase FMS', 'Factory Req.', 'Job Work', 'RM Defects', 
             'New Product Search', 'Export FMS', 'IGST Refund',
-            'Collection', 'Payable'
+            'Collection', 'Payable', 'Dealer Kit'
         ];
         const statsMap = new Map<string, { daily: number, delayed: number, pending: number }>();
         const initSystem = (name: string) => {
@@ -499,11 +556,62 @@ export default function PCDashboardPage() {
         );
     }
 
+    const toggleDealerKitTask = async (task: UnifiedTask, e: React.MouseEvent | React.ChangeEvent) => {
+        e.stopPropagation();
+        if (task.rawTaskData?.type !== 'dealerkit') return;
+
+        const isDone = task.status === 'Completed';
+        const nextStatus = isDone ? 'Pending' : 'Done';
+        const nextUnifiedStatus: 'Pending' | 'Completed' = isDone ? 'Pending' : 'Completed';
+        const previousTasks = tasks;
+
+        const updatedTasks = tasks.map((t) =>
+            t.id === task.id
+                ? {
+                    ...t,
+                    status: nextUnifiedStatus,
+                    updatedDate: nextUnifiedStatus === 'Completed' ? new Date() : null,
+                    rawTaskData: {
+                        ...t.rawTaskData,
+                        status: nextUnifiedStatus,
+                        actual_date: nextUnifiedStatus === 'Completed' ? new Date().toISOString() : null,
+                    },
+                }
+                : t
+        );
+        setTasks(updatedTasks);
+        categorizeTasks(updatedTasks);
+
+        try {
+            const response = await fetch('/api/dealer-kit/tracking', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    dealerId: task.rawTaskData.dealerId,
+                    contentId: task.rawTaskData.contentId,
+                    dealerName: task.rawTaskData.dealerName,
+                    month: task.rawTaskData.month,
+                    contentName: task.rawTaskData.contentName,
+                    status: nextStatus,
+                    link: task.rawTaskData.link || '',
+                    comments: '',
+                    doneBy: nextStatus === 'Done' ? (task.doerName !== 'Unassigned' ? task.doerName : '') : '',
+                }),
+            });
+            if (!response.ok) throw new Error('Failed to update');
+        } catch (error) {
+            console.error(error);
+            setTasks(previousTasks);
+            categorizeTasks(previousTasks);
+        }
+    };
+
     const TaskRow = ({ task }: { task: UnifiedTask }) => {
         const isCompleted = task.status === 'Completed';
         const isDelayed = task.status === 'Pending' && task.dueDate && task.dueDate < new Date();
         const rowColorClass = isCompleted ? 'border-green-500' : isDelayed ? 'border-red-500' : 'border-blue-500';
         const badgeColor = isCompleted ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : isDelayed ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' : 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400';
+        const isDealerKit = task.rawTaskData?.type === 'dealerkit';
 
         return (
             <motion.div 
@@ -514,12 +622,27 @@ export default function PCDashboardPage() {
             >
                 <div className="flex-1 min-w-0 pr-4">
                     <div className="flex items-center gap-2 mb-2">
+                        {isDealerKit && (
+                            <input
+                                type="checkbox"
+                                checked={isCompleted}
+                                onClick={(e) => e.stopPropagation()}
+                                onChange={(e) => toggleDealerKitTask(task, e)}
+                                className="h-4 w-4 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer shrink-0"
+                                title={isCompleted ? 'Mark pending' : 'Mark done'}
+                            />
+                        )}
                         <span className="px-2 py-0.5 text-[9px] font-black uppercase tracking-widest bg-[var(--theme-primary)]/10 text-[var(--theme-primary)] rounded flex items-center whitespace-nowrap">
                             {task.sourceModule}
                         </span>
                         <span className={`px-2 py-0.5 text-[9px] font-black uppercase tracking-widest rounded flex items-center ${badgeColor}`}>
                             {task.status}
                         </span>
+                        {isDealerKit && task.rawTaskData?.category && (
+                            <span className="px-2 py-0.5 text-[9px] font-black uppercase tracking-widest bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300 rounded whitespace-nowrap">
+                                {task.rawTaskData.category}
+                            </span>
+                        )}
                     </div>
                     <h4 className="text-sm sm:text-base font-bold text-gray-900 dark:text-gray-100 truncate group-hover:text-[var(--theme-primary)] transition-colors">
                         {task.title}
@@ -719,14 +842,14 @@ export default function PCDashboardPage() {
                             <div className="flex bg-white dark:bg-gray-800 p-1.5 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 w-full sm:w-fit">
                                 <button
                                     onClick={() => setActiveTab('overview')}
-                                    className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-6 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'overview' ? 'bg-[var(--theme-primary)]/10 text-[var(--theme-primary)]' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'}`}
+                                    className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'overview' ? 'bg-[var(--theme-primary)]/10 text-[var(--theme-primary)]' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'}`}
                                 >
                                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zm10 0a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zm10 0a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" /></svg>
                                     Overview
                                 </button>
                                 <button
                                     onClick={() => setActiveTab('charts')}
-                                    className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-6 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'charts' ? 'bg-[var(--theme-primary)]/10 text-[var(--theme-primary)]' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'}`}
+                                    className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'charts' ? 'bg-[var(--theme-primary)]/10 text-[var(--theme-primary)]' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'}`}
                                 >
                                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg>
                                     Charts

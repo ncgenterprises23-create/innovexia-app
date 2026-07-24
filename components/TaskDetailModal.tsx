@@ -8,7 +8,7 @@ interface TaskDetailModalProps {
     onClose: () => void;
     title: string;
     tasks: any[]; // Using any[] for flexibility, can be typed strictly if needed
-    type: 'delegation' | 'checklist' | 'o2d' | 'crm' | 'complain' | 'purchase' | 'factory' | 'jobwork' | 'rmdefect' | 'exportfms' | 'salesexportenquiry' | 'collection' | 'payable';
+    type: 'delegation' | 'checklist' | 'o2d' | 'crm' | 'complain' | 'purchase' | 'factory' | 'jobwork' | 'rmdefect' | 'exportfms' | 'salesexportenquiry' | 'collection' | 'payable' | 'dealerkit';
 }
 
 export default function TaskDetailModal({ isOpen, onClose, title, tasks, type }: TaskDetailModalProps) {
@@ -107,6 +107,8 @@ export default function TaskDetailModal({ isOpen, onClose, title, tasks, type }:
                                             ? (task.description || task.delegation_name || task.task_title || 'Untitled Delegation')
                                             : type === 'checklist'
                                                 ? (task.question || task.title || 'Untitled Checklist')
+                                                : type === 'dealerkit'
+                                                    ? `${task.party_name || task.dealerName || 'Dealer'} - ${task.step_name || task.contentName || 'Content'}`
                                                 : (type === 'collection' || type === 'payable')
                                                     ? `${task.party_name || task.Name || task['Party Name'] || 'Item'} - ${task.step_name}`
                                                     : `${task.material_name || task.party_name || task.Party_Name || task.Item_name || task['Item Name'] || task.client_name || task['Client Name'] || task.Name || task.requirement || task['Job Work Name'] || task.Company_Name || task.vendor_name || task['Po No.'] || 'Item'} - Step ${task.step_number}: ${task.step_name}`;

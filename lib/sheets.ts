@@ -7621,7 +7621,7 @@ const DEALER_KIT_HEADERS = {
   monthly: [
     'Content ID', 'Month', 'Medium', 'Content Type', 'Due Date', 'Release Date',
     'Topic', 'Draft Owner', 'Design Owner', 'Approval Status', 'File Link',
-    'Print Qty', 'Courier Qty', 'WhatsApp Target', 'Production Status', 'Remarks'
+    'Print Qty', 'Courier Qty', 'WhatsApp Target', 'Production Status', 'Remarks', 'Category'
   ]
 };
 
@@ -7740,6 +7740,7 @@ function mapDealerKitMonthlyRow(rowObj: any) {
     whatsappTarget: toNumber(rowObj['WhatsApp Target'] || rowObj.whatsapp_target),
     productionStatus: rowObj['Production Status'] || rowObj.production_status || '',
     remarks: rowObj.Remarks || rowObj.remarks || '',
+    category: rowObj.Category || rowObj.category || '',
     status: getDealerKitStatus(dueDate),
   };
 }
@@ -8208,6 +8209,7 @@ export async function createDealerKitMonthlyFrequency(payload: Record<string, un
         'WhatsApp Target': item.whatsappTarget || '',
         'Production Status': item.productionStatus || '',
         Remarks: item.remarks || '',
+        Category: item.category || '',
       };
 
       rowDatas.push(targetHeaders.map((header) => rowMap[header] ?? ''));
@@ -8263,6 +8265,7 @@ export async function updateDealerKitMonthlyFrequency(contentId: string, updates
       'WhatsApp Target': updates.whatsappTarget,
       'Production Status': updates.productionStatus,
       Remarks: updates.remarks,
+      Category: updates.category,
     };
 
     Object.entries(updateMap).forEach(([header, value]) => {

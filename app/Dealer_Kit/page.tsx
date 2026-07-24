@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import LayoutWrapper from '@/components/LayoutWrapper';
 import { useToast } from '@/components/ToastProvider';
@@ -10,9 +11,41 @@ import { ensureSessionId } from '@/utils/session';
 import {
   Loader2, Pencil, Plus, Trash2, RefreshCcw, Search, CalendarDays,
   Users, Megaphone, FileText, Truck, BadgeCheck, Sparkles, ArrowRight,
-  MapPin, Globe2, Link2, X, ClipboardList, Layers3,
+  MapPin, Globe2, Link2, X, ClipboardList, Layers3, ChevronDown,
   User, Phone, MessageCircle, Building2, Map, Languages, Tag, MessageSquare, Clock, Info
 } from 'lucide-react';
+
+const CATEGORY_COLOR_PALETTE = [
+  { idle: 'border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100', active: 'border-sky-600 bg-sky-600 text-white shadow-sm shadow-sky-300/50', badge: 'border-sky-200 bg-sky-100 text-sky-700', icon: 'text-sky-500', countIdle: 'bg-sky-100', countActive: 'bg-white/20' },
+  { idle: 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100', active: 'border-emerald-600 bg-emerald-600 text-white shadow-sm shadow-emerald-300/50', badge: 'border-emerald-200 bg-emerald-100 text-emerald-700', icon: 'text-emerald-500', countIdle: 'bg-emerald-100', countActive: 'bg-white/20' },
+  { idle: 'border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100', active: 'border-violet-600 bg-violet-600 text-white shadow-sm shadow-violet-300/50', badge: 'border-violet-200 bg-violet-100 text-violet-700', icon: 'text-violet-500', countIdle: 'bg-violet-100', countActive: 'bg-white/20' },
+  { idle: 'border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100', active: 'border-rose-600 bg-rose-600 text-white shadow-sm shadow-rose-300/50', badge: 'border-rose-200 bg-rose-100 text-rose-700', icon: 'text-rose-500', countIdle: 'bg-rose-100', countActive: 'bg-white/20' },
+  { idle: 'border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100', active: 'border-amber-600 bg-amber-600 text-white shadow-sm shadow-amber-300/50', badge: 'border-amber-200 bg-amber-100 text-amber-800', icon: 'text-amber-500', countIdle: 'bg-amber-100', countActive: 'bg-white/20' },
+  { idle: 'border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100', active: 'border-teal-600 bg-teal-600 text-white shadow-sm shadow-teal-300/50', badge: 'border-teal-200 bg-teal-100 text-teal-700', icon: 'text-teal-500', countIdle: 'bg-teal-100', countActive: 'bg-white/20' },
+  { idle: 'border-fuchsia-200 bg-fuchsia-50 text-fuchsia-700 hover:bg-fuchsia-100', active: 'border-fuchsia-600 bg-fuchsia-600 text-white shadow-sm shadow-fuchsia-300/50', badge: 'border-fuchsia-200 bg-fuchsia-100 text-fuchsia-700', icon: 'text-fuchsia-500', countIdle: 'bg-fuchsia-100', countActive: 'bg-white/20' },
+  { idle: 'border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100', active: 'border-indigo-600 bg-indigo-600 text-white shadow-sm shadow-indigo-300/50', badge: 'border-indigo-200 bg-indigo-100 text-indigo-700', icon: 'text-indigo-500', countIdle: 'bg-indigo-100', countActive: 'bg-white/20' },
+  { idle: 'border-orange-200 bg-orange-50 text-orange-700 hover:bg-orange-100', active: 'border-orange-600 bg-orange-600 text-white shadow-sm shadow-orange-300/50', badge: 'border-orange-200 bg-orange-100 text-orange-700', icon: 'text-orange-500', countIdle: 'bg-orange-100', countActive: 'bg-white/20' },
+  { idle: 'border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100', active: 'border-cyan-600 bg-cyan-600 text-white shadow-sm shadow-cyan-300/50', badge: 'border-cyan-200 bg-cyan-100 text-cyan-700', icon: 'text-cyan-500', countIdle: 'bg-cyan-100', countActive: 'bg-white/20' },
+] as const;
+
+const UNCATEGORIZED_COLOR = {
+  idle: 'border-gray-200 bg-gray-50 text-gray-600 hover:bg-gray-100',
+  active: 'border-gray-600 bg-gray-600 text-white shadow-sm shadow-gray-300/50',
+  badge: 'border-gray-200 bg-gray-100 text-gray-600',
+  icon: 'text-gray-400',
+  countIdle: 'bg-gray-100',
+  countActive: 'bg-white/20',
+} as const;
+
+function getCategoryColor(category: string) {
+  const key = (category || '').trim();
+  if (!key || key === '__uncategorized__') return UNCATEGORIZED_COLOR;
+  let hash = 0;
+  for (let i = 0; i < key.length; i += 1) {
+    hash = (hash * 31 + key.charCodeAt(i)) >>> 0;
+  }
+  return CATEGORY_COLOR_PALETTE[hash % CATEGORY_COLOR_PALETTE.length];
+}
 
 interface DealerSummary {
   annualCycle?: string;
@@ -76,6 +109,7 @@ interface MonthlyPlan {
   whatsappTarget: number;
   productionStatus: string;
   remarks: string;
+  category: string;
   status: 'Overdue' | 'Upcoming' | 'Scheduled';
 }
 
@@ -281,6 +315,185 @@ function TextAreaShell(props: React.TextareaHTMLAttributes<HTMLTextAreaElement>)
   );
 }
 
+function CreatableCategoryCombobox({
+  value,
+  onChange,
+  options,
+  placeholder = 'Search or type a new category',
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  options: string[];
+  placeholder?: string;
+}) {
+  const [query, setQuery] = useState(value);
+  const [open, setOpen] = useState(false);
+  const [menuStyle, setMenuStyle] = useState<React.CSSProperties>({});
+  const ref = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLUListElement>(null);
+
+  useEffect(() => {
+    setQuery(value);
+  }, [value]);
+
+  const updateMenuPosition = () => {
+    const el = ref.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const menuMaxHeight = 208;
+    const openUp = spaceBelow < menuMaxHeight && rect.top > spaceBelow;
+    setMenuStyle({
+      position: 'fixed',
+      left: rect.left,
+      width: Math.max(rect.width, 180),
+      zIndex: 10050,
+      maxHeight: menuMaxHeight,
+      ...(openUp
+        ? { bottom: window.innerHeight - rect.top + 4 }
+        : { top: rect.bottom + 4 }),
+    });
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    updateMenuPosition();
+    const onReposition = () => updateMenuPosition();
+    window.addEventListener('resize', onReposition);
+    window.addEventListener('scroll', onReposition, true);
+    return () => {
+      window.removeEventListener('resize', onReposition);
+      window.removeEventListener('scroll', onReposition, true);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (ref.current?.contains(target) || menuRef.current?.contains(target)) return;
+      setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const filtered = query.trim()
+    ? options.filter((o) => o.toLowerCase().includes(query.toLowerCase()))
+    : options;
+
+  const exactMatch = options.some((o) => o.toLowerCase() === query.trim().toLowerCase());
+  const canCreate = Boolean(query.trim()) && !exactMatch;
+  const showMenu = open && (filtered.length > 0 || canCreate);
+
+  const select = (opt: string) => {
+    onChange(opt);
+    setQuery(opt);
+    setOpen(false);
+  };
+
+  const createNew = () => {
+    const next = query.trim();
+    if (!next) return;
+    onChange(next);
+    setQuery(next);
+    setOpen(false);
+  };
+
+  const clear = () => {
+    onChange('');
+    setQuery('');
+    setOpen(false);
+  };
+
+  return (
+    <div ref={ref} className="relative">
+      <div className="relative">
+        <input
+          type="text"
+          value={query}
+          placeholder={placeholder}
+          onFocus={() => {
+            setOpen(true);
+            requestAnimationFrame(updateMenuPosition);
+          }}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            onChange(e.target.value);
+            setOpen(true);
+            requestAnimationFrame(updateMenuPosition);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              if (canCreate) createNew();
+              else if (filtered[0]) select(filtered[0]);
+              else setOpen(false);
+            }
+            if (e.key === 'Escape') setOpen(false);
+          }}
+          className="w-full rounded-2xl border border-gray-200 bg-white/90 px-4 py-2.5 pr-10 text-sm shadow-sm outline-none transition placeholder:text-gray-400 focus:border-[var(--theme-primary)] focus:ring-4 focus:ring-[var(--theme-primary)]/15"
+        />
+        {query ? (
+          <button
+            type="button"
+            onClick={clear}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        ) : (
+          <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
+        )}
+      </div>
+
+      {showMenu &&
+        createPortal(
+          <ul
+            ref={menuRef}
+            style={menuStyle}
+            className="overflow-y-auto rounded-2xl border border-gray-200 bg-white shadow-xl"
+          >
+            {filtered.map((opt) => {
+              const color = getCategoryColor(opt);
+              return (
+                <li
+                  key={opt}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    select(opt);
+                  }}
+                  className={`flex cursor-pointer items-center gap-2 px-3 py-2.5 text-sm transition-colors ${
+                    opt === value
+                      ? 'bg-[var(--theme-primary)]/10 font-bold text-gray-900'
+                      : 'text-gray-700 hover:bg-gray-50'
+                  }`}
+                >
+                  <span className={`inline-flex items-center gap-1 rounded-lg border px-2 py-0.5 text-[11px] font-black ${color.badge}`}>
+                    <Tag className={`h-3 w-3 ${color.icon}`} />
+                    {opt}
+                  </span>
+                </li>
+              );
+            })}
+            {canCreate && (
+              <li
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  createNew();
+                }}
+                className="flex cursor-pointer items-center gap-2 border-t border-gray-100 px-3 py-2.5 text-sm font-bold text-emerald-700 hover:bg-emerald-50"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                Add &ldquo;{query.trim()}&rdquo;
+              </li>
+            )}
+          </ul>,
+          document.body
+        )}
+    </div>
+  );
+}
+
 export default function DealerKitPage() {
   const { colors } = useThemeColor();
   const [activeTab, setActiveTab] = useState<ActiveTab>('summary');
@@ -293,6 +506,8 @@ export default function DealerKitPage() {
 
   const [search, setSearch] = useState('');
   const [dealerSearch, setDealerSearch] = useState('');
+  const [dealerCategoryTab, setDealerCategoryTab] = useState('all');
+  const [monthlyCategoryTab, setMonthlyCategoryTab] = useState('all');
   const [monthFilter, setMonthFilter] = useState(() => new Date().toLocaleString('en-US', { month: 'long' }));
 
   const [infoModalOpen, setInfoModalOpen] = useState(false);
@@ -311,10 +526,9 @@ export default function DealerKitPage() {
 
   const [monthlyModalOpen, setMonthlyModalOpen] = useState(false);
   const [monthlyModalMode, setMonthlyModalMode] = useState<ModalMode>('add');
-  const [batchItems, setBatchItems] = useState<{ contentId?: string; month: string; medium: string; contentType: string; dueDate: string; remarks: string; fileLink?: string; isUploading?: boolean }[]>([]);
+  const [batchItems, setBatchItems] = useState<{ contentId?: string; month: string; medium: string; contentType: string; dueDate: string; remarks: string; fileLink?: string; category?: string; isUploading?: boolean }[]>([]);
 
-  const [trackingModalOpen, setTrackingModalOpen] = useState(false);
-  const [trackingForm, setTrackingForm] = useState<{ dealerId: string; contentId: string; status: string; link: string; comments: string; doneBy: string; dealerName: string; contentName: string; month: string } | null>(null);
+  const [trackingSavingKey, setTrackingSavingKey] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
 
   const [saving, setSaving] = useState(false);
@@ -374,34 +588,105 @@ export default function DealerKitPage() {
     checkAuth();
   }, []);
 
+  const dealerCategories = useMemo(() => {
+    const cats = new Set<string>();
+    let hasUncategorized = false;
+    dealers.forEach((dealer) => {
+      const cat = (dealer.category || '').trim();
+      if (cat) cats.add(cat);
+      else hasUncategorized = true;
+    });
+    const sorted = Array.from(cats).sort((a, b) => a.localeCompare(b));
+    if (hasUncategorized) sorted.push('__uncategorized__');
+    return sorted;
+  }, [dealers]);
+
+  const existingCategoryOptions = useMemo(
+    () => dealerCategories.filter((c) => c !== '__uncategorized__'),
+    [dealerCategories]
+  );
+
+  const monthlyCategories = useMemo(() => {
+    const cats = new Set<string>();
+    let hasUncategorizedPlans = false;
+
+    monthlyPlans.forEach((plan) => {
+      const cat = (plan.category || '').trim();
+      if (cat) cats.add(cat);
+      else hasUncategorizedPlans = true;
+    });
+
+    const sorted = Array.from(cats).sort((a, b) => a.localeCompare(b));
+    if (hasUncategorizedPlans) sorted.push('__uncategorized__');
+    return sorted;
+  }, [monthlyPlans]);
+
+  useEffect(() => {
+    if (monthlyCategories.length === 0) {
+      if (monthlyCategoryTab !== 'all') setMonthlyCategoryTab('all');
+      return;
+    }
+    if (monthlyCategoryTab === 'all' || !monthlyCategories.includes(monthlyCategoryTab)) {
+      setMonthlyCategoryTab(monthlyCategories[0]);
+    }
+  }, [monthlyCategories, monthlyCategoryTab]);
+
+  useEffect(() => {
+    if (dealerCategoryTab !== 'all' && !dealerCategories.includes(dealerCategoryTab)) {
+      setDealerCategoryTab('all');
+    }
+  }, [dealerCategories, dealerCategoryTab]);
+
   const filteredDealers = useMemo(() => {
     let q = search.toLowerCase();
     if (activeTab === 'monthly') {
       q = dealerSearch.toLowerCase();
     }
-    if (!q.trim()) return dealers;
-    return dealers.filter((dealer) =>
-      [
-        dealer.dealerId,
-        dealer.firmName,
-        dealer.contactPerson,
-        dealer.whatsappMobile,
-        dealer.city,
-        dealer.state,
-        dealer.pincode,
-        dealer.courierAddress,
-        dealer.category,
-        dealer.preferredLanguage,
-        dealer.relationshipOwner,
-        dealer.customerType,
-        dealer.potentialProductInterest,
-        dealer.notes,
-      ]
-        .join(' ')
-        .toLowerCase()
-        .includes(q)
-    );
-  }, [dealers, search, dealerSearch, activeTab]);
+
+    let list = dealers;
+
+    if (q.trim()) {
+      list = list.filter((dealer) =>
+        [
+          dealer.dealerId,
+          dealer.firmName,
+          dealer.contactPerson,
+          dealer.whatsappMobile,
+          dealer.city,
+          dealer.state,
+          dealer.pincode,
+          dealer.courierAddress,
+          dealer.category,
+          dealer.preferredLanguage,
+          dealer.relationshipOwner,
+          dealer.customerType,
+          dealer.potentialProductInterest,
+          dealer.notes,
+        ]
+          .join(' ')
+          .toLowerCase()
+          .includes(q)
+      );
+    }
+
+    if (activeTab === 'dealers' && dealerCategoryTab !== 'all') {
+      list = list.filter((dealer) => {
+        const cat = (dealer.category || '').trim();
+        if (dealerCategoryTab === '__uncategorized__') return !cat;
+        return cat === dealerCategoryTab;
+      });
+    }
+
+    if (activeTab === 'monthly' && monthlyCategoryTab !== 'all') {
+      list = list.filter((dealer) => {
+        const cat = (dealer.category || '').trim();
+        if (monthlyCategoryTab === '__uncategorized__') return !cat;
+        return cat === monthlyCategoryTab;
+      });
+    }
+
+    return list;
+  }, [dealers, search, dealerSearch, activeTab, dealerCategoryTab, monthlyCategoryTab]);
 
   const monthlyMonths = useMemo(() => {
     const set = new Set(
@@ -422,14 +707,23 @@ export default function DealerKitPage() {
         if (derivedMonth.toLowerCase() !== monthFilter.toLowerCase()) return false;
       }
 
+      if (monthlyCategoryTab !== 'all') {
+        const cat = (plan.category || '').trim();
+        if (monthlyCategoryTab === '__uncategorized__') {
+          if (cat) return false;
+        } else if (cat !== monthlyCategoryTab) {
+          return false;
+        }
+      }
+
       if (!search.trim()) return true;
       const q = search.toLowerCase();
-      return [plan.contentId, derivedMonth, plan.topic, plan.medium, plan.contentType, plan.draftOwner, plan.designOwner]
+      return [plan.contentId, derivedMonth, plan.topic, plan.medium, plan.contentType, plan.draftOwner, plan.designOwner, plan.category]
         .join(' ')
         .toLowerCase()
         .includes(q);
     });
-  }, [monthlyPlans, monthFilter, search]);
+  }, [monthlyPlans, monthFilter, search, monthlyCategoryTab]);
 
   const stats = useMemo(() => {
     const totalDealers = dealers.length;
@@ -484,16 +778,19 @@ export default function DealerKitPage() {
   };
 
   const BATCH_TEMPLATE = [
-    { month: '', medium: 'WhatsApp', contentType: 'Festival Greeting', remarks: 'Send on festival morning or evening before', fileLink: '' },
-    { month: '', medium: 'WhatsApp', contentType: 'Video 1', remarks: '30-60 sec; dealer education/product', fileLink: '' },
-    { month: '', medium: 'Courier', contentType: 'Insight Letter', remarks: 'Print 10 extra copies', fileLink: '' },
-    { month: '', medium: 'Courier', contentType: 'Special Report', remarks: 'Send inside monthly packet', fileLink: '' },
-    { month: '', medium: 'WhatsApp', contentType: 'Video 2', remarks: '30-60 sec; send after 5 PM', fileLink: '' },
+    { month: '', medium: 'WhatsApp', contentType: 'Festival Greeting', remarks: 'Send on festival morning or evening before', fileLink: '', category: '' },
+    { month: '', medium: 'WhatsApp', contentType: 'Video 1', remarks: '30-60 sec; dealer education/product', fileLink: '', category: '' },
+    { month: '', medium: 'Courier', contentType: 'Insight Letter', remarks: 'Print 10 extra copies', fileLink: '', category: '' },
+    { month: '', medium: 'Courier', contentType: 'Special Report', remarks: 'Send inside monthly packet', fileLink: '', category: '' },
+    { month: '', medium: 'WhatsApp', contentType: 'Video 2', remarks: '30-60 sec; send after 5 PM', fileLink: '', category: '' },
   ];
 
   const openAddMonthlyModal = () => {
     setMonthlyModalMode('add');
-    setBatchItems(BATCH_TEMPLATE.map(t => ({ ...t, dueDate: '' })));
+    const defaultCategory = monthlyCategoryTab !== 'all' && monthlyCategoryTab !== '__uncategorized__'
+      ? monthlyCategoryTab
+      : '';
+    setBatchItems(BATCH_TEMPLATE.map(t => ({ ...t, dueDate: '', category: defaultCategory || t.category })));
     setMonthlyModalOpen(true);
   };
 
@@ -507,6 +804,7 @@ export default function DealerKitPage() {
       dueDate: plan.dueDate || '',
       remarks: plan.remarks || '',
       fileLink: plan.fileLink || '',
+      category: plan.category || '',
     }]);
     setMonthlyModalOpen(true);
   };
@@ -571,6 +869,7 @@ export default function DealerKitPage() {
           dueDate: item.dueDate,
           remarks: item.remarks,
           fileLink: item.fileLink,
+          category: item.category || '',
         };
       });
 
@@ -649,9 +948,8 @@ export default function DealerKitPage() {
     }
   };
 
-  const openTrackingModal = (dealer: Dealer, plan: MonthlyPlan, tracking?: TrackingStatus) => {
-    let defaultDoneBy = tracking?.doneBy || loggedInUser;
-    
+  const getDoneByUser = () => {
+    let defaultDoneBy = loggedInUser;
     if (!defaultDoneBy && typeof window !== 'undefined') {
       try {
         const erpUserStr = localStorage.getItem('erp_logged_user');
@@ -663,19 +961,71 @@ export default function DealerKitPage() {
         }
       } catch (e) { }
     }
+    return defaultDoneBy;
+  };
 
-    setTrackingForm({
-      dealerId: dealer.dealerId,
-      contentId: plan.contentId,
-      status: 'Done',
-      link: tracking?.link || '',
-      comments: tracking?.comments || '',
-      doneBy: defaultDoneBy,
-      dealerName: dealer.firmName || dealer.contactPerson || dealer.dealerId,
-      contentName: plan.contentType || '',
-      month: plan.dueDate ? new Date(plan.dueDate).toLocaleString('en-US', { month: 'long' }) : '',
+  const toggleTrackingStatus = async (dealer: Dealer, plan: MonthlyPlan, tracking?: TrackingStatus) => {
+    const key = `${dealer.dealerId}-${plan.contentId}`;
+    const isDone = tracking?.status === 'Done';
+    const nextStatus = isDone ? 'Pending' : 'Done';
+    const doneBy = nextStatus === 'Done' ? getDoneByUser() : '';
+    const previousTracking = trackingData;
+
+    // Optimistic local update — no full page reload
+    setTrackingData((prev) => {
+      const idx = prev.findIndex(
+        (t) => t.dealerId === dealer.dealerId && t.contentId === plan.contentId
+      );
+      if (idx >= 0) {
+        const next = [...prev];
+        next[idx] = {
+          ...next[idx],
+          status: nextStatus,
+          doneBy,
+          comments: '',
+        };
+        return next;
+      }
+      return [
+        ...prev,
+        {
+          dealerId: dealer.dealerId,
+          contentId: plan.contentId,
+          status: nextStatus,
+          link: '',
+          doneBy,
+          comments: '',
+        },
+      ];
     });
-    setTrackingModalOpen(true);
+
+    try {
+      setTrackingSavingKey(key);
+      const response = await fetch('/api/dealer-kit/tracking', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          dealerId: dealer.dealerId,
+          contentId: plan.contentId,
+          dealerName: dealer.firmName || dealer.contactPerson || dealer.dealerId,
+          month: plan.dueDate ? new Date(plan.dueDate).toLocaleString('en-US', { month: 'long' }) : '',
+          contentName: plan.contentType || '',
+          status: nextStatus,
+          link: tracking?.link || '',
+          comments: '',
+          doneBy,
+        }),
+      });
+
+      if (!response.ok) throw new Error('Failed to update tracking');
+
+      toast.success(nextStatus === 'Done' ? 'Marked as done' : 'Marked as pending');
+    } catch (error: any) {
+      setTrackingData(previousTracking);
+      toast.error(error.message || 'Failed to update status');
+    } finally {
+      setTrackingSavingKey(null);
+    }
   };
 
   const handleBatchFileUpload = async (e: React.ChangeEvent<HTMLInputElement>, index: number) => {
@@ -718,38 +1068,6 @@ export default function DealerKitPage() {
       });
     } finally {
       e.target.value = '';
-    }
-  };
-
-  const saveTracking = async () => {
-    if (!trackingForm) return;
-    try {
-      setSaving(true);
-      const response = await fetch('/api/dealer-kit/tracking', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          dealerId: trackingForm.dealerId,
-          contentId: trackingForm.contentId,
-          dealerName: trackingForm.dealerName,
-          month: trackingForm.month,
-          contentName: trackingForm.contentName,
-          status: trackingForm.status,
-          link: trackingForm.link,
-          comments: trackingForm.comments,
-          doneBy: trackingForm.doneBy,
-        }),
-      });
-
-      if (!response.ok) throw new Error('Failed to update tracking');
-
-      toast.success('Status updated');
-      setTrackingModalOpen(false);
-      await fetchAll();
-    } catch (error: any) {
-      toast.error(error.message || 'Failed to update status');
-    } finally {
-      setSaving(false);
     }
   };
 
@@ -1128,6 +1446,55 @@ export default function DealerKitPage() {
                         </motion.button>
                       </div>
 
+                      {dealerCategories.length > 0 && (
+                        <div className="flex flex-wrap items-center gap-2 border-b border-gray-100 bg-white px-4 py-3">
+                          <button
+                            type="button"
+                            onClick={() => setDealerCategoryTab('all')}
+                            className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-black transition-all ${
+                              dealerCategoryTab === 'all'
+                                ? 'border-slate-700 bg-slate-700 text-white shadow-sm shadow-slate-300/50'
+                                : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100'
+                            }`}
+                          >
+                            All
+                            <span className={`rounded-md px-1.5 py-0.5 text-[10px] ${
+                              dealerCategoryTab === 'all' ? 'bg-white/20' : 'bg-slate-200/80'
+                            }`}>
+                              {dealers.length}
+                            </span>
+                          </button>
+                          {dealerCategories.map((category) => {
+                            const isUncategorized = category === '__uncategorized__';
+                            const label = isUncategorized ? 'Uncategorized' : category;
+                            const color = getCategoryColor(category);
+                            const count = dealers.filter((d) => {
+                              const cat = (d.category || '').trim();
+                              return isUncategorized ? !cat : cat === category;
+                            }).length;
+                            const isActive = dealerCategoryTab === category;
+                            return (
+                              <button
+                                key={category}
+                                type="button"
+                                onClick={() => setDealerCategoryTab(category)}
+                                className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-black transition-all ${
+                                  isActive ? color.active : color.idle
+                                }`}
+                              >
+                                <Tag className={`h-3 w-3 ${isActive ? 'text-white' : color.icon}`} />
+                                {label}
+                                <span className={`rounded-md px-1.5 py-0.5 text-[10px] ${
+                                  isActive ? color.countActive : color.countIdle
+                                }`}>
+                                  {count}
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+
                       <div className="overflow-auto">
                         <table className="w-full text-sm">
                           <thead className="bg-amber-700 text-amber-50">
@@ -1176,8 +1543,20 @@ export default function DealerKitPage() {
                                 <td className="px-4 py-3 text-gray-700 align-top">
                                   <div className="space-y-2 text-sm">
                                     <div className="flex items-center gap-2" title="Category">
-                                      <Tag className="h-4 w-4 text-fuchsia-500 shrink-0" />
-                                      <span>{dealer.category || '-'}</span>
+                                      {dealer.category ? (() => {
+                                        const color = getCategoryColor(dealer.category);
+                                        return (
+                                          <span className={`inline-flex items-center gap-1.5 rounded-lg border px-2 py-0.5 text-xs font-black ${color.badge}`}>
+                                            <Tag className={`h-3.5 w-3.5 ${color.icon}`} />
+                                            {dealer.category}
+                                          </span>
+                                        );
+                                      })() : (
+                                        <span className="inline-flex items-center gap-1.5 text-sm text-gray-400">
+                                          <Tag className="h-4 w-4" />
+                                          -
+                                        </span>
+                                      )}
                                     </div>
                                     <div className="flex items-center gap-2" title="Preferred Language">
                                       <Languages className="h-4 w-4 text-blue-500 shrink-0" />
@@ -1321,6 +1700,39 @@ export default function DealerKitPage() {
                         </div>
                       </div>
 
+                      {monthlyCategories.length > 0 && (
+                        <div className="flex flex-wrap items-center gap-2 border-b border-gray-100 bg-white px-4 py-3">
+                          {monthlyCategories.map((category) => {
+                            const isUncategorized = category === '__uncategorized__';
+                            const label = isUncategorized ? 'Uncategorized' : category;
+                            const color = getCategoryColor(category);
+                            const planCount = monthlyPlans.filter((p) => {
+                              const cat = (p.category || '').trim();
+                              return isUncategorized ? !cat : cat === category;
+                            }).length;
+                            const isActive = monthlyCategoryTab === category;
+                            return (
+                              <button
+                                key={category}
+                                type="button"
+                                onClick={() => setMonthlyCategoryTab(category)}
+                                className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-black transition-all ${
+                                  isActive ? color.active : color.idle
+                                }`}
+                              >
+                                <Tag className={`h-3 w-3 ${isActive ? 'text-white' : color.icon}`} />
+                                {label}
+                                <span className={`rounded-md px-1.5 py-0.5 text-[10px] ${
+                                  isActive ? color.countActive : color.countIdle
+                                }`}>
+                                  {planCount}
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+
                       <div className="overflow-auto max-h-[65vh] border-b border-gray-100 shadow-inner rounded-b-2xl">
                         <table className="w-full text-sm whitespace-nowrap">
                           <thead className="bg-gray-50 text-gray-700 sticky top-0 z-30 shadow-sm">
@@ -1398,36 +1810,42 @@ export default function DealerKitPage() {
                                   plans.map(plan => {
                                     const tracking = trackingData.find(t => t.dealerId === dealer.dealerId && t.contentId === plan.contentId);
                                     const isDone = tracking?.status === 'Done';
+                                    const cellKey = `${dealer.dealerId}-${plan.contentId}`;
+                                    const isSaving = trackingSavingKey === cellKey;
 
                                     return (
                                       <td key={`cell-${dealer.dealerId}-${plan.contentId}`} className="px-4 py-3 text-center border-r border-gray-300 min-w-[120px]">
-                                        <div className={`flex items-center justify-between gap-2 rounded-xl px-3 py-2 transition ${isDone ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-gray-50 text-gray-500 border border-gray-200'}`}>
+                                        <label
+                                          className={`inline-flex cursor-pointer items-center gap-2 rounded-xl px-3 py-2 transition ${
+                                            isDone
+                                              ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                                              : 'bg-gray-50 text-gray-500 border border-gray-200 hover:border-emerald-200 hover:bg-emerald-50/40'
+                                          } ${isSaving ? 'opacity-60 pointer-events-none' : ''}`}
+                                        >
+                                          {isSaving ? (
+                                            <Loader2 className="h-4 w-4 animate-spin text-emerald-600" />
+                                          ) : (
+                                            <input
+                                              type="checkbox"
+                                              checked={isDone}
+                                              onChange={() => toggleTrackingStatus(dealer, plan, tracking)}
+                                              className="h-4 w-4 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                                            />
+                                          )}
                                           <span className="text-xs font-bold">{isDone ? 'Done' : 'Pending'}</span>
-                                          <div className="flex items-center gap-1">
-                                            {isDone && tracking?.link && (
-                                              <a href={tracking.link} target="_blank" rel="noreferrer" className="text-emerald-600 hover:text-emerald-800 hover:bg-emerald-100 p-1 rounded-md" title="View Video/Link">
-                                                <Link2 className="h-3.5 w-3.5" />
-                                              </a>
-                                            )}
-                                            {tracking?.comments && (
-                                              <div className="group relative flex items-center">
-                                                <div className="text-amber-500 hover:text-amber-700 hover:bg-amber-50 p-1 rounded-md cursor-help">
-                                                  <MessageSquare className="h-3.5 w-3.5" />
-                                                </div>
-                                                <div className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 -translate-x-1/2 w-48 opacity-0 transition-opacity group-hover:opacity-100 bg-gray-900 text-white text-[11px] font-normal normal-case tracking-normal rounded-lg py-2 px-3 text-center shadow-xl whitespace-normal">
-                                                  {tracking.comments}
-                                                  <div className="absolute top-full left-1/2 -ml-1.5 border-[6px] border-transparent border-t-gray-900"></div>
-                                                </div>
-                                              </div>
-                                            )}
-                                            <button
-                                              onClick={() => openTrackingModal(dealer, plan, tracking)}
-                                              className="p-1 rounded-md hover:bg-black/5 text-gray-400 hover:text-gray-700"
+                                          {isDone && tracking?.link && (
+                                            <a
+                                              href={tracking.link}
+                                              target="_blank"
+                                              rel="noreferrer"
+                                              onClick={(e) => e.stopPropagation()}
+                                              className="text-emerald-600 hover:text-emerald-800 p-0.5 rounded-md"
+                                              title="View Video/Link"
                                             >
-                                              <Pencil className="h-3.5 w-3.5" />
-                                            </button>
-                                          </div>
-                                        </div>
+                                              <Link2 className="h-3.5 w-3.5" />
+                                            </a>
+                                          )}
+                                        </label>
                                       </td>
                                     );
                                   })
@@ -1525,7 +1943,14 @@ export default function DealerKitPage() {
                       </div>
                       <Field label="Pincode"><InputShell value={dealerForm.pincode} onChange={(e) => setDealerForm((s) => ({ ...s, pincode: e.target.value }))} placeholder="Pincode" /></Field>
                       <div className="grid gap-4 sm:grid-cols-2">
-                        <Field label="Category"><InputShell value={dealerForm.category} onChange={(e) => setDealerForm((s) => ({ ...s, category: e.target.value }))} placeholder="Category" /></Field>
+                        <Field label="Category">
+                          <CreatableCategoryCombobox
+                            value={dealerForm.category}
+                            onChange={(category) => setDealerForm((s) => ({ ...s, category }))}
+                            options={existingCategoryOptions}
+                            placeholder="Search or add category"
+                          />
+                        </Field>
                         <Field label="Preferred Language">
                           <div className="grid grid-cols-2 gap-2">
                             {(['Hindi', 'English'] as const).map((lang) => (
@@ -1607,7 +2032,7 @@ export default function DealerKitPage() {
               initial={{ opacity: 0, y: 18, scale: 0.98 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: 18, scale: 0.98 }}
-              className="w-full max-w-5xl overflow-hidden rounded-[2rem] border border-white/70 bg-white shadow-[0_30px_80px_-35px_rgba(0,0,0,0.35)]"
+              className="w-full max-w-6xl overflow-hidden rounded-[2rem] border border-white/70 bg-white shadow-[0_30px_80px_-35px_rgba(0,0,0,0.35)]"
             >
               <div className="bg-gradient-to-r from-violet-500 via-fuchsia-500 to-rose-500 px-6 py-5 text-gray-900">
                 <div className="flex items-start justify-between gap-4">
@@ -1644,6 +2069,7 @@ export default function DealerKitPage() {
                             <th className="px-4 py-3 text-left font-black uppercase tracking-[0.18em] text-[11px] w-48">Due Date</th>
                             <th className="px-4 py-3 text-left font-black uppercase tracking-[0.18em] text-[11px]">Remarks</th>
                             <th className="px-4 py-3 text-left font-black uppercase tracking-[0.18em] text-[11px] w-24">Upload</th>
+                            <th className="px-4 py-3 text-left font-black uppercase tracking-[0.18em] text-[11px] min-w-[180px]">Category</th>
                             <th className="px-4 py-3 text-right font-black uppercase tracking-[0.18em] text-[11px]">Action</th>
                           </tr>
                         </thead>
@@ -1733,6 +2159,18 @@ export default function DealerKitPage() {
                                   </div>
                                 )}
                               </td>
+                              <td className="px-4 py-3 min-w-[180px]">
+                                <CreatableCategoryCombobox
+                                  value={item.category || ''}
+                                  onChange={(category) => {
+                                    const newItems = [...batchItems];
+                                    newItems[i].category = category;
+                                    setBatchItems(newItems);
+                                  }}
+                                  options={existingCategoryOptions}
+                                  placeholder="Category"
+                                />
+                              </td>
                               <td className="px-4 py-3 text-right">
                                 <button
                                   type="button"
@@ -1755,7 +2193,7 @@ export default function DealerKitPage() {
                         <button
                           type="button"
                           onClick={() => {
-                            setBatchItems([...batchItems, { month: '', medium: '', contentType: '', dueDate: '', remarks: '' }]);
+                            setBatchItems([...batchItems, { month: '', medium: '', contentType: '', dueDate: '', remarks: '', category: monthlyCategoryTab !== 'all' && monthlyCategoryTab !== '__uncategorized__' ? monthlyCategoryTab : '' }]);
                           }}
                           className="inline-flex items-center gap-2 rounded-xl bg-white px-3 py-1.5 text-sm font-black text-gray-700 shadow-sm border border-gray-200 hover:bg-gray-50 hover:text-gray-900 transition"
                         >
@@ -1846,76 +2284,7 @@ export default function DealerKitPage() {
       </AnimatePresence>
 
       <AnimatePresence>
-        {trackingModalOpen && trackingForm && (
-          <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm">
-            <motion.div
-              initial={{ opacity: 0, y: 18, scale: 0.98 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 18, scale: 0.98 }}
-              className="w-full max-w-lg overflow-hidden rounded-[2rem] border border-white/70 bg-white shadow-[0_30px_80px_-35px_rgba(0,0,0,0.35)]"
-            >
-              <div className="bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 px-6 py-5 text-white">
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <p className="text-[11px] font-black uppercase tracking-[0.2em] text-white/80">Tracking Update</p>
-                    <h3 className="mt-1 text-2xl font-black">{trackingForm.dealerName}</h3>
-                    <p className="mt-1 text-sm font-medium text-white/90">{trackingForm.month} - {trackingForm.contentName}</p>
-                  </div>
-                  <button
-                    onClick={() => setTrackingModalOpen(false)}
-                    className="rounded-2xl bg-black/10 p-2.5 text-white transition hover:bg-black/20"
-                  >
-                    <X className="h-5 w-5" />
-                  </button>
-                </div>
-              </div>
-
-              <div className="bg-gradient-to-b from-white to-emerald-50/30 p-6">
-                <div className="grid gap-5">
-                  <div className="transition-all duration-300 opacity-100 flex flex-col gap-5">
-                    <Field label="Comments Received" hint="Any comments received from dealer">
-                      <div className="relative">
-                        <MessageSquare className="absolute left-4 top-3 h-4 w-4 text-gray-400" />
-                        <TextAreaShell
-                          className="pl-11 min-h-[80px]"
-                          placeholder="Comments..."
-                          value={trackingForm.comments}
-                          onChange={(e) => setTrackingForm(prev => prev ? { ...prev, comments: e.target.value } : null)}
-                        />
-                      </div>
-                    </Field>
-
-                    <Field label="Done By" hint="Person who completed this task">
-                      <div className="relative">
-                        <User className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-                        <InputShell
-                          className="pl-11"
-                          placeholder="Your Name"
-                          value={trackingForm.doneBy}
-                          onChange={(e) => setTrackingForm(prev => prev ? { ...prev, doneBy: e.target.value } : null)}
-                          disabled={trackingForm.status !== 'Done'}
-                        />
-                      </div>
-                    </Field>
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex flex-col gap-3 border-t border-gray-100 bg-white px-6 py-4 sm:flex-row sm:justify-end">
-                <button onClick={() => setTrackingModalOpen(false)} className="rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-black text-gray-700 hover:bg-gray-50">
-                  Cancel
-                </button>
-                <button onClick={saveTracking} disabled={saving} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-500 px-5 py-2.5 text-sm font-black text-white shadow-lg shadow-emerald-500/20 hover:from-emerald-600 hover:to-teal-600">
-                  {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Save Update'}
-                </button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* Info Modal */}
-      <AnimatePresence>
+        {/* Info Modal */}
         {infoModalOpen && infoModalData && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
             <motion.div
