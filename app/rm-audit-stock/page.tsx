@@ -62,14 +62,14 @@ export default function RMAuditStockPage() {
 
         // Initialize items from IMS data, using category mapping
         const initialItems = (imsDataJson || []).map((d: any) => {
+          // Use the exact Live Stock column from IMS (do not include transit)
           const live = Number(d.live_stock) || 0;
-          const transit = Number(d.material_in_transit) || 0;
           const name = (d.item_name || d.sku_code || '-').toString();
           const cat = map[name.toLowerCase().trim()] || 'Others';
           return {
             id: Math.random().toString(),
             rawMaterial: name,
-            liveStock: String(live + transit),
+            liveStock: String(live),
             actualStock: '',
             unit: d.unit || 'PCS',
             category: cat
