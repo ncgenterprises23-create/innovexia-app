@@ -119,6 +119,27 @@ export default function PurchaseFMSPage() {
             if (res.ok) {
                 const data = await res.json();
                 setOrders(data);
+                // Fetch PO receipts mapping and merge received/pending into orders
+                try {
+                    const poResp = await fetch(`/api/po-receipts?sheetId=1c51Nga9MgU1u41COK3eiEUUfZlTKhL6WjwEu4c__cb8&sheetName=Sheet1`);
+                    if (poResp.ok) {
+                        const poJson = await poResp.json();
+                        const mapping: Record<string, { received: number; pending: number }> = poJson.mapping || {};
+                        const merged = (data || []).map((o: PurchaseFMSOrder) => {
+                            const po = String(o['Po No.'] || '').trim();
+                            const entry = mapping[po] || null;
+                            return {
+                                ...o,
+                                Recieved_Qty_4: entry ? entry.received : (o.Recieved_Qty_4 ?? 0),
+                                // store pending if needed as a computed field or custom key
+                                _pending_from_sheet: entry ? entry.pending : (Math.max(0, Number(o.MOQ || 0) - Number(o.Recieved_Qty_4 || 0))),
+                            };
+                        });
+                        setOrders(merged);
+                    }
+                } catch (e) {
+                    console.error('Failed to fetch PO receipts mapping', e);
+                }
             }
         } catch (error) {
             toast.error('Failed to fetch orders');
@@ -1612,16 +1633,16 @@ export default function PurchaseFMSPage() {
                                                                         {stepNum === 4 && (
                                                                             <div className="col-span-full">
                                                                                 <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1 block">Received Qty (MOQ: {item.MOQ || 0})</label>
-                                                                                <input
-                                                                                    type="number"
-                                                                                    value={bulkUpdates[item.id]?.Recieved_Qty_4 ?? (item.Recieved_Qty_4 || '')}
-                                                                                    onChange={(e) => setBulkUpdates(prev => ({
-                                                                                        ...prev,
-                                                                                        [item.id]: { ...prev[item.id], Recieved_Qty_4: e.target.value }
-                                                                                    }))}
-                                                                                    className="w-full px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-[11px] font-bold text-slate-900 dark:text-white outline-none focus:ring-1 focus:ring-[var(--theme-primary)]"
-                                                                                    placeholder="Enter received qty..."
-                                                                                />
+                                                                                <div className="flex gap-3 items-center">
+                                                                                    <div className="w-full md:w-1/2 px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-[11px] font-bold text-slate-900 dark:text-white">
+                                                                                        <div className="text-xs text-gray-400 mb-1">Received (sheet)</div>
+                                                                                        <div className="text-lg font-extrabold">{bulkUpdates[item.id]?.Recieved_Qty_4 ?? (item.Recieved_Qty_4 ?? 0)}</div>
+                                                                                    </div>
+                                                                                    <div className="w-full md:w-1/2 px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-[11px] font-bold text-slate-900 dark:text-white">
+                                                                                        <div className="text-xs text-gray-400 mb-1">Pending (sheet)</div>
+                                                                                        <div className="text-lg font-extrabold text-amber-600">{(item._pending_from_sheet !== undefined) ? item._pending_from_sheet : Math.max(0, Number(item.MOQ || 0) - Number(item.Recieved_Qty_4 || 0))}</div>
+                                                                                    </div>
+                                                                                </div>
                                                                             </div>
                                                                         )}
                                                                     </div>
