@@ -5,6 +5,7 @@ import LayoutWrapper from '@/components/LayoutWrapper';
 import { useToast } from '@/components/ToastProvider';
 import { useLoader } from '@/components/LoaderProvider';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useSetupViewFromQuery } from '@/hooks/useSetupViewFromQuery';
 import {
     Loader2, Save, X, Plus, Trash2, Pencil, Search, History, AlertTriangle, ClipboardCheck, ArrowRight,
     Filter, LayoutGrid, List, CheckCircle2, Download, Trash, ChevronLeft, ChevronRight, Ban, RotateCcw,
@@ -98,6 +99,7 @@ export default function JobWorkPage() {
     const [loading, setLoading] = useState(true);
     const [currentPage, setCurrentPage] = useState(1);
     const [viewMode, setViewMode] = useState<ViewMode>('data');
+    useSetupViewFromQuery(setViewMode);
     const [searchTerm, setSearchTerm] = useState('');
     const [activeStepFilter, setActiveStepFilter] = useState<number | 'all'>('all');
     const [activeTimeFilter, setActiveTimeFilter] = useState<string | null>(null);

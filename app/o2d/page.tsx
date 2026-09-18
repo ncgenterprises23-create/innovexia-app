@@ -7,6 +7,7 @@ import { useToast } from '@/components/ToastProvider';
 import { useLoader } from '@/components/LoaderProvider';
 import SearchableDropdown from '@/components/SearchableDropdown';
 import DateRangePicker from '@/components/DateRangePicker';
+import { useSetupViewFromQuery } from '@/hooks/useSetupViewFromQuery';
 
 interface OrderItem {
     id: number;
@@ -155,6 +156,7 @@ export default function O2DPage() {
     });
     const [orderItems, setOrderItems] = useState<OrderItem[]>([{ id: Date.now(), item: '', qty: '' } as OrderItem]);
     const [viewMode, setViewMode] = useState<'group' | 'details' | 'cancelled' | 'setup'>('group');
+    useSetupViewFromQuery(setViewMode);
     const [stepConfig, setStepConfig] = useState<StepConfig[]>([]);
     const [isSavingConfig, setIsSavingConfig] = useState(false);
     const [showDelayedOnly, setShowDelayedOnly] = useState(false);

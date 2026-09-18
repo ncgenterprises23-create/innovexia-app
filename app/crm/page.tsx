@@ -5,6 +5,7 @@ import LayoutWrapper from '@/components/LayoutWrapper';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useToast } from '@/components/ToastProvider';
 import { useLoader } from '@/components/LoaderProvider';
+import { useSetupViewFromQuery } from '@/hooks/useSetupViewFromQuery';
 
 interface CRMData {
     id: string | number;
@@ -69,6 +70,7 @@ export default function CRMPage() {
     const [data, setData] = useState<CRMData[]>([]);
     const [loading, setLoading] = useState(true);
     const [viewMode, setViewMode] = useState<'data' | 'setup'>('data');
+    useSetupViewFromQuery(setViewMode);
     const [isCancelledView, setIsCancelledView] = useState(false);
     const [currentPage, setCurrentPage] = useState(1);
     const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);

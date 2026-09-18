@@ -25,6 +25,7 @@ export default function Sidebar({ isOpen, setIsOpen }: SidebarProps) {
     { label: 'Dashboard', icon: 'chart', href: '/dashboard', roles: ['Admin', 'Manager', 'Employee'] },
     { label: 'PC Dashboard', icon: 'chart', href: '/pc-dashboard', roles: ['Admin', 'Manager', 'Employee'] },
     { label: 'Score', icon: 'trophy', href: '/score', roles: ['Admin', 'Manager'] },
+    { label: 'FMS Doer Alignment', icon: 'users', href: '/fms-doer-alignment', roles: ['Admin', 'Manager'] },
     { label: 'Attendance', icon: 'clock', href: '/attendance', roles: ['Admin', 'Manager', 'Employee'] },
     {
       label: 'Tasks', icon: 'clipboard', roles: ['Admin', 'Manager', 'Employee'], children: [

@@ -9,6 +9,7 @@ import {
     Pencil, Trash2, X, Save, Loader2, AlertTriangle,
     MessageSquareWarning, Ban, RotateCcw
 } from 'lucide-react';
+import { useSetupViewFromQuery } from '@/hooks/useSetupViewFromQuery';
 
 interface StepConfig {
     step: number;
@@ -166,6 +167,7 @@ export default function ClientComplainPage() {
     const [loading, setLoading] = useState(true);
     const [currentPage, setCurrentPage] = useState(1);
     const [viewMode, setViewMode] = useState<ViewMode>('data');
+    useSetupViewFromQuery(setViewMode);
     const [activeStepFilter, setActiveStepFilter] = useState<number | 'all'>('all');
     const [activeTimeFilter, setActiveTimeFilter] = useState<string | null>(null);
 

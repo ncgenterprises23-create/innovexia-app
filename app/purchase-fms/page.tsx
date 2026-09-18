@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import LayoutWrapper from '@/components/LayoutWrapper';
 import { useToast } from '@/components/ToastProvider';
 import { useLoader } from '@/components/LoaderProvider';
+import { useSetupViewFromQuery } from '@/hooks/useSetupViewFromQuery';
 import { Calendar } from 'lucide-react';
 
 interface StepConfig {
@@ -63,6 +64,7 @@ export default function PurchaseFMSPage() {
     const [isLoading, setIsLoading] = useState(true);
     const [isConfigModalOpen, setIsConfigModalOpen] = useState(false); // Kept for logic but will be used as part of viewMode
     const [viewMode, setViewMode] = useState<'data' | 'setup'>('data');
+    useSetupViewFromQuery(setViewMode);
     const [currentPage, setCurrentPage] = useState(1);
     const [stepConfigs, setStepConfigs] = useState<StepConfig[]>([]);
     const [systemUsers, setSystemUsers] = useState<any[]>([]);

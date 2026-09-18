@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import LayoutWrapper from '@/components/LayoutWrapper';
 import { useToast } from '@/components/ToastProvider';
 import { useLoader } from '@/components/LoaderProvider';
+import { useSetupViewFromQuery } from '@/hooks/useSetupViewFromQuery';
 
 interface StepConfig {
     step: number;
@@ -63,6 +64,7 @@ export default function FactoryRequirementFMS() {
     const [currentPage, setCurrentPage] = useState(1);
     const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
     const [viewMode, setViewMode] = useState<'data' | 'setup'>('data');
+    useSetupViewFromQuery(setViewMode);
     const [isCancelledView, setIsCancelledView] = useState(false);
     const [stepConfigs, setStepConfigs] = useState<StepConfig[]>([]);
     const [systemUsers, setSystemUsers] = useState<any[]>([]);

@@ -9,6 +9,7 @@ import {
     Loader2, Save, X, Plus, Trash2, Pencil, Search, History, AlertTriangle, MessageSquareWarning, ArrowRight,
     Filter, LayoutGrid, List, CheckCircle2, Clock, Calendar, Download, Trash, ChevronLeft, ChevronRight, Ban, RotateCcw
 } from 'lucide-react';
+import { useSetupViewFromQuery } from '@/hooks/useSetupViewFromQuery';
 
 interface StepConfig {
     step: number;
@@ -85,6 +86,7 @@ export default function RMDefectsPage() {
     const [loading, setLoading] = useState(true);
     const [currentPage, setCurrentPage] = useState(1);
     const [viewMode, setViewMode] = useState<ViewMode>('data');
+    useSetupViewFromQuery(setViewMode);
     const [activeStepFilter, setActiveStepFilter] = useState<number | 'all'>('all');
     const [activeTimeFilter, setActiveTimeFilter] = useState<string | null>(null);
 
