@@ -37,6 +37,7 @@ interface PurchaseFMSOrder {
     Status_5?: string | null;
     Cancelled?: string | null;
     Recieved_Qty_4?: string | number;
+    _pending_from_sheet?: number;
 }
 
 const STAGES = [
