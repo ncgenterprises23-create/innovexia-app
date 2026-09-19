@@ -47,6 +47,7 @@ export default function ClientInterfacePage() {
     'Mfg Date': '',
     'Expiry Date': '',
     'Product Image': null as File | null,
+    'Existing Image': '',
   };
   const [inventoryItems, setInventoryItems] = useState([{...defaultInventoryItem}]);
   const [isUploading, setIsUploading] = useState(false);
@@ -272,26 +273,70 @@ export default function ClientInterfacePage() {
     setShowOrderModal(true);
   };
 
+  const inventoryDuplicateKey = (row: any) => {
+    const text = (v: any) => String(v ?? '').trim().toLowerCase();
+    const num = (v: any) => {
+      const n = Number(String(v ?? '').replace(/,/g, '').trim());
+      return Number.isFinite(n) ? String(n) : text(v);
+    };
+    const date = (v: any) => {
+      const formatted = formatDateForLocalInput(v);
+      return formatted ? formatted.split('T')[0] : String(v ?? '').trim().slice(0, 10);
+    };
+    return [
+      text(row['Party Name']),
+      text(row['PI Number']),
+      text(row['Product Name']),
+      num(row['Weight/Size'] ?? row['Weight_Size']),
+      num(row['Order Qty'] ?? row['Order_Qty']),
+      num(row['Price']),
+      num(row['Received Qty'] ?? row['Received_Qty']),
+      date(row['Mfg Date'] ?? row['MFG Date'] ?? row['Mfg_Date']),
+      date(row['Expiry Date'] ?? row['Expiry_Date']),
+    ].join('|');
+  };
+
   const handleInventorySubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!inventoryGlobal['Party Name'] || !inventoryGlobal['PI Number']) {
       addToast('Party Name and PI Number are required', 'error');
       return;
     }
-    // For new records, require images. For edits, image is optional (keeps existing)
-    if (!inventoryEditItem) {
-      const hasMissingImage = inventoryItems.some(item => !item['Product Image']);
-      if (hasMissingImage) {
-        addToast('Product image is required for all rows', 'error');
-        return;
-      }
+
+    const existingKeys = new Set((data || []).map((row: any) => inventoryDuplicateKey(row)));
+    const itemsForSave = inventoryEditItem
+      ? inventoryItems
+      : inventoryItems.filter((item) => {
+          if (!String(item['Product Name'] || '').trim()) return false;
+          return !existingKeys.has(inventoryDuplicateKey({
+            'Party Name': inventoryGlobal['Party Name'],
+            'PI Number': inventoryGlobal['PI Number'],
+            'Product Name': item['Product Name'],
+            'Weight/Size': item['Weight/Size'],
+            'Order Qty': item['Order Qty'],
+            'Price': item['Price'],
+            'Received Qty': item['Received Qty'],
+            'Mfg Date': item['Mfg Date'],
+            'Expiry Date': item['Expiry Date'],
+          }));
+        });
+
+    if (!inventoryEditItem && itemsForSave.length === 0) {
+      addToast('This product is already in inventory. Add a different product row in the form.', 'error');
+      return;
+    }
+
+    const hasMissingImage = itemsForSave.some(item => !item['Product Image'] && !item['Existing Image']);
+    if (hasMissingImage) {
+      addToast('Product image is required for all rows', 'error');
+      return;
     }
     showLoader();
     setIsUploading(true);
     try {
-      const submitDataArray = await Promise.all(inventoryItems.map(async (item) => {
-        let imageUrl = inventoryEditItem?.['Product Image'] || '';
-        if (item['Product Image']) {
+      const submitDataArray = await Promise.all(itemsForSave.map(async (item) => {
+        let imageUrl = String(item['Existing Image'] || inventoryEditItem?.['Product Image'] || '');
+        if (item['Product Image'] instanceof File) {
           const fd = new FormData();
           fd.append('file', item['Product Image'] as File);
           fd.append('type', 'inventory');
@@ -335,14 +380,18 @@ export default function ClientInterfacePage() {
         if (!response.ok) throw new Error('Failed to update inventory');
         addToast('Inventory updated successfully', 'success');
       } else {
-        // Add mode — append new rows
         const response = await fetch('/api/client-interface', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ tab: 'Inventory', data: submitDataArray }),
         });
         if (!response.ok) throw new Error('Failed to save inventory');
-        addToast('Inventory added successfully', 'success');
+        addToast(
+          submitDataArray.length === 1
+            ? 'Inventory added successfully'
+            : `${submitDataArray.length} inventory rows added`,
+          'success'
+        );
       }
 
       setShowInventoryModal(false);
@@ -400,22 +449,56 @@ export default function ClientInterfacePage() {
     }
   };
 
+  const getLineItemForProduct = (partyName: string, piNumber: string, productName: string) => {
+    const selectedOrder = ordersData.find(
+      (o) => o.Prepared_By === partyName && o.PI_Number === piNumber
+    );
+    if (!selectedOrder?.Line_Items || !productName) return null;
+    try {
+      const itemsArr = typeof selectedOrder.Line_Items === 'string'
+        ? JSON.parse(selectedOrder.Line_Items)
+        : selectedOrder.Line_Items;
+      if (!Array.isArray(itemsArr)) return null;
+      return itemsArr.find((p: any) => p.PRODUCT === productName) || null;
+    } catch {
+      return null;
+    }
+  };
+
+  const buildInventoryFormItem = (row: any) => {
+    const prodObj = getLineItemForProduct(
+      row['Party Name'] || '',
+      row['PI Number'] || '',
+      row['Product Name'] || ''
+    );
+    const fromRow = (key: string) => {
+      const value = row[key];
+      if (value === undefined || value === null || String(value).trim() === '') return '';
+      return value;
+    };
+
+    const existingImage = String(fromRow('Product Image') || '');
+
+    return {
+      'Product Name': fromRow('Product Name'),
+      'Weight/Size': fromRow('Weight/Size') || fromRow('Weight_Size') || prodObj?.WEIGHT_SIZE || prodObj?.Weight_Size || prodObj?.Weight || prodObj?.Size || prodObj?.['Weight/Size'] || '',
+      'Order Qty': fromRow('Order Qty') || fromRow('Order_Qty') || prodObj?.QTY || prodObj?.Qty || prodObj?.Quantity || prodObj?.quantity || prodObj?.Order_Qty || '',
+      'Price': fromRow('Price') || prodObj?.PRICE || prodObj?.Price || prodObj?.price || '',
+      'Received Qty': fromRow('Received Qty') || fromRow('Received_Qty') || fromRow('Rcvd Qty') || '',
+      'Mfg Date': formatDateForLocalInput(row['Mfg Date'] || row['MFG Date'] || row['Mfg_Date']).split('T')[0] || '',
+      'Expiry Date': formatDateForLocalInput(row['Expiry Date'] || row['Expiry_Date']).split('T')[0] || '',
+      'Product Image': null as File | null,
+      'Existing Image': existingImage.startsWith('http') ? existingImage : '',
+    };
+  };
+
   const handleInventoryEdit = (row: any) => {
     setInventoryEditItem(row);
     setInventoryGlobal({
       'Party Name': row['Party Name'] || '',
       'PI Number': row['PI Number'] || '',
     });
-    setInventoryItems([{
-      'Product Name': row['Product Name'] || '',
-      'Weight/Size': row['Weight/Size'] || '',
-      'Order Qty': row['Order Qty'] || '',
-      'Price': row['Price'] || '',
-      'Received Qty': row['Received Qty'] || '',
-      'Mfg Date': formatDateForLocalInput(row['Mfg Date']).split('T')[0] || '',
-      'Expiry Date': formatDateForLocalInput(row['Expiry Date']).split('T')[0] || '',
-      'Product Image': null,
-    }]);
+    setInventoryItems([buildInventoryFormItem(row)]);
     setShowInventoryModal(true);
   };
 
@@ -425,16 +508,7 @@ export default function ClientInterfacePage() {
       'Party Name': row['Party Name'] || '',
       'PI Number': row['PI Number'] || '',
     });
-    setInventoryItems([{
-      'Product Name': row['Product Name'] || '',
-      'Weight/Size': '',
-      'Order Qty': row['Order Qty'] || '',
-      'Price': '',
-      'Received Qty': '',
-      'Mfg Date': '',
-      'Expiry Date': '',
-      'Product Image': null,
-    }]);
+    setInventoryItems([buildInventoryFormItem(row)]);
     setShowInventoryModal(true);
   };
 
@@ -1479,21 +1553,40 @@ export default function ClientInterfacePage() {
                               className="w-full px-2 py-2 text-xs bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg outline-none focus:ring-2 focus:ring-[var(--theme-primary)] dark:text-white"
                             />
                             
-                            <div className="flex flex-col">
-                              <input
-                                type="file"
-                                required={!inventoryEditItem}
-                                accept="image/*"
-                                onChange={(e) => {
-                                  const newItems = [...inventoryItems];
-                                  newItems[index]['Product Image'] = e.target.files?.[0] || null;
-                                  setInventoryItems(newItems);
-                                }}
-                                className="w-full text-xs text-gray-500 file:mr-2 file:py-1 file:px-2 file:rounded-lg file:border-0 file:text-xs file:font-bold file:bg-[var(--theme-primary)]/10 file:text-[var(--theme-primary)] hover:file:bg-[var(--theme-primary)]/20"
-                              />
-                              {inventoryEditItem && inventoryEditItem['Product Image'] && !item['Product Image'] && (
-                                <a href={inventoryEditItem['Product Image']} target="_blank" rel="noopener noreferrer" className="text-[10px] text-blue-600 dark:text-blue-400 mt-1 hover:underline">View existing image</a>
+                            <div className="flex items-center gap-2 min-w-0">
+                              {(item['Existing Image'] && !(item['Product Image'] instanceof File)) && (
+                                <a
+                                  href={item['Existing Image']}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  title="View existing image"
+                                  className="shrink-0"
+                                >
+                                  <img
+                                    src={`/api/image-proxy?url=${encodeURIComponent(item['Existing Image'])}`}
+                                    alt="Existing product"
+                                    className="w-10 h-10 rounded-lg object-cover border border-gray-200 dark:border-gray-600 bg-white"
+                                  />
+                                </a>
                               )}
+                              <div className="flex flex-col min-w-0">
+                                <input
+                                  type="file"
+                                  required={!item['Existing Image']}
+                                  accept="image/*"
+                                  onChange={(e) => {
+                                    const newItems = [...inventoryItems];
+                                    newItems[index]['Product Image'] = e.target.files?.[0] || null;
+                                    setInventoryItems(newItems);
+                                  }}
+                                  className="w-full text-xs text-gray-500 file:mr-2 file:py-1 file:px-2 file:rounded-lg file:border-0 file:text-xs file:font-bold file:bg-[var(--theme-primary)]/10 file:text-[var(--theme-primary)] hover:file:bg-[var(--theme-primary)]/20"
+                                />
+                                {item['Existing Image'] && !(item['Product Image'] instanceof File) && (
+                                  <a href={item['Existing Image']} target="_blank" rel="noopener noreferrer" className="text-[10px] text-blue-600 dark:text-blue-400 mt-1 hover:underline truncate">
+                                    Using existing image
+                                  </a>
+                                )}
+                              </div>
                             </div>
                             
                             <button
