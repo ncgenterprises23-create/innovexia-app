@@ -44,6 +44,7 @@ export const NAV_MENU_ITEMS: NavMenuItem[] = [
       { label: 'Factory Requirement', icon: 'document', href: '/factory-requirements', roles: ['Admin', 'Manager'] },
       { label: 'Diy Requirement FMS', icon: 'document', href: '/diy-requirement-fms', roles: ['Admin', 'Manager'] },
       { label: 'New Product Search FMS', icon: 'package', href: '/fms-product-search', roles: ['Admin', 'Manager'] },
+      { label: 'New Product Requirement FMS', icon: 'package', href: '/product-fms', roles: ['Admin', 'Manager'] },
       { label: 'Job Work', icon: 'clipboard-check', href: '/job-work', roles: ['Admin', 'Manager'] },
       { label: 'RM Defects', icon: 'alert', href: '/rm-defects', roles: ['Admin', 'Manager'] },
       { label: 'RM Audit Stock', icon: 'clipboard-check', href: '/rm-audit-stock', roles: ['Admin', 'Manager'] },
