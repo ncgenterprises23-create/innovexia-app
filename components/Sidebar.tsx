@@ -4,88 +4,16 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
+import { NAV_MENU_ITEMS } from '@/lib/navMenu';
 
 interface SidebarProps {
   isOpen: boolean;
   setIsOpen: (open: boolean) => void;
 }
 
-interface MenuItem {
-  label: string;
-  icon: string;
-  href?: string;
-  roles: string[];
-  children?: MenuItem[];
-}
-
 export default function Sidebar({ isOpen, setIsOpen }: SidebarProps) {
   const pathname = usePathname();
-
-  const menuItems: MenuItem[] = [
-    { label: 'Dashboard', icon: 'chart', href: '/dashboard', roles: ['Admin', 'Manager', 'Employee'] },
-    { label: 'PC Dashboard', icon: 'chart', href: '/pc-dashboard', roles: ['Admin', 'Manager', 'Employee'] },
-    { label: 'Score', icon: 'trophy', href: '/score', roles: ['Admin', 'Manager'] },
-    { label: 'FMS Doer Alignment', icon: 'users', href: '/fms-doer-alignment', roles: ['Admin', 'Manager'] },
-    { label: 'Attendance', icon: 'clock', href: '/attendance', roles: ['Admin', 'Manager', 'Employee'] },
-    {
-      label: 'Tasks', icon: 'clipboard', roles: ['Admin', 'Manager', 'Employee'], children: [
-        { label: 'Delegations', icon: 'clipboard', href: '/delegation', roles: ['Admin', 'Manager'] },
-        { label: 'Checklist', icon: 'checklist', href: '/checklist', roles: ['Admin', 'Manager'] },
-        { label: 'Todo', icon: 'check', href: '/todo', roles: ['Admin', 'Manager', 'Employee'] },
-      ]
-    },
-
-    {
-      label: 'CRM', icon: 'clipboard', roles: ['Admin', 'Manager'], children: [
-        { label: 'CRM', icon: 'users', href: '/crm', roles: ['Admin', 'Manager'] },
-        { label: 'O2D', icon: 'trending', href: '/o2d', roles: ['Admin', 'Manager'] },
-        { label: 'Collection', icon: 'currency-dollar', href: '/collection', roles: ['Admin', 'Manager'] },
-        { label: 'Payable', icon: 'currency-dollar', href: '/payable', roles: ['Admin', 'Manager'] },
-        { label: 'Client Complain', icon: 'alert', href: '/client-complain', roles: ['Admin', 'Manager'] },
-        { label: 'Dealer_Kit', icon: 'calendar', href: '/Dealer_Kit', roles: ['Admin', 'Manager'] },
-      ]
-    },
-    {
-      label: 'Sales', icon: 'currency-dollar', roles: ['Admin', 'Manager'], children: [
-        { label: 'NBD', icon: 'document', href: '/nbd', roles: ['Admin', 'Manager'] },
-        { label: 'NBD Incoming', icon: 'trending', href: '/nbd-incoming', roles: ['Admin', 'Manager'] },
-        { label: 'CRR', icon: 'clipboard', href: '/crr', roles: ['Admin', 'Manager'] },
-      ]
-    },
-    {
-      label: 'Factory', icon: 'clipboard', roles: ['Admin', 'Manager'], children: [
-        { label: 'Production', icon: 'factory', href: '/production', roles: ['Admin', 'Manager'] },
-        { label: 'Scrap Sales', icon: 'clipboard', href: '/scrap-sales', roles: ['Admin', 'Manager'] },
-        { label: 'Purchase FMS', icon: 'clock', href: '/purchase-fms', roles: ['Admin', 'Manager'] },
-        { label: 'Factory Requirement', icon: 'document', href: '/factory-requirements', roles: ['Admin', 'Manager'] },
-        { label: 'Diy Requirement FMS', icon: 'document', href: '/diy-requirement-fms', roles: ['Admin', 'Manager'] },
-        { label: 'New Product Search FMS', icon: 'package', href: '/fms-product-search', roles: ['Admin', 'Manager'] },
-        { label: 'Job Work', icon: 'clipboard-check', href: '/job-work', roles: ['Admin', 'Manager'] },
-        { label: 'RM Defects', icon: 'alert', href: '/rm-defects', roles: ['Admin', 'Manager'] },
-        { label: 'RM Audit Stock', icon: 'clipboard-check', href: '/rm-audit-stock', roles: ['Admin', 'Manager'] },
-      ],
-    },
-    {
-      label: 'Export',
-      icon: 'clipboard',
-      roles: ['Admin', 'Manager'],
-      children: [
-        { label: 'Export FMS', icon: 'clipboard', href: '/export-fms', roles: ['Admin', 'Manager'] },
-
-        { label: 'IGST Refund', icon: 'currency-dollar', href: '/igst-refund', roles: ['Admin', 'Manager'] },
-      ]
-    },
-    {
-      label: 'IMS', icon: 'clipboard', roles: ['Admin', 'Manager'], children: [
-        { label: 'IMS RM', icon: 'package', href: '/ims-rm', roles: ['Admin', 'Manager'] },
-        { label: 'IMS FG', icon: 'package', href: '/ims-fg', roles: ['Admin', 'Manager'] },
-      ]
-    },
-    { label: 'Client Interface', icon: 'users', href: '/client-interface', roles: ['Admin', 'Manager', 'Employee'] },
-    { label: 'HelpDesk', icon: 'headset', href: '/helpdesk', roles: ['Admin', 'Manager', 'Employee'] },
-    { label: 'Users', icon: 'users', href: '/users', roles: ['Admin'] },
-    { label: 'Chat', icon: 'message', href: '/chat', roles: ['Admin', 'Manager', 'Employee'] },
-  ];
+  const menuItems = NAV_MENU_ITEMS;
 
   const getIcon = (iconName: string) => {
     switch (iconName) {
@@ -189,21 +117,21 @@ export default function Sidebar({ isOpen, setIsOpen }: SidebarProps) {
         onMouseLeave={() => {
           if (window.innerWidth >= 1024) setIsOpen(false);
         }}
-        className={`fixed left-0 top-0 h-screen bg-[var(--theme-light)] dark:bg-gray-800 text-gray-900 dark:text-white transition-all duration-300 z-[80] ${isOpen ? 'w-64' : '-translate-x-full lg:translate-x-0 lg:w-20'
+        className={`fixed left-0 top-0 h-screen bg-[var(--theme-light)] dark:bg-gray-800 text-gray-900 dark:text-white transition-all duration-300 z-[80] ${isOpen ? 'w-[15rem]' : '-translate-x-full lg:translate-x-0 lg:w-20'
           } lg:relative lg:z-auto shadow-lg`}
       >
         {/* Logo Section */}
-        <div className="p-4">
-          <div className="flex items-center gap-3">
-            <div className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center shadow-md overflow-hidden">
+        <div className={`${isOpen ? 'px-3' : 'px-2'} py-4`}>
+          <div className={`flex items-center ${isOpen ? 'gap-3' : 'justify-center'}`}>
+            <div className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center shadow-md overflow-hidden shrink-0">
               <img src="/logo.png" alt="SS Enterprises" className="w-full h-full object-contain p-1" />
             </div>
-            {isOpen && <span className="font-bold text-lg whitespace-nowrap text-gray-900 dark:text-white">SS Enterprises</span>}
+            {isOpen && <span className="font-bold text-lg whitespace-nowrap text-gray-900 dark:text-white truncate">SS Enterprises</span>}
           </div>
         </div>
 
         {/* Menu Items */}
-        <nav className="p-4 space-y-0.5 overflow-y-auto h-[calc(100vh-80px)]">
+        <nav className={`${isOpen ? 'px-2' : 'px-1.5'} py-2 space-y-0.5 overflow-y-auto overflow-x-hidden h-[calc(100vh-80px)]`}>
           {menuItems.map((item) => {
             if (item.children) {
               const expanded = isMenuExpanded(item.label);
@@ -217,19 +145,19 @@ export default function Sidebar({ isOpen, setIsOpen }: SidebarProps) {
                       if (!isOpen) setIsOpen(true);
                       toggleMenu(item.label);
                     }}
-                    className={`w-full flex items-center justify-between gap-4 px-4 py-2 rounded-xl transition-all duration-200 ${hasActiveChild || expanded
+                    className={`w-full flex items-center ${isOpen ? 'justify-between gap-2 px-2.5' : 'justify-center px-0'} py-2 rounded-xl transition-all duration-200 ${hasActiveChild || expanded
                       ? 'bg-[var(--theme-primary)]/10 text-[var(--theme-primary)] font-semibold'
                       : 'text-gray-700 dark:text-gray-300 hover:bg-[var(--theme-primary)]/20 dark:hover:bg-gray-700'
                       }`}
                     title={!isOpen ? item.label : ''}
                   >
-                    <div className="flex items-center gap-4">
-                      {getIcon(item.icon)}
-                      {isOpen && <span className="font-medium">{item.label}</span>}
+                    <div className={`flex items-center min-w-0 ${isOpen ? 'gap-2.5' : ''}`}>
+                      <span className="shrink-0">{getIcon(item.icon)}</span>
+                      {isOpen && <span className="font-medium whitespace-nowrap truncate">{item.label}</span>}
                     </div>
                     {isOpen && (
                       <svg
-                        className={`w-4 h-4 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`}
+                        className={`w-4 h-4 shrink-0 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`}
                         fill="none"
                         stroke="currentColor"
                         viewBox="0 0 24 24"
@@ -248,22 +176,34 @@ export default function Sidebar({ isOpen, setIsOpen }: SidebarProps) {
                         transition={{ duration: 0.2 }}
                         className="overflow-hidden"
                       >
-                        <div className="pl-4 space-y-1">
-                          {item.children.map(child => (
+                        <div className="relative ml-[1.15rem] mt-0.5 mb-1">
+                          {item.children.map((child, idx) => {
+                            const isLast = idx === item.children!.length - 1;
+                            return (
                             <Link
                               key={child.label}
                               href={child.href || '#'}
-                              className={`flex items-center gap-4 px-4 py-2 rounded-xl transition-all duration-200 text-sm ${isActive(child.href)
+                              title={child.label}
+                              className={`relative flex items-center gap-2 pl-4 pr-2 py-1.5 rounded-lg transition-all duration-200 text-sm min-w-0 ${isActive(child.href)
                                 ? 'bg-[var(--theme-primary)] text-gray-900 shadow-sm font-semibold'
                                 : 'text-gray-600 dark:text-gray-400 hover:bg-[var(--theme-primary)]/20 dark:hover:bg-gray-700'
                                 }`}
                             >
-                              <div className="w-5 flex justify-center flex-shrink-0 transition-colors">
+                              <span
+                                aria-hidden
+                                className={`absolute left-0 top-0 w-px bg-gray-500 dark:bg-gray-400 ${isLast ? 'h-1/2' : 'h-full'}`}
+                              />
+                              <span
+                                aria-hidden
+                                className="absolute left-0 top-1/2 w-3 h-px bg-gray-500 dark:bg-gray-400"
+                              />
+                              <div className="w-4 flex justify-center flex-shrink-0 transition-colors">
                                 {getIcon(child.icon)}
                               </div>
-                              <span className="font-medium">{child.label}</span>
+                              <span className="font-medium whitespace-nowrap truncate">{child.label}</span>
                             </Link>
-                          ))}
+                            );
+                          })}
                         </div>
                       </motion.div>
                     )}
@@ -276,24 +216,24 @@ export default function Sidebar({ isOpen, setIsOpen }: SidebarProps) {
               <Link
                 key={item.href}
                 href={item.href || '#'}
-                className={`flex items-center gap-4 px-4 py-2 rounded-xl transition-all duration-200 ${isActive(item.href)
+                className={`flex items-center min-w-0 ${isOpen ? 'gap-2.5 px-2.5' : 'justify-center px-0'} py-2 rounded-xl transition-all duration-200 ${isActive(item.href)
                   ? 'bg-[var(--theme-primary)] text-gray-900 shadow-md font-semibold'
                   : 'text-gray-700 dark:text-gray-300 hover:bg-[var(--theme-primary)]/20 dark:hover:bg-gray-700'
                   }`}
                 title={!isOpen ? item.label : ''}
               >
-                {getIcon(item.icon)}
-                {isOpen && <span className="font-medium">{item.label}</span>}
+                <span className="shrink-0">{getIcon(item.icon)}</span>
+                {isOpen && <span className="font-medium whitespace-nowrap truncate">{item.label}</span>}
               </Link>
             );
           })}
         </nav>
 
         {/* Settings - Bottom (Hidden on Desktop hover mode) */}
-        <div className="absolute bottom-0 left-0 right-0 p-4 bg-[var(--theme-light)] dark:bg-gray-800 lg:hidden">
+        <div className="absolute bottom-0 left-0 right-0 px-2 py-3 bg-[var(--theme-light)] dark:bg-gray-800 lg:hidden">
           <button
             onClick={() => setIsOpen(!isOpen)}
-            className="w-full flex items-center gap-4 px-4 py-2 rounded-xl text-gray-700 dark:text-gray-300 hover:bg-[var(--theme-primary)]/20 dark:hover:bg-gray-700 transition-all"
+            className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-gray-700 dark:text-gray-300 hover:bg-[var(--theme-primary)]/20 dark:hover:bg-gray-700 transition-all"
             title={isOpen ? 'Collapse' : 'Expand'}
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

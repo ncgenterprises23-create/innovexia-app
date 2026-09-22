@@ -1,10 +1,16 @@
-
 import { NextResponse } from 'next/server';
 import { getIMSFGData } from '@/lib/sheets';
 
-export async function GET() {
+export async function GET(request: Request) {
     try {
-        const data = await getIMSFGData();
+        const { searchParams } = new URL(request.url);
+        const sheetName = searchParams.get('sheetName');
+
+        if (!sheetName) {
+            return NextResponse.json({ error: 'sheetName is required' }, { status: 400 });
+        }
+
+        const data = await getIMSFGData(sheetName);
         return NextResponse.json(data);
     } catch (error) {
         console.error('API Error in ims-fg:', error);

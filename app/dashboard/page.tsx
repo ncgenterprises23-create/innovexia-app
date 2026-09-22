@@ -5,6 +5,32 @@ import LayoutWrapper from '@/components/LayoutWrapper';
 import { ensureSessionId } from '@/utils/session';
 import { motion, AnimatePresence } from 'framer-motion';
 import { parseDateString, parseSheetDate } from '@/lib/dateUtils';
+import {
+  Activity,
+  Award,
+  BarChart3,
+  Cake,
+  CalendarDays,
+  CalendarOff,
+  CheckCircle2,
+  ClipboardList,
+  Clock,
+  CreditCard,
+  Crown,
+  Gift,
+  Home,
+  Landmark,
+  MapPin,
+  Medal,
+  MessageCircle,
+  Package,
+  Radio,
+  Settings,
+  Ticket,
+  Trophy,
+  Users,
+  Zap,
+} from 'lucide-react';
 
 interface DashboardStats {
   totalDelegations: number;
@@ -335,7 +361,7 @@ export default function Dashboard() {
             animate={{ opacity: 1, scale: 1 }}
             className="xl:col-span-4"
           >
-            <div className="relative h-64 p-6 sm:p-7 rounded-[1.5rem] bg-gradient-to-br from-indigo-600 via-indigo-700 to-purple-800 text-white shadow-xl shadow-indigo-200 dark:shadow-none overflow-hidden group flex flex-col justify-between">
+            <div className="relative h-64 p-6 sm:p-7 rounded-[1.5rem] bg-gradient-to-br from-indigo-600 via-indigo-700 to-purple-800 text-white shadow-[0_4px_8px_rgba(67,56,202,0.28),0_12px_22px_-4px_rgba(67,56,202,0.45)] dark:shadow-[0_4px_8px_rgba(15,23,42,0.35),0_12px_22px_-4px_rgba(15,23,42,0.5)] overflow-hidden group flex flex-col justify-between">
               <div className="absolute top-0 right-0 w-80 h-80 bg-white/10 rounded-full -mr-40 -mt-40 blur-3xl group-hover:bg-white/20 transition-all duration-700"></div>
               <div className="absolute bottom-0 left-0 w-64 h-64 bg-purple-500/20 rounded-full -ml-32 -mb-32 blur-3xl"></div>
 
@@ -350,7 +376,7 @@ export default function Dashboard() {
                   </div>
                   <div>
                     <h1 className="text-3xl font-black tracking-tight leading-none mb-2">Welcome back,</h1>
-                    <p className="text-xl font-bold text-indigo-100 italic tracking-tight">{user?.full_name || user?.username}! ✨</p>
+                    <p className="text-xl font-bold text-indigo-100 italic tracking-tight">{user?.full_name || user?.username}</p>
                   </div>
                 </div>
                 <div className="space-y-2">
@@ -364,8 +390,14 @@ export default function Dashboard() {
               </div>
 
               <div className="relative z-10 flex gap-4 mt-4">
-                <a href="/delegation" className="px-6 py-2.5 bg-white text-indigo-700 rounded-xl font-black text-sm hover:shadow-lg hover:scale-105 transition-all shadow-sm text-center flex-1">View Tasks</a>
-                <button className="px-6 py-2.5 bg-white/10 backdrop-blur-xl rounded-xl font-black text-sm hover:bg-white/20 transition-all text-white border border-white/30 text-center flex-1">Support Chat</button>
+                <a href="/delegation" className="px-6 py-2.5 bg-white text-indigo-700 rounded-xl font-black text-sm hover:shadow-lg hover:scale-105 transition-all shadow-sm text-center flex-1 inline-flex items-center justify-center gap-2">
+                  <ClipboardList className="w-4 h-4" strokeWidth={2.4} />
+                  View Tasks
+                </a>
+                <button className="px-6 py-2.5 bg-white/10 backdrop-blur-xl rounded-xl font-black text-sm hover:bg-white/20 transition-all text-white border border-white/30 text-center flex-1 inline-flex items-center justify-center gap-2">
+                  <MessageCircle className="w-4 h-4" strokeWidth={2.4} />
+                  Support Chat
+                </button>
               </div>
             </div>
           </motion.div>
@@ -377,18 +409,20 @@ export default function Dashboard() {
             transition={{ delay: 0.1 }}
             className="xl:col-span-3"
           >
-            <div className="h-64 p-5 rounded-[1.5rem] bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 shadow-sm flex flex-col justify-between relative overflow-hidden group">
-              <div className="absolute -right-4 -top-4 w-48 h-48 bg-indigo-50 dark:bg-indigo-900/10 rounded-full blur-2xl group-hover:bg-indigo-100 dark:group-hover:bg-indigo-900/20 transition-all duration-500"></div>
+            <div className="h-64 p-5 rounded-[1.5rem] bg-[var(--theme-light)] dark:bg-[var(--theme-primary)]/15 border border-[var(--theme-primary)]/25 shadow-[0_2px_4px_rgba(15,23,42,0.12),0_8px_16px_-2px_rgba(15,23,42,0.22)] hover:shadow-[0_4px_8px_rgba(15,23,42,0.14),0_12px_20px_-3px_rgba(202,154,4,0.34)] hover:-translate-y-0.5 transition-all duration-300 flex flex-col justify-between relative overflow-hidden group">
+              <div className="absolute -right-4 -top-4 w-48 h-48 bg-[var(--theme-primary)]/20 dark:bg-[var(--theme-primary)]/10 rounded-full blur-2xl group-hover:bg-[var(--theme-primary)]/30 transition-all duration-500"></div>
 
               <div className="flex justify-between items-start relative z-10">
                 <div>
                   <h2 className="text-lg font-black text-slate-800 dark:text-white flex items-center gap-3">
-                    <span className="w-8 h-8 bg-indigo-600 rounded-xl flex items-center justify-center text-sm text-white shadow-lg shadow-indigo-200 dark:shadow-none">📊</span>
+                    <span className="w-8 h-8 bg-[var(--theme-primary)] rounded-xl flex items-center justify-center text-gray-900 shadow-lg shadow-[var(--theme-primary)]/30 dark:shadow-none">
+                      <Activity className="w-4 h-4" strokeWidth={2.4} />
+                    </span>
                     Pulse
                   </h2>
                 </div>
-                <div className="text-5xl drop-shadow-2xl scale-125 group-hover:rotate-12 transition-all duration-500">
-                  {companyStats.score >= 90 ? '🏆' : companyStats.score >= 75 ? '🥈' : '🥉'}
+                <div className="w-11 h-11 rounded-2xl bg-[var(--theme-primary)]/20 text-[var(--theme-secondary)] flex items-center justify-center group-hover:scale-110 transition-all duration-500">
+                  {companyStats.score >= 90 ? <Trophy className="w-6 h-6" /> : companyStats.score >= 75 ? <Medal className="w-6 h-6" /> : <Award className="w-6 h-6" />}
                 </div>
               </div>
 
@@ -397,8 +431,8 @@ export default function Dashboard() {
                   {/* Score Circle */}
                   <div className="relative w-24 h-24 flex items-center justify-center">
                     <svg className="w-full h-full transform -rotate-90" viewBox="0 0 100 100">
-                      <circle cx="50" cy="50" r="42" stroke="currentColor" strokeWidth="12" fill="transparent" className="text-slate-100 dark:text-slate-700" />
-                      <circle cx="50" cy="50" r="42" stroke="currentColor" strokeWidth="12" fill="transparent" strokeDasharray="263.8" strokeDashoffset={263.8 - (263.8 * companyStats.score) / 100} strokeLinecap="round" className="text-indigo-600" />
+                      <circle cx="50" cy="50" r="42" stroke="currentColor" strokeWidth="12" fill="transparent" className="text-[var(--theme-primary)]/25 dark:text-slate-700" />
+                      <circle cx="50" cy="50" r="42" stroke="currentColor" strokeWidth="12" fill="transparent" strokeDasharray="263.8" strokeDashoffset={263.8 - (263.8 * companyStats.score) / 100} strokeLinecap="round" className="text-[var(--theme-primary)]" />
                     </svg>
                     <span className="absolute inset-0 flex items-center justify-center text-xl font-black text-slate-800 dark:text-white">{companyStats.score}%</span>
                   </div>
@@ -409,7 +443,7 @@ export default function Dashboard() {
                   {/* On-Time Circle */}
                   <div className="relative w-24 h-24 flex items-center justify-center">
                     <svg className="w-full h-full transform -rotate-90" viewBox="0 0 100 100">
-                      <circle cx="50" cy="50" r="42" stroke="currentColor" strokeWidth="12" fill="transparent" className="text-slate-100 dark:text-slate-700" />
+                      <circle cx="50" cy="50" r="42" stroke="currentColor" strokeWidth="12" fill="transparent" className="text-[var(--theme-primary)]/25 dark:text-slate-700" />
                       <circle cx="50" cy="50" r="42" stroke="currentColor" strokeWidth="12" fill="transparent" strokeDasharray="263.8" strokeDashoffset={263.8 - (263.8 * companyStats.onTime) / 100} strokeLinecap="round" className="text-emerald-500" />
                     </svg>
                     <span className="absolute inset-0 flex items-center justify-center text-xl font-black text-slate-800 dark:text-white">{companyStats.onTime}%</span>
@@ -418,7 +452,7 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              <div className="relative z-10 bg-slate-50 dark:bg-slate-900/40 rounded-2xl p-3 flex items-center justify-center">
+              <div className="relative z-10 bg-[var(--theme-primary)]/20 dark:bg-[var(--theme-primary)]/10 rounded-2xl p-3 flex items-center justify-center">
                 <span className="text-[10px] font-black text-emerald-600 uppercase tracking-tighter">Healthy Operations</span>
               </div>
             </div>
@@ -430,24 +464,26 @@ export default function Dashboard() {
             animate={{ opacity: 1, x: 0 }}
             className="xl:col-span-5"
           >
-            <div className="h-64 p-5 rounded-[1.5rem] bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 shadow-sm relative overflow-hidden group flex flex-col justify-between">
+            <div className="h-64 p-5 rounded-[1.5rem] bg-[var(--theme-light)] dark:bg-[var(--theme-primary)]/15 border border-[var(--theme-primary)]/25 shadow-[0_2px_4px_rgba(15,23,42,0.12),0_8px_16px_-2px_rgba(15,23,42,0.22)] hover:shadow-[0_4px_8px_rgba(15,23,42,0.14),0_12px_20px_-3px_rgba(202,154,4,0.34)] hover:-translate-y-0.5 transition-all duration-300 relative overflow-hidden group flex flex-col justify-between">
               <div className="flex justify-between items-center mb-2">
                 <div className="flex items-center gap-3">
-                  <div className="p-2 bg-yellow-500 rounded-xl text-white text-xl shadow-lg shadow-yellow-200 dark:shadow-none animate-bounce-slow">👑</div>
+                  <div className="p-2 bg-[var(--theme-primary)] rounded-xl text-gray-900 shadow-lg shadow-[var(--theme-primary)]/30 dark:shadow-none">
+                    <Crown className="w-4 h-4" strokeWidth={2.4} />
+                  </div>
                   <div>
                     <h2 className="text-sm font-black text-slate-800 dark:text-white uppercase tracking-tight">Performers</h2>
                     <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest leading-none mt-1">{new Date().toLocaleString('default', { month: 'short' }).toUpperCase()} RANKINGS</p>
                   </div>
                 </div>
-                <a href="/leaderboard" className="px-3 py-1.5 border border-slate-100 dark:border-slate-700 rounded-xl text-[10px] font-black text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700 transition-all shadow-sm">Board</a>
+                <a href="/leaderboard" className="px-3 py-1.5 border border-[var(--theme-primary)]/30 dark:border-slate-700 rounded-xl text-[10px] font-black text-slate-600 dark:text-slate-400 hover:bg-[var(--theme-primary)]/15 dark:hover:bg-slate-700 transition-all shadow-sm">Board</a>
               </div>
 
               <div className="grid grid-cols-3 gap-3 pb-4 flex-grow">
                 {topScorers.map((scorer, index) => {
                   const rankData = [
-                    { color: 'border-yellow-400', bg: 'bg-yellow-50/50', text: 'text-yellow-700', icon: '🏆', rankName: 'Gold Champion' },
-                    { color: 'border-slate-300', bg: 'bg-slate-50/50', text: 'text-slate-600', icon: '🥈', rankName: 'Silver Runner-up' },
-                    { color: 'border-amber-600', bg: 'bg-amber-50/50', text: 'text-amber-800', icon: '🥉', rankName: 'Bronze Achiever' }
+                    { color: 'border-yellow-400', bg: 'bg-yellow-50/50', text: 'text-yellow-700', Icon: Trophy, rankName: 'Gold Champion' },
+                    { color: 'border-slate-300', bg: 'bg-slate-50/50', text: 'text-slate-600', Icon: Medal, rankName: 'Silver Runner-up' },
+                    { color: 'border-amber-600', bg: 'bg-amber-50/50', text: 'text-amber-800', Icon: Award, rankName: 'Bronze Achiever' }
                   ];
                   const currentRank = rankData[index];
 
@@ -457,9 +493,11 @@ export default function Dashboard() {
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ delay: index * 0.1 }}
-                      className={`relative pt-7 pb-6 px-4 rounded-2xl border-2 ${currentRank.color} ${currentRank.bg} dark:bg-slate-700/20 dark:border-opacity-30 flex flex-col items-center group cursor-pointer hover:shadow-xl hover:-translate-y-1 transition-all duration-500 overflow-hidden h-full justify-start`}
+                      className={`relative pt-7 pb-6 px-4 rounded-2xl border-2 ${currentRank.color} ${currentRank.bg} dark:bg-slate-700/20 dark:border-opacity-30 flex flex-col items-center group cursor-pointer shadow-[0_2px_4px_rgba(15,23,42,0.12),0_8px_16px_-2px_rgba(15,23,42,0.22)] hover:shadow-[0_4px_8px_rgba(15,23,42,0.14),0_12px_20px_-3px_rgba(202,154,4,0.34)] hover:-translate-y-1 transition-all duration-500 overflow-hidden h-full justify-start`}
                     >
-                      <div className="absolute top-1.5 right-1.5 text-base drop-shadow-md z-10">{currentRank.icon}</div>
+                      <div className={`absolute top-1.5 right-1.5 z-10 ${currentRank.text}`}>
+                        <currentRank.Icon className="w-4 h-4" strokeWidth={2.4} />
+                      </div>
 
                       <div className="relative mb-3">
                         <div className={`w-20 h-20 rounded-full border-4 ${currentRank.color} p-0.5 bg-white overflow-hidden shadow-lg group-hover:scale-110 transition-transform duration-500`}>
@@ -496,25 +534,27 @@ export default function Dashboard() {
 
           <div className="lg:col-span-3">
             <h2 className="text-sm font-black text-slate-800 dark:text-white mb-3 flex items-center gap-2">
-              <span className="p-1 bg-indigo-600 rounded text-white text-[10px]">📊</span>
+              <span className="p-1 bg-[var(--theme-primary)] rounded text-gray-900">
+                <BarChart3 className="w-3.5 h-3.5" strokeWidth={2.4} />
+              </span>
               Engagement Overview
             </h2>
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
               {[
-                { label: 'Clocked In', value: attendanceToday.present, icon: '📍', color: 'from-emerald-400 to-teal-600', shadow: 'shadow-emerald-200' },
-                { label: 'Out of Office', value: attendanceToday.absent, icon: '🏠', color: 'from-rose-400 to-pink-600', shadow: 'shadow-rose-200' },
-                { label: 'On Leave', value: attendanceToday.leave, icon: '🏝️', color: 'from-amber-400 to-orange-600', shadow: 'shadow-amber-200' },
-                { label: 'Delayed', value: attendanceToday.late, icon: '⏳', color: 'from-violet-400 to-indigo-600', shadow: 'shadow-violet-200' }
+                { label: 'Clocked In', value: attendanceToday.present, Icon: MapPin, color: 'from-emerald-400 to-teal-600', shadow: 'shadow-emerald-200/50', tile: 'bg-[var(--theme-light)] dark:bg-[var(--theme-primary)]/10' },
+                { label: 'Out of Office', value: attendanceToday.absent, Icon: Home, color: 'from-rose-400 to-pink-600', shadow: 'shadow-rose-200/50', tile: 'bg-[var(--theme-light)] dark:bg-[var(--theme-primary)]/10' },
+                { label: 'On Leave', value: attendanceToday.leave, Icon: CalendarOff, color: 'from-amber-400 to-orange-600', shadow: 'shadow-amber-200/50', tile: 'bg-[var(--theme-light)] dark:bg-[var(--theme-primary)]/10' },
+                { label: 'Delayed', value: attendanceToday.late, Icon: Clock, color: 'from-violet-400 to-indigo-600', shadow: 'shadow-violet-200/50', tile: 'bg-[var(--theme-light)] dark:bg-[var(--theme-primary)]/10' }
               ].map((item, idx) => (
                 <motion.div
                   key={idx}
                   whileHover={{ y: -3 }}
-                  className={`relative bg-white dark:bg-slate-800 p-4 sm:p-5 rounded-[1.25rem] border border-slate-100 dark:border-slate-700 shadow-sm hover:shadow-lg transition-all group overflow-hidden`}
+                  className={`relative ${item.tile} p-4 sm:p-5 rounded-[1.25rem] border border-[var(--theme-primary)]/25 dark:border-[var(--theme-primary)]/20 shadow-[0_2px_4px_rgba(15,23,42,0.12),0_8px_16px_-2px_rgba(15,23,42,0.22)] hover:shadow-[0_4px_8px_rgba(15,23,42,0.14),0_12px_20px_-3px_rgba(202,154,4,0.34)] transition-all group overflow-hidden`}
                 >
                   <div className={`absolute -top-3 -right-3 w-16 h-16 bg-gradient-to-br ${item.color} opacity-10 rounded-full group-hover:scale-150 transition-transform duration-700`}></div>
                   <div className="flex flex-col gap-2">
-                    <div className={`w-10 h-10 flex items-center justify-center rounded-xl bg-gradient-to-br ${item.color} text-lg shadow-lg ${item.shadow} text-white transform group-hover:rotate-6 transition-transform`}>
-                      {item.icon}
+                    <div className={`w-10 h-10 flex items-center justify-center rounded-xl bg-gradient-to-br ${item.color} shadow-lg ${item.shadow} text-white transform group-hover:rotate-6 transition-transform`}>
+                      <item.Icon className="w-5 h-5" strokeWidth={2.3} />
                     </div>
                     <div>
                       <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-0.5">{item.label}</p>
@@ -528,11 +568,13 @@ export default function Dashboard() {
 
           <div className="lg:col-span-1">
             <h2 className="text-sm font-black text-slate-800 dark:text-white mb-3 flex items-center gap-2">
-              <span className="p-1 bg-pink-500 rounded text-white text-[10px]">🎁</span>
+              <span className="p-1 bg-[var(--theme-primary)] rounded text-gray-900">
+                <Gift className="w-3.5 h-3.5" strokeWidth={2.4} />
+              </span>
               Birthdays
             </h2>
-            <div className="bg-white dark:bg-slate-800 rounded-[1.25rem] p-4 border border-slate-100 dark:border-slate-700 shadow-sm h-[calc(100%-2.25rem)] min-h-[140px] flex flex-col justify-center relative overflow-hidden group">
-              <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-pink-500 to-purple-600"></div>
+            <div className="bg-[var(--theme-light)] dark:bg-[var(--theme-primary)]/15 rounded-[1.25rem] p-4 border border-[var(--theme-primary)]/25 shadow-[0_2px_4px_rgba(15,23,42,0.12),0_8px_16px_-2px_rgba(15,23,42,0.22)] hover:shadow-[0_4px_8px_rgba(15,23,42,0.14),0_12px_20px_-3px_rgba(202,154,4,0.34)] hover:-translate-y-0.5 transition-all duration-300 h-[calc(100%-2.25rem)] min-h-[140px] flex flex-col justify-center relative overflow-hidden group">
+              <div className="absolute top-0 left-0 w-full h-1 bg-[var(--theme-primary)]"></div>
               {birthdaysToday.length > 0 || birthdaysTomorrow.length > 0 ? (
                 <div className="space-y-4 max-h-[160px] overflow-y-auto custom-scrollbar pr-1">
                   {/* Today's Section */}
@@ -543,11 +585,13 @@ export default function Dashboard() {
                         {b.image_url ? (
                           <img src={b.image_url} className="w-10 h-10 rounded-full border border-pink-500 object-cover shadow-md relative z-10" alt={b.username} />
                         ) : (
-                          <div className="w-10 h-10 rounded-full bg-pink-100 text-pink-600 flex items-center justify-center font-black relative z-10 text-sm shadow-md">🎂</div>
+                          <div className="w-10 h-10 rounded-full bg-pink-100 text-pink-600 flex items-center justify-center relative z-10 shadow-md">
+                            <Cake className="w-4 h-4" strokeWidth={2.4} />
+                          </div>
                         )}
                       </div>
                       <div className="min-w-0">
-                        <p className="text-[8px] font-black text-pink-500 uppercase tracking-widest leading-none mb-0.5 whitespace-nowrap">Today! 🎉</p>
+                        <p className="text-[8px] font-black text-pink-500 uppercase tracking-widest leading-none mb-0.5 whitespace-nowrap">Today</p>
                         <p className="text-sm font-black text-slate-900 dark:text-white leading-tight truncate">{b.full_name || b.username}</p>
                       </div>
                     </div>
@@ -560,7 +604,9 @@ export default function Dashboard() {
                         {b.image_url ? (
                           <img src={b.image_url} className="w-9 h-9 rounded-full border border-slate-200 dark:border-slate-600 object-cover shadow-sm relative z-10" alt={b.username} />
                         ) : (
-                          <div className="w-9 h-9 rounded-full bg-slate-100 dark:bg-slate-700 text-slate-400 flex items-center justify-center font-black relative z-10 text-xs shadow-sm">🎈</div>
+                          <div className="w-9 h-9 rounded-full bg-slate-100 dark:bg-slate-700 text-slate-400 flex items-center justify-center relative z-10 shadow-sm">
+                            <Gift className="w-4 h-4" strokeWidth={2.2} />
+                          </div>
                         )}
                       </div>
                       <div className="min-w-0">
@@ -572,7 +618,7 @@ export default function Dashboard() {
                 </div>
               ) : (
                 <div className="text-center group-hover:scale-110 transition-transform">
-                  <div className="text-3xl mb-1 filter grayscale opacity-20">🎈</div>
+                  <Gift className="w-8 h-8 mx-auto mb-1 text-slate-300 dark:text-slate-600" strokeWidth={1.8} />
                   <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">No ceremonies soon</p>
                 </div>
               )}
@@ -583,30 +629,30 @@ export default function Dashboard() {
         {/* Quick Actions Row */}
         <div>
           <h2 className="text-sm font-black text-slate-800 dark:text-white mb-3 flex items-center gap-2">
-            <span className="p-1 bg-violet-600 rounded text-white text-[10px]">⚡</span>
+              <span className="p-1 bg-[var(--theme-primary)] rounded text-gray-900">
+                <Zap className="w-3.5 h-3.5" strokeWidth={2.4} />
+              </span>
             Quick Actions
           </h2>
           <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
             {[
-              { label: 'Delegation', icon: '📋', color: 'from-blue-500 to-blue-700', link: '/delegation', desc: 'Task Flow' },
-
-              { label: 'NBD Ops', icon: '⚙️', color: 'from-emerald-500 to-teal-700', link: '/nbd', desc: 'Operations' },
-              { label: 'Team', icon: '👥', color: 'from-rose-500 to-pink-700', link: '/users', desc: 'Users' },
-              { label: 'Collection', icon: '💳', color: 'from-amber-500 to-orange-700', link: '/collection', desc: 'Ledger' },
-              { label: 'Payable', icon: '🏦', color: 'from-red-500 to-rose-700', link: '/payable', desc: 'Payable' },
-              { label: 'Orders', icon: '📦', color: 'from-purple-500 to-purple-700', link: '/o2d', desc: 'O2D Log' },
+              { label: 'Delegation', Icon: ClipboardList, color: 'from-blue-500 to-blue-700', link: '/delegation', desc: 'Task Flow' },
+              { label: 'NBD Ops', Icon: Settings, color: 'from-emerald-500 to-teal-700', link: '/nbd', desc: 'Operations' },
+              { label: 'Team', Icon: Users, color: 'from-rose-500 to-pink-700', link: '/users', desc: 'Users' },
+              { label: 'Collection', Icon: CreditCard, color: 'from-amber-500 to-orange-700', link: '/collection', desc: 'Ledger' },
+              { label: 'Payable', Icon: Landmark, color: 'from-red-500 to-rose-700', link: '/payable', desc: 'Payable' },
+              { label: 'Orders', Icon: Package, color: 'from-purple-500 to-purple-700', link: '/o2d', desc: 'O2D Log' },
             ].map((action, i) => (
               <motion.a
                 key={i}
                 href={action.link}
                 whileHover={{ y: -3, scale: 1.03 }}
                 whileTap={{ scale: 0.97 }}
-                className="group relative rounded-xl overflow-hidden shadow-sm hover:shadow-xl transition-all duration-300"
+                className="group relative rounded-xl overflow-hidden shadow-[0_2px_4px_rgba(15,23,42,0.12),0_8px_16px_-2px_rgba(15,23,42,0.22)] hover:shadow-[0_4px_8px_rgba(15,23,42,0.14),0_12px_20px_-3px_rgba(202,154,4,0.34)] transition-all duration-300"
               >
-                <div className={`absolute inset-0 bg-gradient-to-br ${action.color} opacity-[0.07] group-hover:opacity-[0.14] transition-opacity duration-300`}></div>
-                <div className="relative bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-xl p-3 flex flex-col items-center gap-2 text-center h-full">
-                  <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${action.color} flex items-center justify-center text-xl shadow-md group-hover:scale-110 group-hover:rotate-6 transition-all duration-300`}>
-                    {action.icon}
+                <div className="relative bg-[var(--theme-light)] dark:bg-[var(--theme-primary)]/10 border border-[var(--theme-primary)]/25 dark:border-[var(--theme-primary)]/20 rounded-xl p-3 flex flex-col items-center gap-2 text-center h-full">
+                  <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${action.color} flex items-center justify-center text-white shadow-md group-hover:scale-110 group-hover:rotate-6 transition-all duration-300`}>
+                    <action.Icon className="w-5 h-5" strokeWidth={2.3} />
                   </div>
                   <div>
                     <p className="text-xs font-black text-slate-800 dark:text-white leading-tight">{action.label}</p>
@@ -623,16 +669,21 @@ export default function Dashboard() {
 
           {/* Live Activity */}
           <div className="xl:col-span-4">
-            <div className="bg-white dark:bg-slate-800 rounded-[1.25rem] shadow-sm border border-slate-100 dark:border-slate-700/50 overflow-hidden h-64 flex flex-col">
-              <div className="p-3 border-b border-slate-50 dark:border-slate-700 bg-slate-50/30 dark:bg-slate-800/50 flex justify-between items-center">
+            <div className="bg-[var(--theme-light)] dark:bg-[var(--theme-primary)]/15 rounded-[1.25rem] shadow-[0_2px_4px_rgba(15,23,42,0.12),0_8px_16px_-2px_rgba(15,23,42,0.22)] hover:shadow-[0_4px_8px_rgba(15,23,42,0.14),0_12px_20px_-3px_rgba(202,154,4,0.34)] hover:-translate-y-0.5 transition-all duration-300 border border-[var(--theme-primary)]/25 overflow-hidden h-64 flex flex-col">
+              <div className="p-3 border-b border-[var(--theme-primary)]/20 bg-[var(--theme-light)] dark:bg-[var(--theme-primary)]/15 flex justify-between items-center">
                 <div>
-                  <h2 className="text-sm font-black text-slate-800 dark:text-white uppercase tracking-wider">Live Activity</h2>
+                  <h2 className="text-sm font-black text-slate-800 dark:text-white uppercase tracking-wider flex items-center gap-2">
+                    <span className="w-5 h-5 bg-emerald-500 rounded-md flex items-center justify-center text-white shadow-sm">
+                      <Radio className="w-3 h-3" strokeWidth={2.6} />
+                    </span>
+                    Live Activity
+                  </h2>
                   <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">Operation Feed</p>
                 </div>
               </div>
               <div className="overflow-x-auto flex-grow custom-scrollbar">
                 <table className="w-full text-left">
-                  <thead className="text-[10px] font-black uppercase tracking-widest text-slate-400 sticky top-0 bg-white dark:bg-slate-800 z-10 p-2">
+                  <thead className="text-[10px] font-black uppercase tracking-widest text-slate-400 sticky top-0 bg-[var(--theme-light)] dark:bg-[var(--theme-primary)]/15 z-10 p-2">
                     <tr>
                       <th className="px-3 py-2">Member</th>
                       <th className="px-3 py-2">In</th>
@@ -641,7 +692,7 @@ export default function Dashboard() {
                   </thead>
                   <tbody className="divide-y divide-slate-50 dark:divide-slate-700/50">
                     {recentCheckIns.map((log: any, idx: number) => (
-                      <tr key={idx} className="hover:bg-indigo-50/30 dark:hover:bg-slate-700/30 transition-colors group">
+                      <tr key={idx} className="hover:bg-[var(--theme-primary)]/10 dark:hover:bg-slate-700/30 transition-colors group">
                         <td className="px-3 py-2">
                           <div className="flex items-center gap-2">
                             <div className="w-7 h-7 rounded-lg bg-slate-100 dark:bg-slate-700 overflow-hidden shadow-sm shrink-0">
@@ -681,16 +732,21 @@ export default function Dashboard() {
 
           {/* Leave Monitor */}
           <div className="xl:col-span-4">
-            <div className="bg-white dark:bg-slate-800 rounded-[1.25rem] shadow-sm border border-slate-100 dark:border-slate-700/50 overflow-hidden h-64 flex flex-col">
-              <div className="p-3 border-b border-slate-50 dark:border-slate-700 bg-slate-50/30 dark:bg-slate-800/50 flex justify-between items-center">
+            <div className="bg-[var(--theme-light)] dark:bg-[var(--theme-primary)]/15 rounded-[1.25rem] shadow-[0_2px_4px_rgba(15,23,42,0.12),0_8px_16px_-2px_rgba(15,23,42,0.22)] hover:shadow-[0_4px_8px_rgba(15,23,42,0.14),0_12px_20px_-3px_rgba(202,154,4,0.34)] hover:-translate-y-0.5 transition-all duration-300 border border-[var(--theme-primary)]/25 overflow-hidden h-64 flex flex-col">
+              <div className="p-3 border-b border-[var(--theme-primary)]/20 bg-[var(--theme-light)] dark:bg-[var(--theme-primary)]/15 flex justify-between items-center">
                 <div>
-                  <h2 className="text-sm font-black text-slate-800 dark:text-white uppercase tracking-wider">Leave Monitor</h2>
+                  <h2 className="text-sm font-black text-slate-800 dark:text-white uppercase tracking-wider flex items-center gap-2">
+                    <span className="w-5 h-5 bg-amber-500 rounded-md flex items-center justify-center text-white shadow-sm">
+                      <CalendarDays className="w-3 h-3" strokeWidth={2.6} />
+                    </span>
+                    Leave Monitor
+                  </h2>
                   <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">Today & Upcoming</p>
                 </div>
               </div>
               <div className="overflow-x-auto flex-grow custom-scrollbar">
                 <table className="w-full text-left">
-                  <thead className="text-[10px] font-black uppercase tracking-widest text-slate-400 sticky top-0 bg-white dark:bg-slate-800 z-10 p-2">
+                  <thead className="text-[10px] font-black uppercase tracking-widest text-slate-400 sticky top-0 bg-[var(--theme-light)] dark:bg-[var(--theme-primary)]/15 z-10 p-2">
                     <tr>
                       <th className="px-3 py-2">Member</th>
                       <th className="px-3 py-2">From</th>
@@ -701,7 +757,7 @@ export default function Dashboard() {
                   </thead>
                   <tbody className="divide-y divide-slate-50 dark:divide-slate-700/50">
                     {upcomingLeaves.map((leave, idx) => (
-                      <tr key={idx} className="hover:bg-indigo-50/30 dark:hover:bg-slate-700/30 transition-colors group">
+                      <tr key={idx} className="hover:bg-[var(--theme-primary)]/10 dark:hover:bg-slate-700/30 transition-colors group">
                         <td className="px-3 py-2">
                           <div className="flex items-center gap-2">
                             <div className="w-7 h-7 rounded-lg bg-slate-100 dark:bg-slate-700 overflow-hidden shadow-sm shrink-0">
@@ -750,11 +806,13 @@ export default function Dashboard() {
 
           {/* Help Tickets */}
           <div className="xl:col-span-4">
-            <div className="bg-white dark:bg-slate-800 rounded-[1.25rem] shadow-sm border border-slate-100 dark:border-slate-700/50 overflow-hidden h-64 flex flex-col">
-              <div className="p-3 border-b border-slate-50 dark:border-slate-700 bg-slate-50/30 dark:bg-slate-800/50 flex justify-between items-center">
+            <div className="bg-[var(--theme-light)] dark:bg-[var(--theme-primary)]/15 rounded-[1.25rem] shadow-[0_2px_4px_rgba(15,23,42,0.12),0_8px_16px_-2px_rgba(15,23,42,0.22)] hover:shadow-[0_4px_8px_rgba(15,23,42,0.14),0_12px_20px_-3px_rgba(202,154,4,0.34)] hover:-translate-y-0.5 transition-all duration-300 border border-[var(--theme-primary)]/25 overflow-hidden h-64 flex flex-col">
+              <div className="p-3 border-b border-[var(--theme-primary)]/20 bg-[var(--theme-light)] dark:bg-[var(--theme-primary)]/15 flex justify-between items-center">
                 <div>
                   <h2 className="text-sm font-black text-slate-800 dark:text-white uppercase tracking-wider flex items-center gap-2">
-                    <span className="w-5 h-5 bg-rose-500 rounded-md flex items-center justify-center text-[10px] text-white shadow-sm">🎫</span>
+                    <span className="w-5 h-5 bg-rose-500 rounded-md flex items-center justify-center text-white shadow-sm">
+                      <Ticket className="w-3 h-3" strokeWidth={2.6} />
+                    </span>
                     Help Tickets
                   </h2>
                   <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">Open Requests</p>
@@ -765,7 +823,7 @@ export default function Dashboard() {
               </div>
               <div className="overflow-x-auto flex-grow custom-scrollbar">
                 <table className="w-full text-left">
-                  <thead className="text-[10px] font-black uppercase tracking-widest text-slate-400 sticky top-0 bg-white dark:bg-slate-800 z-10">
+                  <thead className="text-[10px] font-black uppercase tracking-widest text-slate-400 sticky top-0 bg-[var(--theme-light)] dark:bg-[var(--theme-primary)]/15 z-10">
                     <tr>
                       <th className="px-3 py-2">Ticket</th>
                       <th className="px-3 py-2">Subject</th>
@@ -775,7 +833,7 @@ export default function Dashboard() {
                   </thead>
                   <tbody className="divide-y divide-slate-50 dark:divide-slate-700/50">
                     {helpTickets.slice(0, 8).map((ticket: any, idx: number) => (
-                      <tr key={idx} className="hover:bg-rose-50/30 dark:hover:bg-slate-700/30 transition-colors group">
+                      <tr key={idx} className="hover:bg-[var(--theme-primary)]/10 dark:hover:bg-slate-700/30 transition-colors group">
                         <td className="px-3 py-2">
                           <span className="text-[10px] font-black text-slate-500 dark:text-slate-400 whitespace-nowrap">{ticket.ticket_number || `#${idx + 1}`}</span>
                         </td>
@@ -808,7 +866,10 @@ export default function Dashboard() {
                     {helpTickets.length === 0 && (
                       <tr>
                         <td colSpan={4} className="px-3 py-10 text-center">
-                          <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest">No open tickets 🎉</p>
+                          <div className="flex flex-col items-center gap-1.5">
+                            <CheckCircle2 className="w-5 h-5 text-slate-300" strokeWidth={2.2} />
+                            <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest">No open tickets</p>
+                          </div>
                         </td>
                       </tr>
                     )}

@@ -7,6 +7,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { ensureSessionId } from '@/utils/session';
 import Icon, { IconName } from './Icon';
 import { useThemeColor } from './ThemeColorProvider';
+import { flattenNavPages } from '@/lib/navMenu';
 
 // Extend window type for nbdDrawerOpen flag
 declare global {
@@ -52,34 +53,19 @@ export default function Header({ isOpen, setIsOpen, disableNotifications = false
   const [isFullscreen, setIsFullscreen] = useState(false);
   const router = useRouter();
 
-  const pages: { name: string; path: string; icon: IconName }[] = [
-    { name: 'Dashboard', path: '/dashboard', icon: 'chart' },
-    { name: 'PC Dashboard', path: '/pc-dashboard', icon: 'chart' },
-    { name: 'Score', path: '/score', icon: 'trophy' },
-    { name: 'Attendance', path: '/attendance', icon: 'clock' },
-    { name: 'Delegations', path: '/delegation', icon: 'clipboard' },
-    { name: 'Checklist', path: '/checklist', icon: 'checklist' },
-    { name: 'Todo', path: '/todo', icon: 'check' },
+  const pages = flattenNavPages();
 
-    { name: 'O2D', path: '/o2d', icon: 'clipboard' },
-    { name: 'Dealer_Kit', path: '/Dealer_Kit', icon: 'clock' },
-    { name: 'Export FMS', path: '/export-fms', icon: 'clipboard' },
-    { name: 'NBD', path: '/nbd', icon: 'clipboard' },
-    { name: 'Collection', path: '/collection', icon: 'clipboard' },
-    { name: 'Payable', path: '/payable', icon: 'clipboard' },
-    { name: 'NBD Incoming', path: '/nbd-incoming', icon: 'clipboard' },
-    { name: 'CRR', path: '/crr', icon: 'clipboard' },
-    { name: 'IMS RM', path: '/ims-rm', icon: 'clipboard' },
-    { name: 'Pre Order', path: '/pre-order', icon: 'clipboard' },
-    { name: 'Inventory', path: '/inventory', icon: 'clipboard' },
-    { name: 'Freshness', path: '/freshness', icon: 'chart' },
-    { name: 'Tracker', path: '/tracker', icon: 'clock' },
-    { name: 'Documents', path: '/documents', icon: 'document' },
-    { name: 'Production', path: '/production', icon: 'factory' },
-    { name: 'HelpDesk', path: '/helpdesk', icon: 'headset' },
-    { name: 'Users', path: '/users', icon: 'user' },
-    { name: 'Chat', path: '/chat', icon: 'message' },
-  ];
+  const toSearchIcon = (icon: string): IconName => {
+    const map: Record<string, IconName> = {
+      users: 'user',
+      'currency-dollar': 'card',
+      package: 'clipboard',
+      'clipboard-check': 'check',
+      calendar: 'clock',
+      alert: 'warning',
+    };
+    return map[icon] || (icon as IconName);
+  };
 
   const filteredPages = pages.filter(page =>
     page.name.toLowerCase().includes(searchQuery.toLowerCase())
@@ -334,7 +320,7 @@ export default function Header({ isOpen, setIsOpen, disableNotifications = false
             </motion.button>
 
             {/* Search */}
-            <div className="flex-1 relative">
+            <div className="flex-1 relative min-w-0">
               <Icon name="search" className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500" size={18} />
               <input
                 type="text"
@@ -348,38 +334,37 @@ export default function Header({ isOpen, setIsOpen, disableNotifications = false
                 onBlur={() => setTimeout(() => setShowSearchResults(false), 200)}
                 className="w-full pl-10 pr-4 py-2 rounded-xl bg-[var(--theme-lighter)] dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:ring-2 focus:ring-[var(--theme-primary)] outline-none transition-all"
               />
-            </div>
 
-            {/* Search Results Dropdown */}
-            <AnimatePresence>
-              {showSearchResults && (
-                <motion.div
-                  className="absolute top-full left-0 right-0 mt-2 bg-white dark:bg-gray-800 rounded-xl shadow-xl overflow-y-auto max-h-96 z-50"
-                  initial={{ opacity: 0, y: -10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -10 }}
-                >
-                  {filteredPages.length > 0 ? (
-                    <div className="py-2">
-                      {filteredPages.map((page) => (
-                        <button
-                          key={page.path}
-                          onClick={() => handlePageNavigation(page.path)}
-                          className="w-full flex items-center gap-3 px-4 py-2 hover:bg-[var(--theme-primary)]/20 dark:hover:bg-gray-700 transition-colors text-left"
-                        >
-                          <Icon name={page.icon} className="text-[var(--theme-primary)]" size={18} />
-                          <span className="text-gray-900 dark:text-white font-medium">{page.name}</span>
-                        </button>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="px-4 py-3 text-gray-500 dark:text-gray-400 text-sm">
-                      No pages found
-                    </div>
-                  )}
-                </motion.div>
-              )}
-            </AnimatePresence>
+              <AnimatePresence>
+                {showSearchResults && (
+                  <motion.div
+                    className="absolute top-full left-0 mt-2 w-max min-w-[12rem] bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-gray-100 dark:border-gray-700 overflow-y-auto max-h-96 z-50"
+                    initial={{ opacity: 0, y: -10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -10 }}
+                  >
+                    {filteredPages.length > 0 ? (
+                      <div className="py-1">
+                        {filteredPages.map((page) => (
+                          <button
+                            key={page.path}
+                            onClick={() => handlePageNavigation(page.path)}
+                            className="w-full flex items-center gap-3 px-3 py-2 hover:bg-[var(--theme-primary)]/20 dark:hover:bg-gray-700 transition-colors text-left whitespace-nowrap"
+                          >
+                            <Icon name={toSearchIcon(page.icon)} className="text-[var(--theme-primary)] shrink-0" size={16} />
+                            <span className="text-sm text-gray-900 dark:text-white font-medium">{page.name}</span>
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="px-4 py-3 text-gray-500 dark:text-gray-400 text-sm whitespace-nowrap">
+                        No pages found
+                      </div>
+                    )}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
 
             {/* Website Button */}
             <motion.button

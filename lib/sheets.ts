@@ -32,6 +32,7 @@ export const SPREADSHEET_IDS = {
   JOB_WORK: '1V326z9jzR8bBaLy5J5eae4jKsyg3px7E87LZ9TOue90',
   IMS_FG: '1Jc8ITgif_JE3DkhZDewrc3k1ew5vZpYhobPhWS1eXTI',
   EXPORT_FMS: '1W88Vnskum-0lYaKKe2vKVDKa1cd3TmwTt1uJYODT60g',
+  IMPORT_FMS: '1LS45YLgYzTx9nipqCyPouNuK6vGUkT8Yk36bULrRwWc',
   FMS_PRODUCT_SEARCH: '150XDtKwHl3TjMj8INwFIAcMVoOSWjydPkHxJkiE7ZXM',
   SALES_EXPORT_PURCHASE_ENQUIRY_FMS: '1NEy9qSv-9fCGVOjkW9cfgVZNdJbta79lcxIJ6xe_msE',
   IGST_REFUND: '1pmf0FcgLs_U_883CGwl6KWkwfg4a9Cq1RhVfMpijqh0',
@@ -79,6 +80,8 @@ const SHEETS = {
   JOB_WORK_CONFIG: 'Step Configuration',
   EXPORT_FMS: 'Export FMS',
   EXPORT_FMS_CONFIG: 'Step Configuration',
+  IMPORT_FMS: 'Import FMS',
+  IMPORT_FMS_CONFIG: 'Step Configuration',
   FMS_PRODUCT_SEARCH: 'FMS',
   FMS_PRODUCT_SEARCH_CONFIG: 'Step Configuration',
   SALES_EXPORT_PURCHASE_ENQUIRY_FMS: 'Sheet1',
@@ -3025,10 +3028,9 @@ export async function getIMSRMData(sheetName: string) {
   }
 }
 
-export async function getIMSFGData() {
+export async function getIMSFGData(sheetName: string) {
   try {
     const sheets = await getGoogleSheetsClient();
-    const sheetName = 'FG';
 
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId: IMS_FG_SPREADSHEET_ID,
@@ -3048,7 +3050,109 @@ export async function getIMSFGData() {
 
     return data;
   } catch (error) {
-    console.error('Error fetching IMS FG data:', error);
+    console.error(`Error fetching IMS FG data for sheet ${sheetName}:`, error);
+    throw error;
+  }
+}
+
+const imsFgHeadersCache = new Map<string, string[]>();
+
+export async function submitIMSFGPartyDetails(data: any) {
+  try {
+    const sheets = await getGoogleSheetsClient();
+    const sheetName = 'Submit Party Details';
+
+    let headers = imsFgHeadersCache.get(sheetName);
+
+    if (!headers) {
+      const headerResponse = await sheets.spreadsheets.values.get({
+        spreadsheetId: IMS_FG_SPREADSHEET_ID,
+        range: `${sheetName}!A1:Z1`,
+        valueRenderOption: 'UNFORMATTED_VALUE',
+      });
+
+      headers = headerResponse.data.values?.[0];
+
+      if (!headers || headers.length === 0) {
+        headers = [
+          'id', 'item_code', 'item_name', 'party_name', 'party_address',
+          'gstin_uin', 'hsn_code_sac_code', 'average_daily_consumption',
+          'lead_time_from_indent_to_receipt', 'safety_factor', 'moq', 'max_level',
+          'submitted_at'
+        ];
+        await sheets.spreadsheets.values.update({
+          spreadsheetId: IMS_FG_SPREADSHEET_ID,
+          range: `${sheetName}!A1`,
+          valueInputOption: 'RAW',
+          requestBody: { values: [headers] },
+        });
+      }
+      imsFgHeadersCache.set(sheetName, headers);
+    }
+
+    const rowData = headers.map(header => data[header] || '');
+
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: IMS_FG_SPREADSHEET_ID,
+      range: `${sheetName}!A:AZ`,
+      valueInputOption: 'USER_ENTERED',
+      requestBody: { values: [rowData] },
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error('Error submitting IMS FG Party Details:', error);
+    throw error;
+  }
+}
+
+export async function confirmIMSFGOrder(data: any) {
+  try {
+    const sheets = await getGoogleSheetsClient();
+    const sheetName = 'Confirmed Order';
+
+    let headers = imsFgHeadersCache.get(sheetName);
+
+    if (!headers) {
+      const headerResponse = await sheets.spreadsheets.values.get({
+        spreadsheetId: IMS_FG_SPREADSHEET_ID,
+        range: `${sheetName}!A1:Z1`,
+        valueRenderOption: 'UNFORMATTED_VALUE',
+      });
+
+      headers = headerResponse.data.values?.[0];
+
+      if (!headers || headers.length === 0) {
+        headers = [
+          'id', 'timestamp', 'sku_code', 'item_name', 'party_name',
+          'average_daily_consumption', 'lead_time_from_indent_to_receipt',
+          'safety_factor', 'moq', 'max_level', 'material_in_transit', 'live_stock'
+        ];
+        await sheets.spreadsheets.values.update({
+          spreadsheetId: IMS_FG_SPREADSHEET_ID,
+          range: `${sheetName}!A1`,
+          valueInputOption: 'RAW',
+          requestBody: { values: [headers] },
+        });
+      }
+      imsFgHeadersCache.set(sheetName, headers);
+    }
+
+    const rowData = headers.map(header => {
+      if (header === 'timestamp') return new Date().toISOString();
+      return data[header] || '';
+    });
+
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: IMS_FG_SPREADSHEET_ID,
+      range: `${sheetName}!A:AZ`,
+      valueInputOption: 'USER_ENTERED',
+      requestBody: { values: [rowData] },
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error('Error confirming IMS FG order:', error);
     throw error;
   }
 }
@@ -6529,6 +6633,449 @@ export async function updateExportFMSConfig(config: any[]) {
     return { success: true };
   } catch (error) {
     console.error('Error updating Export FMS config:', error);
+    throw error;
+  }
+}
+
+const IMPORT_FMS_RANGE = 'A:ZZ';
+
+function getImportField(row: Record<string, any>, ...keys: string[]) {
+  for (const key of keys) {
+    const value = row[key];
+    if (value !== undefined && value !== null && String(value).trim() !== '') return value;
+  }
+  return '';
+}
+
+function parseLeadTimeDays(value: any): number {
+  const n = parseFloat(String(value ?? '').replace(/[^\d.-]/g, ''));
+  return Number.isFinite(n) ? n : 0;
+}
+
+function addCalendarDays(date: Date, days: number): Date {
+  const result = new Date(date);
+  result.setDate(result.getDate() + days);
+  return result;
+}
+
+function getImportStepTat(config: any[], step: number) {
+  const stepConfig = config.find((c: any) => Number(c.step) === step);
+  return {
+    tatValue: Number(stepConfig?.tatValue) || 0,
+    tatUnit: String(stepConfig?.tatUnit || 'days'),
+  };
+}
+
+function computeImportNextPlanned(nextStep: number, actualDate: Date, row: Record<string, any>, config: any[]): Date | null {
+  const leadDays = parseLeadTimeDays(getImportField(row, 'Lead_Time_5', 'Lead Time', 'Lead_Time', 'lead_time'));
+  const trackingEta = parseDate(getImportField(row, 'Tracking_ETA_15', 'Tracking_ETA_16', 'Tracking_ETA_17', 'Latest_ETA_18', 'Previous_ETA_18'));
+  const latestEta = parseDate(getImportField(row, 'Latest_ETA_18', 'Tracking_ETA_15', 'Tracking_ETA_16', 'Tracking_ETA_17'));
+  const mainDate = parseDate(getImportField(row, 'Main_Date_11', 'Container_Ready_Date_6'));
+
+  // Planned_6 = Actual_5 + Lead_Time_5 + Step 6 TAT - 5 days
+  if (nextStep === 6) {
+    const { tatValue, tatUnit } = getImportStepTat(config, 6);
+    let planned = addCalendarDays(actualDate, leadDays);
+    if (tatValue > 0) planned = getNextPlannedTime(planned, tatValue, tatUnit);
+    return addCalendarDays(planned, -5);
+  }
+  if (nextStep === 11) {
+    if (mainDate) return addCalendarDays(mainDate, -2);
+    const step5Actual = parseDate(getImportField(row, 'Actual_5')) || actualDate;
+    return addCalendarDays(step5Actual, leadDays - 2);
+  }
+  if (nextStep === 16 && trackingEta) {
+    return addCalendarDays(trackingEta, -5);
+  }
+  if (nextStep === 17 && trackingEta) {
+    return addCalendarDays(trackingEta, -2);
+  }
+  if (nextStep === 19 && latestEta) {
+    return latestEta;
+  }
+
+  const nextConfig = config.find((c: any) => Number(c.step) === nextStep);
+  const tatValue = Number(nextConfig?.tatValue) || 1;
+  const tatUnit = String(nextConfig?.tatUnit || 'days');
+  return getNextPlannedTime(actualDate, tatValue, tatUnit);
+}
+
+export async function getImportFMSData() {
+  try {
+    const sheets = await getGoogleSheetsClient();
+    const spreadsheetId = SPREADSHEET_IDS.IMPORT_FMS;
+    const sheetName = SHEETS.IMPORT_FMS;
+
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${sheetName}!${IMPORT_FMS_RANGE}`,
+      valueRenderOption: 'UNFORMATTED_VALUE',
+    });
+
+    const rows = response.data.values;
+    if (!rows || rows.length === 0) return [];
+
+    const headers = rows[0].map((h: string) => String(h || '').trim());
+    return rows.slice(1).map((row, idx) => ({
+      ...rowToObject(headers, row),
+      _rowIndex: idx + 2,
+    }));
+  } catch (error) {
+    console.error('Error fetching Import FMS data:', error);
+    throw error;
+  }
+}
+
+export async function createImportFMSData(records: any[]) {
+  try {
+    const sheets = await getGoogleSheetsClient();
+    const spreadsheetId = SPREADSHEET_IDS.IMPORT_FMS;
+    const sheetName = SHEETS.IMPORT_FMS;
+    const now = new Date();
+    const timestamp = now.toISOString();
+
+    const config = await getImportFMSConfig();
+    const step1 = config.find((c: any) => Number(c.step) === 1);
+    const planned1 = getNextPlannedTime(now, step1?.tatValue || 1, step1?.tatUnit || 'days').toISOString();
+
+    const existingRes = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${sheetName}!${IMPORT_FMS_RANGE}`,
+      valueRenderOption: 'UNFORMATTED_VALUE',
+    });
+    const existingRows = existingRes.data.values || [];
+    const headers: string[] = existingRows[0]?.map((h: string) => String(h || '').trim()) || [];
+    if (headers.length === 0) {
+      throw new Error('Import FMS sheet has no headers');
+    }
+
+    const idColIdx = headers.indexOf('id');
+    let maxId = 0;
+    if (idColIdx !== -1 && existingRows.length > 1) {
+      existingRows.slice(1).forEach(row => {
+        const val = parseInt(row[idColIdx] || '0', 10);
+        if (!isNaN(val) && val > maxId) maxId = val;
+      });
+    }
+
+    const createdRecords: any[] = [];
+    const rowsData = records.map((rec, index) => {
+      const newId = (maxId + index + 1).toString();
+      const rowMap: Record<string, string> = {
+        id: newId,
+        Timestamp: timestamp,
+        sku_code: rec.sku_code || rec.skuCode || '',
+        Item_name: rec.Item_name || rec.item_name || rec.itemName || '',
+        Party_Name: rec.Party_Name || rec.party_name || rec.partyName || '',
+        'Average Daily Consumption': rec['Average Daily Consumption'] || rec.averageDailyConsumption || rec.average_daily_consumption || '',
+        'Lead Time': rec['Lead Time'] || rec.leadTime || rec.lead_time || '',
+        MOQ: rec.MOQ || rec.moq || '',
+        'Po No.': rec['Po No.'] || rec.poNo || rec.po_no || '',
+        Planned_1: planned1,
+      };
+      createdRecords.push({ id: newId, ...rowMap });
+      return headers.map(h => rowMap[h] ?? '');
+    });
+
+    await sheets.spreadsheets.values.append({
+      spreadsheetId,
+      range: `${sheetName}!${IMPORT_FMS_RANGE}`,
+      valueInputOption: 'USER_ENTERED',
+      requestBody: { values: rowsData },
+    });
+
+    return { success: true, count: records.length, records: createdRecords };
+  } catch (error) {
+    console.error('Error creating Import FMS data:', error);
+    throw error;
+  }
+}
+
+export async function updateImportFMSData(id: string, updates: any) {
+  try {
+    const sheets = await getGoogleSheetsClient();
+    const spreadsheetId = SPREADSHEET_IDS.IMPORT_FMS;
+    const sheetName = SHEETS.IMPORT_FMS;
+    const config = await getImportFMSConfig();
+    const maxStep = Math.max(0, ...config.map((c: any) => Number(c.step) || 0));
+
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${sheetName}!${IMPORT_FMS_RANGE}`,
+      valueRenderOption: 'UNFORMATTED_VALUE',
+    });
+    const rows = response.data.values;
+    if (!rows || rows.length === 0) throw new Error('Sheet is empty');
+
+    const headers: string[] = rows[0].map((h: string) => String(h || '').trim());
+    const idColIdx = headers.indexOf('id');
+    if (idColIdx === -1) throw new Error('id column not found');
+
+    const rowIdx = rows.findIndex((row, i) => i > 0 && (row[idColIdx] || '').toString().trim() === id.toString().trim());
+    if (rowIdx === -1) throw new Error('Record not found');
+
+    const sheetRowNumber = rowIdx + 1;
+    const existingRow = rows[rowIdx];
+    const updatedRowMap: Record<string, string> = {};
+    const changedCells: Record<string, string> = {};
+    headers.forEach((h, i) => { updatedRowMap[h] = existingRow[i] || ''; });
+
+    const keyMap: Record<string, string> = {
+      skuCode: 'sku_code',
+      itemName: 'Item_name',
+      item_name: 'Item_name',
+      partyName: 'Party_Name',
+      party_name: 'Party_Name',
+      averageDailyConsumption: 'Average Daily Consumption',
+      average_daily_consumption: 'Average Daily Consumption',
+      leadTime: 'Lead Time',
+      lead_time: 'Lead Time',
+      moq: 'MOQ',
+      poNo: 'Po No.',
+      po_no: 'Po No.',
+    };
+
+    Object.keys(updates).forEach(key => {
+      if (key === 'id' || key === '_rowIndex') return;
+      const headerName = keyMap[key] || key;
+      if (!headers.includes(headerName)) return;
+      const value = updates[key];
+      if (typeof value === 'object' && value !== null) {
+        updatedRowMap[headerName] = JSON.stringify(value);
+      } else {
+        updatedRowMap[headerName] = value === null || value === undefined ? '' : String(value);
+      }
+      changedCells[headerName] = updatedRowMap[headerName];
+    });
+
+    Object.keys(updates).forEach(key => {
+      const actualMatch = key.match(/^Actual_(\d+)$/);
+      if (!actualMatch || !updates[key]) return;
+      const step = parseInt(actualMatch[1], 10);
+      if (!updatedRowMap[`Status_${step}`]) {
+        updatedRowMap[`Status_${step}`] = 'Completed';
+        changedCells[`Status_${step}`] = 'Completed';
+      }
+
+      const nextStep = step + 1;
+      if (nextStep > maxStep) return;
+      const actualDate = parseDate(updates[key]);
+      if (!actualDate) return;
+      const nextPlanned = computeImportNextPlanned(nextStep, actualDate, updatedRowMap, config);
+      if (nextPlanned) {
+        const plannedValue = nextPlanned.toISOString();
+        updatedRowMap[`Planned_${nextStep}`] = plannedValue;
+        changedCells[`Planned_${nextStep}`] = plannedValue;
+      }
+    });
+
+    const valueRanges = Object.entries(changedCells)
+      .map(([header, value]) => {
+        const colIndex = headers.indexOf(header);
+        if (colIndex === -1) return null;
+        return {
+          range: `${sheetName}!${getColLetter(colIndex)}${sheetRowNumber}`,
+          values: [[value]],
+        };
+      })
+      .filter((item): item is { range: string; values: string[][] } => item !== null);
+
+    if (valueRanges.length > 0) {
+      await sheets.spreadsheets.values.batchUpdate({
+        spreadsheetId,
+        requestBody: {
+          valueInputOption: 'USER_ENTERED',
+          data: valueRanges,
+        },
+      });
+    }
+
+    return { success: true };
+  } catch (error) {
+    console.error('Error updating Import FMS data:', error);
+    throw error;
+  }
+}
+
+export async function deleteImportFMSData(id: string) {
+  try {
+    const sheets = await getGoogleSheetsClient();
+    const spreadsheetId = SPREADSHEET_IDS.IMPORT_FMS;
+    const sheetName = SHEETS.IMPORT_FMS;
+
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${sheetName}!${IMPORT_FMS_RANGE}`,
+      valueRenderOption: 'UNFORMATTED_VALUE',
+    });
+    const rows = response.data.values;
+    if (!rows || rows.length === 0) throw new Error('Sheet is empty');
+
+    const headers: string[] = rows[0].map((h: string) => String(h || '').trim());
+    const idColIdx = headers.indexOf('id');
+    if (idColIdx === -1) throw new Error('id column not found');
+
+    const rowIdx = rows.findIndex((row, i) => i > 0 && (row[idColIdx] || '').toString().trim() === id.toString().trim());
+    if (rowIdx === -1) throw new Error('Record not found');
+
+    const spreadsheetMeta = await sheets.spreadsheets.get({ spreadsheetId });
+    const sheet = spreadsheetMeta.data.sheets?.find((s: any) => s.properties?.title === sheetName);
+    if (!sheet) throw new Error('Sheet not found');
+    const sheetId = sheet.properties?.sheetId;
+
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        requests: [{
+          deleteDimension: {
+            range: {
+              sheetId,
+              dimension: 'ROWS',
+              startIndex: rowIdx,
+              endIndex: rowIdx + 1
+            }
+          }
+        }]
+      }
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error('Error deleting Import FMS data:', error);
+    throw error;
+  }
+}
+
+function parseImportFMSConfigRows(rows: any[][]) {
+  if (!rows || rows.length === 0) return [];
+
+  const norm = (value: any) => String(value ?? '').trim().toLowerCase().replace(/[\s._-]+/g, '');
+  const first = (rows[0] || []).map(norm);
+  const headerAliases: Record<string, string[]> = {
+    step: ['step', 'stepno', 'stepnumber', 'sno'],
+    stepName: ['stepname', 'name', 'process', 'stagename'],
+    doerName: ['doername', 'doer', 'responsible', 'assignee', 'owner', 'username'],
+    tatValue: ['tatvalue', 'tat', 'value', 'tatdays', 'tathours'],
+    tatUnit: ['tatunit', 'unit'],
+  };
+  const findCol = (aliases: string[]) => first.findIndex((h) => aliases.includes(h));
+  const looksLikeHeader = findCol(headerAliases.step) !== -1 || findCol(headerAliases.stepName) !== -1;
+
+  const col = { step: 0, stepName: 1, doerName: 2, tatValue: 3, tatUnit: 4 };
+  let dataRows = rows;
+  if (looksLikeHeader) {
+    dataRows = rows.slice(1);
+    const stepIdx = findCol(headerAliases.step);
+    const nameIdx = findCol(headerAliases.stepName);
+    const doerIdx = findCol(headerAliases.doerName);
+    const tatIdx = findCol(headerAliases.tatValue);
+    const unitIdx = findCol(headerAliases.tatUnit);
+    if (stepIdx !== -1) col.step = stepIdx;
+    if (nameIdx !== -1) col.stepName = nameIdx;
+    if (doerIdx !== -1) col.doerName = doerIdx;
+    if (tatIdx !== -1) col.tatValue = tatIdx;
+    if (unitIdx !== -1) col.tatUnit = unitIdx;
+  }
+
+  return dataRows.map((row) => {
+    const unitRaw = String(row[col.tatUnit] ?? 'days').toLowerCase();
+    return {
+      step: parseInt(String(row[col.step] ?? ''), 10),
+      stepName: String(row[col.stepName] ?? '').trim(),
+      doerName: String(row[col.doerName] ?? '').trim(),
+      tatValue: parseInt(String(row[col.tatValue] ?? ''), 10) || 0,
+      tatUnit: unitRaw.includes('hour') ? 'hours' : 'days',
+    };
+  }).filter((c) => Number.isFinite(c.step) && c.step > 0).sort((a, b) => a.step - b.step);
+}
+
+export async function getImportFMSConfig() {
+  try {
+    const sheets = await getGoogleSheetsClient();
+    const spreadsheetId = SPREADSHEET_IDS.IMPORT_FMS;
+    let sheetName = SHEETS.IMPORT_FMS_CONFIG;
+
+    try {
+      const meta = await sheets.spreadsheets.get({
+        spreadsheetId,
+        fields: 'sheets.properties.title',
+      });
+      const titles = (meta.data.sheets || [])
+        .map((s: any) => String(s.properties?.title || '').trim())
+        .filter(Boolean);
+      const match = titles.find((t: string) => t.toLowerCase() === 'step configuration')
+        || titles.find((t: string) => t.toLowerCase().includes('step') && t.toLowerCase().includes('config'));
+      if (match) sheetName = match;
+    } catch (error) {
+      console.error('Error listing Import FMS sheets:', error);
+    }
+
+    try {
+      const response = await sheets.spreadsheets.values.get({
+        spreadsheetId,
+        range: `${sheetName}!A:Z`,
+        valueRenderOption: 'UNFORMATTED_VALUE',
+      });
+      return parseImportFMSConfigRows(response.data.values || []);
+    } catch (error: any) {
+      if (error.code === 400 || error.message?.includes('Unable to parse range')) {
+        return [];
+      }
+      throw error;
+    }
+  } catch (error) {
+    console.error('Error fetching Import FMS config:', error);
+    return [];
+  }
+}
+
+export async function updateImportFMSConfig(config: any[]) {
+  try {
+    const sheets = await getGoogleSheetsClient();
+    const spreadsheetId = SPREADSHEET_IDS.IMPORT_FMS;
+    const sheetName = SHEETS.IMPORT_FMS_CONFIG;
+
+    const headers = ['step', 'stepName', 'doerName', 'tatValue', 'tatUnit'];
+    const rows = [
+      headers,
+      ...config.map(c => [c.step, c.stepName, c.doerName, c.tatValue, c.tatUnit])
+    ];
+
+    try {
+      await sheets.spreadsheets.values.get({
+        spreadsheetId,
+        range: `${sheetName}!A1`,
+      });
+    } catch (error: any) {
+      if (error.code === 400 || error.message?.includes('Unable to parse range')) {
+        await sheets.spreadsheets.batchUpdate({
+          spreadsheetId,
+          requestBody: {
+            requests: [{
+              addSheet: {
+                properties: { title: sheetName }
+              }
+            }]
+          }
+        });
+      }
+    }
+
+    await sheets.spreadsheets.values.clear({
+      spreadsheetId,
+      range: `${sheetName}!A:E`,
+    });
+
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `${sheetName}!A1`,
+      valueInputOption: 'RAW',
+      requestBody: { values: rows },
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error('Error updating Import FMS config:', error);
     throw error;
   }
 }
