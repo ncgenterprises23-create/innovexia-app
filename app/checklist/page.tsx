@@ -10,6 +10,7 @@ import { useLoader } from '@/components/LoaderProvider';
 import DateRangePicker from '@/components/DateRangePicker';
 import { formatDateToLocalTimezone } from '@/utils/timezone';
 import { parseDateString } from '@/lib/dateUtils';
+import { normalizeFrequency } from '@/lib/checklistOccurrences';
 
 interface Checklist {
   id: number;
@@ -18,12 +19,11 @@ interface Checklist {
   doer_name: string | null;
   priority: string;
   department: string | null;
-  verification_required: boolean;
-  verifier_name: string | null;
-  attachment_required: boolean;
-  attachment_url?: string;
   frequency: string;
   due_date: string;
+  occurrence_id?: string;
+  occurrence_date?: string;
+  master_due_date?: string;
   status: string;
   group_id: string;
   created_at: string;
@@ -57,14 +57,69 @@ const FREQUENCIES = [
   { value: 'yearly', label: 'Yearly' }
 ];
 
+function toFormFrequency(raw: string) {
+  const kind = normalizeFrequency(raw);
+  return kind === 'once' ? (raw || 'daily') : kind;
+}
+
+function toOccurrenceDateKey(value: any): string | null {
+  if (value === null || value === undefined || value === '') return null;
+  const raw = String(value).trim();
+  const isoDay = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (isoDay) return `${isoDay[1]}-${isoDay[2]}-${isoDay[3]}`;
+  const parsed = parseDateString(value);
+  if (!parsed) return null;
+  const y = parsed.getFullYear();
+  const m = String(parsed.getMonth() + 1).padStart(2, '0');
+  const d = String(parsed.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function filterHistoryForOccurrence(history: any[], occurrenceDate?: string) {
+  if (!occurrenceDate) return history;
+  return history.filter((entry) => {
+    const key = toOccurrenceDateKey(entry.due_date);
+    if (!key) return true;
+    return key === occurrenceDate;
+  });
+}
+
+function startOfLocalDay(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+}
+
+function dueTime(value: any) {
+  return parseDateString(value)?.getTime() || 0;
+}
+
+function isDueToday(value: any) {
+  const parsed = parseDateString(value);
+  if (!parsed) return false;
+  return startOfLocalDay(parsed) === startOfLocalDay(new Date());
+}
+
+function compareByTodayThenLatest(a: Checklist, b: Checklist, direction: 'asc' | 'desc' = 'desc') {
+  const aToday = isDueToday(a.due_date);
+  const bToday = isDueToday(b.due_date);
+  if (aToday !== bToday) return aToday ? -1 : 1;
+
+  const aTime = dueTime(a.due_date);
+  const bTime = dueTime(b.due_date);
+  if (aTime !== bTime) return direction === 'desc' ? bTime - aTime : aTime - bTime;
+
+  const aCreated = dueTime(a.created_at);
+  const bCreated = dueTime(b.created_at);
+  return bCreated - aCreated;
+}
+
 function ChecklistContent() {
   const [user, setUser] = useState<any>(null);
   const [users, setUsers] = useState<User[]>([]);
   const [checklists, setChecklists] = useState<Checklist[]>([]);
+  const [masterChecklists, setMasterChecklists] = useState<Checklist[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
-  const [showEditModal, setShowEditModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deleteId, setDeleteId] = useState<number | null>(null);
   const [deleteMode, setDeleteMode] = useState<'single' | 'group' | null>(null);
@@ -72,7 +127,7 @@ function ChecklistContent() {
 
   // Sorting and pagination states
   const [sortColumn, setSortColumn] = useState<string>('due_date');
-  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
   const [currentPage, setCurrentPage] = useState(1);
   const [activeTimeFilter, setActiveTimeFilter] = useState<string | null>(null);
   const [itemsPerPage] = useState(10);
@@ -81,11 +136,9 @@ function ChecklistContent() {
   const [assigneeSearch, setAssigneeSearch] = useState('');
   const [doerSearch, setDoerSearch] = useState('');
   const [departmentSearch, setDepartmentSearch] = useState('');
-  const [verifierSearch, setVerifierSearch] = useState('');
   const [showAssigneeDropdown, setShowAssigneeDropdown] = useState(false);
   const [showDoerDropdown, setShowDoerDropdown] = useState(false);
   const [showDepartmentDropdown, setShowDepartmentDropdown] = useState(false);
-  const [showVerifierDropdown, setShowVerifierDropdown] = useState(false);
 
   // Multiple doers selection
   const [selectedDoers, setSelectedDoers] = useState<string[]>([]);
@@ -109,7 +162,6 @@ function ChecklistContent() {
   const assigneeRef = useRef<HTMLDivElement>(null);
   const doerRef = useRef<HTMLDivElement>(null);
   const departmentRef = useRef<HTMLDivElement>(null);
-  const verifierRef = useRef<HTMLDivElement>(null);
 
   // Custom departments management
   const [customDepartments, setCustomDepartments] = useState<string[]>([]);
@@ -139,8 +191,6 @@ function ChecklistContent() {
     priorities: [] as string[],
     statuses: [] as string[],
     frequencies: [] as string[],
-    verificationRequired: null as boolean | null,
-    attachmentRequired: null as boolean | null,
     dueDateFrom: '',
     dueDateTo: '',
   });
@@ -157,20 +207,13 @@ function ChecklistContent() {
   const targetId = searchParams.get('id');
 
   // View mode state
-  const [viewMode, setViewMode] = useState<'list' | 'calendar' | 'tile' | 'group'>('list');
-  const [calendarDate, setCalendarDate] = useState(new Date());
+  const [viewMode, setViewMode] = useState<'list' | 'tile' | 'group'>('list');
 
   // Details sidebar state
   const [showDetailsSidebar, setShowDetailsSidebar] = useState(false);
   const [selectedChecklist, setSelectedChecklist] = useState<Checklist | null>(null);
-  const [taskStatus, setTaskStatus] = useState('');
-  const [remarkText, setRemarkText] = useState('');
-  const [remarks, setRemarks] = useState<any[]>([]);
-  const [loadingRemarks, setLoadingRemarks] = useState(false);
   const [revisionHistory, setRevisionHistory] = useState<any[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
-  const [attachmentFile, setAttachmentFile] = useState<File | null>(null);
-  const [uploadingAttachment, setUploadingAttachment] = useState(false);
 
   // Form state
   const [formData, setFormData] = useState({
@@ -179,54 +222,38 @@ function ChecklistContent() {
     doerName: '', // Keep for backward compatibility, but will use selectedDoers array
     priority: 'medium',
     department: '',
-    verificationRequired: false,
-    verifierName: '',
-    attachmentRequired: false,
     frequency: 'daily',
     dueDate: ''
   });
 
   const router = useRouter();
 
-  // Calendar helper functions
-  const getCalendarDays = (year: number, month: number) => {
-    const firstDay = new Date(year, month, 1);
-    const lastDay = new Date(year, month + 1, 0);
-    const daysInMonth = lastDay.getDate();
-    const startingDayOfWeek = firstDay.getDay();
-
-    return { daysInMonth, startingDayOfWeek };
-  };
-
-  const getChecklistsForDate = (date: Date) => {
-    return filteredChecklists.filter((checklist: Checklist) => {
-      if (!checklist.due_date) return false;
-
-      // Parse dd/mm/yyyy HH:mm:ss format correctly
-      const dateStr = checklist.due_date.replace(/^'/, '');
-      const ddmmyyyyMatch = dateStr.match(/(\d{2})\/(\d{2})\/(\d{4})/);
-
-      if (!ddmmyyyyMatch) return false;
-
-      const [_, day, month, year] = ddmmyyyyMatch;
-      const dueDate = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
-
-      return dueDate.getDate() === date.getDate() &&
-        dueDate.getMonth() === date.getMonth() &&
-        dueDate.getFullYear() === date.getFullYear();
-    });
-  };
-
   // Helper functions for calendar
-  const handleDateTimeSet = () => {
-    const hour24 = selectedPeriod === 'PM' && selectedHour !== 12
+  const toHour24 = () => (
+    selectedPeriod === 'PM' && selectedHour !== 12
       ? selectedHour + 12
       : selectedPeriod === 'AM' && selectedHour === 12
         ? 0
-        : selectedHour;
+        : selectedHour
+  );
 
-    const dateTime = new Date(selectedDate);
-    dateTime.setHours(hour24, selectedMinute, 0, 0);
+  const buildDueDateIsoFromYmd = (ymd: string) => {
+    const [year, month, day] = String(ymd).split('-').map(Number);
+    const dateTime = new Date(year, (month || 1) - 1, day || 1);
+    dateTime.setHours(toHour24(), selectedMinute, 0, 0);
+    return dateTime.toISOString();
+  };
+
+  const handleDateTimeSet = () => {
+    const isMultiSelect = formData.frequency === 'monthly' || formData.frequency === 'quarterly' || formData.frequency === 'yearly';
+    let dateTime: Date;
+    if (isMultiSelect && selectedMultipleDates.length > 0) {
+      const [year, month, day] = [...selectedMultipleDates].sort()[0].split('-').map(Number);
+      dateTime = new Date(year, month - 1, day);
+    } else {
+      dateTime = new Date(selectedDate);
+    }
+    dateTime.setHours(toHour24(), selectedMinute, 0, 0);
 
     setFormData({
       ...formData,
@@ -293,9 +320,6 @@ function ChecklistContent() {
       if (departmentRef.current && !departmentRef.current.contains(event.target as Node)) {
         setShowDepartmentDropdown(false);
       }
-      if (verifierRef.current && !verifierRef.current.contains(event.target as Node)) {
-        setShowVerifierDropdown(false);
-      }
     };
 
     document.addEventListener('mousedown', handleClickOutside);
@@ -355,6 +379,7 @@ function ChecklistContent() {
       const response = await fetch('/api/checklists');
       const data = await response.json();
       setChecklists(data.checklists || []);
+      setMasterChecklists(data.masters || []);
     } catch (error) {
       console.error('Error fetching checklists:', error);
     } finally {
@@ -453,6 +478,25 @@ function ChecklistContent() {
   const handleAddChecklist = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
+      const isMultiDate = formData.frequency === 'monthly' || formData.frequency === 'quarterly' || formData.frequency === 'yearly';
+      const dueDate = formData.dueDate
+        || (isMultiDate && selectedMultipleDates.length > 0
+          ? buildDueDateIsoFromYmd([...selectedMultipleDates].sort()[0])
+          : '');
+
+      if (!formData.question?.trim()) {
+        toast.error('Please enter a question/task');
+        return;
+      }
+      if (!formData.assignee) {
+        toast.error('Please select an assignee');
+        return;
+      }
+      if (!dueDate) {
+        toast.error(isMultiDate ? 'Please select at least one date' : 'Please select a start date & time');
+        return;
+      }
+
       loader.showLoader();
 
       // If multiple doers are selected, send as array; otherwise send single doer
@@ -463,9 +507,10 @@ function ChecklistContent() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...formData,
+          dueDate,
           doers: doersToSend, // Send array of doers
           weeklyDays: formData.frequency === 'weekly' ? selectedWeekDays : undefined,
-          selectedDates: (formData.frequency === 'monthly' || formData.frequency === 'quarterly' || formData.frequency === 'yearly') ? selectedMultipleDates : undefined,
+          selectedDates: isMultiDate ? selectedMultipleDates : undefined,
           createdBy: user?.id
         })
       });
@@ -506,7 +551,8 @@ function ChecklistContent() {
         resetForm();
       } else {
         loader.hideLoader();
-        toast.error('Failed to create checklist');
+        const errorData = await response.json().catch(() => ({}));
+        toast.error(errorData.error || 'Failed to create checklist');
       }
     } catch (error) {
       console.error('Error adding checklist:', error);
@@ -527,15 +573,14 @@ function ChecklistContent() {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          group_id: editingChecklist.group_id,
+          id: editingChecklist.id,
           question: formData.question,
           assignee: formData.assignee,
-          doerName: formData.doerName,
+          doerName: selectedDoers[0] || formData.doerName,
           priority: formData.priority,
           department: formData.department,
-          verificationRequired: formData.verificationRequired,
-          verifierName: formData.verifierName,
-          attachmentRequired: formData.attachmentRequired
+          frequency: formData.frequency,
+          dueDate: formData.dueDate,
         })
       });
 
@@ -565,7 +610,7 @@ function ChecklistContent() {
         }
 
         fetchChecklists(false);
-        setShowEditModal(false);
+        setShowAddModal(false);
         setEditingChecklist(null);
         resetForm();
       } else {
@@ -627,9 +672,10 @@ function ChecklistContent() {
           toast.error('Failed to delete checklist task');
         }
       } else if (deleteMode === 'group' && checklist) {
-        // Delete all tasks with the same group_id
         const groupId = checklist.group_id;
-        const tasksToDelete = checklists.filter(c => c.group_id === groupId);
+        const tasksToDelete = groupId
+          ? checklists.filter(c => c.group_id === groupId)
+          : [checklist];
 
         // Delete all tasks in the group
         const deletePromises = tasksToDelete.map(task =>
@@ -668,95 +714,46 @@ function ChecklistContent() {
 
   const handleViewDetails = async (checklist: Checklist) => {
     setSelectedChecklist(checklist);
-    setTaskStatus(checklist.status || '');
-    setRemarkText('');
-    setRemarks([]);
     setRevisionHistory([]);
-    setAttachmentFile(null);
 
-    // Open sidebar immediately
     setShowDetailsSidebar(true);
-
-    // Fetch remarks and revision history in parallel
-    setLoadingRemarks(true);
     setLoadingHistory(true);
 
     try {
-      const [remarksRes, historyRes] = await Promise.all([
-        fetch(`/api/checklists/remarks?checklistId=${checklist.id}`),
-        fetch(`/api/checklists/history?checklistId=${checklist.id}`)
-      ]);
-
-      if (remarksRes.ok) {
-        const remarksData = await remarksRes.json();
-        setRemarks(remarksData.remarks || []);
-      }
-      setLoadingRemarks(false);
+      const historyRes = await fetch(`/api/checklists/history?checklistId=${checklist.id}`);
 
       if (historyRes.ok) {
         const historyData = await historyRes.json();
-        setRevisionHistory(historyData.history || []);
+        setRevisionHistory(filterHistoryForOccurrence(historyData.history || [], checklist.occurrence_date));
       }
       setLoadingHistory(false);
     } catch (error) {
       console.error('Error fetching details:', error);
-      setLoadingRemarks(false);
       setLoadingHistory(false);
       toast.error('Failed to load some data. Please try again.');
     }
   };
 
   const handleStatusUpdate = async () => {
-    if (!selectedChecklist || !taskStatus) {
-      toast.error('Please select a status');
-      return;
-    }
-
-    // Check if attachment is required but not provided (for approval_waiting OR completed)
-    if (selectedChecklist.attachment_required && (taskStatus === 'approval_waiting' || taskStatus === 'completed') && !attachmentFile) {
-      toast.error(`Please attach the required file for ${taskStatus === 'approval_waiting' ? 'Approval Waiting' : 'Completed'} status`);
+    if (!selectedChecklist) return;
+    if (selectedChecklist.status?.toLowerCase() === 'completed') {
+      toast.success('Task is already completed');
       return;
     }
 
     try {
       loader.showLoader();
+      const status = 'completed';
 
-      // Upload attachment if file is selected (for ANY status update where file is provided)
-      let attachmentUrl = null;
-      if (attachmentFile) {
-        setUploadingAttachment(true);
-        const formData = new FormData();
-        formData.append('file', attachmentFile);
-        formData.append('type', 'checklist');
-
-        const uploadResponse = await fetch('/api/upload', {
-          method: 'POST',
-          body: formData
-        });
-
-        if (!uploadResponse.ok) {
-          setUploadingAttachment(false);
-          loader.hideLoader();
-          toast.error('Failed to upload attachment');
-          return;
-        }
-
-        const uploadData = await uploadResponse.json();
-        attachmentUrl = uploadData.url;
-        setUploadingAttachment(false);
-      }
-
-      // Update status
       const response = await fetch('/api/checklists/update-status', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           checklistId: selectedChecklist.id,
-          status: taskStatus,
-          remark: remarkText,
+          dueDate: selectedChecklist.occurrence_date || selectedChecklist.due_date,
+          status,
           userId: user?.id,
-          username: user?.username,
-          attachmentUrl
+          username: user?.username
         })
       });
 
@@ -769,43 +766,28 @@ function ChecklistContent() {
 
       // Update checklist in the list
       const updatedChecklists = checklists.map(c =>
-        c.id === selectedChecklist.id
-          ? { ...c, status: taskStatus }
+        (c.occurrence_id || String(c.id)) === (selectedChecklist.occurrence_id || String(selectedChecklist.id))
+          ? { ...c, status }
           : c
       );
       setChecklists(updatedChecklists);
 
-      // Update selected checklist for sidebar
       const updatedChecklist = {
         ...selectedChecklist,
-        status: taskStatus
+        status
       };
       setSelectedChecklist(updatedChecklist);
 
-      // Refresh remarks and history
-      const [remarksRes, historyRes] = await Promise.all([
-        fetch(`/api/checklists/remarks?checklistId=${selectedChecklist.id}`),
-        fetch(`/api/checklists/history?checklistId=${selectedChecklist.id}`)
-      ]);
-
-      if (remarksRes.ok) {
-        const remarksData = await remarksRes.json();
-        setRemarks(remarksData.remarks || []);
-      }
+      const historyRes = await fetch(`/api/checklists/history?checklistId=${selectedChecklist.id}`);
 
       if (historyRes.ok) {
         const historyData = await historyRes.json();
-        setRevisionHistory(historyData.history || []);
+        setRevisionHistory(filterHistoryForOccurrence(historyData.history || [], selectedChecklist.occurrence_date));
       }
-
-      // Clear form
-      setRemarkText('');
-      setTaskStatus('');
-      setAttachmentFile(null);
 
       // Send notification to assignee
       if (selectedChecklist.assignee && selectedChecklist.assignee !== user?.username) {
-        const richInfo = `Status: ${taskStatus.toUpperCase()} | Task: ${selectedChecklist.question} | Priority: ${selectedChecklist.priority.toUpperCase()}`;
+        const richInfo = `Status: COMPLETED | Task: ${selectedChecklist.question} | Priority: ${selectedChecklist.priority.toUpperCase()}`;
         await createNotificationForUser(
           selectedChecklist.assignee,
           'checklist_updated',
@@ -816,7 +798,7 @@ function ChecklistContent() {
       }
 
       loader.hideLoader();
-      toast.success('Status updated successfully!');
+      toast.success('Task completed');
     } catch (error) {
       console.error('Error updating status:', error);
       loader.hideLoader();
@@ -824,104 +806,37 @@ function ChecklistContent() {
     }
   };
 
-  const handleAddRemark = async () => {
-    if (!selectedChecklist || !remarkText.trim()) {
-      toast.error('Please enter a remark');
-      return;
-    }
-
-    try {
-      loader.showLoader();
-
-      const response = await fetch('/api/checklists/remarks', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          checklistId: selectedChecklist.id,
-          userId: user?.id,
-          remark: remarkText,
-          username: user?.username
-        })
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        loader.hideLoader();
-        toast.error(errorData.error || 'Failed to add remark');
-        return;
-      }
-
-      // Clear remark text immediately
-      setRemarkText('');
-
-      // Refresh remarks
-      const remarksResponse = await fetch(`/api/checklists/remarks?checklistId=${selectedChecklist.id}`);
-      if (remarksResponse.ok) {
-        const remarksData = await remarksResponse.json();
-        setRemarks(remarksData.remarks || []);
-      }
-
-      // Send notification
-      if (selectedChecklist.assignee && selectedChecklist.assignee.toLowerCase() !== user?.username?.toLowerCase()) {
-        await createNotificationForUser(
-          selectedChecklist.assignee,
-          'checklist_remark',
-          'New Checklist Remark',
-          `${user?.username || 'Someone'} added a remark to: ${selectedChecklist.question}`,
-          selectedChecklist.id
-        );
-      }
-
-      loader.hideLoader();
-      toast.success('Remark added successfully!');
-    } catch (error) {
-      console.error('Error adding remark:', error);
-      loader.hideLoader();
-      toast.error('Error adding remark');
-    }
-  };
-
   const openEditModal = (checklist: Checklist) => {
+    const freq = toFormFrequency(checklist.frequency);
+    const masterDue = checklist.master_due_date || checklist.due_date;
     setEditingChecklist(checklist);
     setFormData({
       question: checklist.question,
       assignee: checklist.assignee,
       doerName: checklist.doer_name || '',
-      priority: checklist.priority,
+      priority: checklist.priority || 'medium',
       department: checklist.department || '',
-      verificationRequired: checklist.verification_required,
-      verifierName: checklist.verifier_name || '',
-      attachmentRequired: checklist.attachment_required,
-      frequency: checklist.frequency,
-      dueDate: checklist.due_date
+      frequency: freq,
+      dueDate: masterDue
     });
+    setSelectedDoers(checklist.doer_name ? [checklist.doer_name] : []);
 
-    // Parse and populate selected days/dates based on frequency
-    if (checklist.frequency === 'weekly' && checklist.selected_days) {
-      // Parse selected days for weekly tasks
-      try {
-        const days = JSON.parse(checklist.selected_days);
-        setSelectedWeekDays(Array.isArray(days) ? days : []);
-      } catch (e) {
-        setSelectedWeekDays([]);
-      }
+    const masterDate = parseDateString(masterDue);
+    if (freq === 'weekly' && masterDate) {
+      const day = masterDate.getDay();
+      setSelectedWeekDays(day === 0 ? [] : [day]);
     } else {
       setSelectedWeekDays([]);
     }
 
-    if ((checklist.frequency === 'monthly' || checklist.frequency === 'quarterly' || checklist.frequency === 'yearly') && checklist.selected_dates) {
-      // Parse selected dates for monthly/quarterly/yearly tasks
-      try {
-        const dates = JSON.parse(checklist.selected_dates);
-        setSelectedMultipleDates(Array.isArray(dates) ? dates : []);
-      } catch (e) {
-        setSelectedMultipleDates([]);
-      }
-    } else if (checklist.frequency !== 'weekly') {
+    const dateKey = toOccurrenceDateKey(masterDue);
+    if ((freq === 'monthly' || freq === 'quarterly' || freq === 'yearly') && dateKey) {
+      setSelectedMultipleDates([dateKey]);
+    } else {
       setSelectedMultipleDates([]);
     }
 
-    setShowEditModal(true);
+    setShowAddModal(true);
   };
 
   const openDeleteModal = (id: number) => {
@@ -936,9 +851,6 @@ function ChecklistContent() {
       doerName: '',
       priority: 'medium',
       department: '',
-      verificationRequired: false,
-      verifierName: '',
-      attachmentRequired: false,
       frequency: 'daily',
       dueDate: ''
     });
@@ -948,7 +860,8 @@ function ChecklistContent() {
     setSelectedDoers([]);
   };
 
-  const getUserImage = (username: string) => {
+  const getUserImage = (username?: string | null) => {
+    if (!username) return null;
     const user = users.find(u => u.username === username);
     return user?.image_url || null;
   };
@@ -977,7 +890,7 @@ function ChecklistContent() {
       setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
     } else {
       setSortColumn(column);
-      setSortDirection('asc');
+      setSortDirection(column === 'due_date' || column === 'id' || column === 'created_at' ? 'desc' : 'asc');
     }
     setCurrentPage(1);
   };
@@ -1000,8 +913,6 @@ function ChecklistContent() {
       priorities: [],
       statuses: [],
       frequencies: [],
-      verificationRequired: null,
-      attachmentRequired: null,
       dueDateFrom: '',
       dueDateTo: '',
     });
@@ -1048,12 +959,6 @@ function ChecklistContent() {
         case 'frequency':
           newFilters.frequencies = prev.frequencies.filter(v => v !== value);
           break;
-        case 'verification':
-          newFilters.verificationRequired = null;
-          break;
-        case 'attachment':
-          newFilters.attachmentRequired = null;
-          break;
         case 'dateRange':
           newFilters.dueDateFrom = '';
           newFilters.dueDateTo = '';
@@ -1093,9 +998,6 @@ function ChecklistContent() {
         'Frequency',
         'Due Date',
         'Status',
-        'Verification Required',
-        'Verifier',
-        'Attachment Required',
         'Created Date'
       ];
 
@@ -1111,9 +1013,6 @@ function ChecklistContent() {
           checklist.frequency || '',
           checklist.due_date ? formatDateToLocalTimezone(checklist.due_date) : '',
           checklist.status || '',
-          checklist.verification_required ? 'Yes' : 'No',
-          checklist.verifier_name || '',
-          checklist.attachment_required ? 'Yes' : 'No',
           checklist.created_at ? formatDateToLocalTimezone(checklist.created_at) : ''
         ].map(field => {
           // Escape double quotes and wrap in quotes if contains comma, newline, or quote
@@ -1165,8 +1064,6 @@ function ChecklistContent() {
     if (filters.priorities.length > 0) count++;
     if (filters.statuses.length > 0) count++;
     if (filters.frequencies.length > 0) count++;
-    if (filters.verificationRequired !== null) count++;
-    if (filters.attachmentRequired !== null) count++;
     if (filters.dueDateFrom || filters.dueDateTo) count++;
     return count;
   }, [filters]);
@@ -1177,30 +1074,12 @@ function ChecklistContent() {
     today.setHours(0, 0, 0, 0);
 
     return checklists.filter(checklist => {
-      // Parse the date from dd/mm/yyyy HH:mm:ss format
-      let dueDate = null;
-      if (checklist.due_date) {
-        const dateStr = checklist.due_date.replace(/^'/, '');
-        const ddmmyyyyMatch = dateStr.match(/(\d{2})\/(\d{2})\/(\d{4})/);
-        if (ddmmyyyyMatch) {
-          const [_, day, month, year] = ddmmyyyyMatch;
-          dueDate = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
-          dueDate.setHours(0, 0, 0, 0);
-        }
-      }
-
+      const dueDate = parseDateString(checklist.due_date);
       const status = checklist.status?.toLowerCase() || '';
-
-      // Must have a due date that is today or in the past
-      if (!dueDate || dueDate > today) {
-        return false;
-      }
-
-      // Must not be completed
-      if (status === 'completed') {
-        return false;
-      }
-
+      if (!dueDate) return false;
+      const dueDay = new Date(dueDate.getFullYear(), dueDate.getMonth(), dueDate.getDate());
+      if (dueDay > today) return false;
+      if (status === 'completed') return false;
       return true;
     }).length;
   }, [checklists]);
@@ -1247,7 +1126,6 @@ function ChecklistContent() {
     const stats = { 'Delayed': 0, 'Today': 0, 'Tomorrow': 0, 'Next 3': 0, 'Next 7': 0, 'Next 15': 0 };
 
     checklists.forEach(c => {
-      if (c.status?.toLowerCase() === 'completed') return;
       if (!c.due_date) return;
 
       const pDate = parseDateString(c.due_date);
@@ -1279,36 +1157,18 @@ function ChecklistContent() {
       if (showOpenTasks) {
         const today = new Date();
         today.setHours(0, 0, 0, 0);
-
-        // Parse the date from dd/mm/yyyy HH:mm:ss format
-        let dueDate = null;
-        if (checklist.due_date) {
-          const dateStr = checklist.due_date.replace(/^'/, ''); // Remove leading quote if present
-          const ddmmyyyyMatch = dateStr.match(/(\d{2})\/(\d{2})\/(\d{4})/);
-          if (ddmmyyyyMatch) {
-            const [_, day, month, year] = ddmmyyyyMatch;
-            dueDate = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
-            dueDate.setHours(0, 0, 0, 0);
-          }
-        }
-
+        const dueDate = parseDateString(checklist.due_date);
         const status = checklist.status?.toLowerCase() || '';
-
-        // Must have a due date that is today or in the past
-        if (!dueDate || dueDate > today) {
-          return false;
-        }
-
-        // Must not be completed
-        if (status === 'completed') {
-          return false;
-        }
+        if (!dueDate) return false;
+        const dueDay = new Date(dueDate.getFullYear(), dueDate.getMonth(), dueDate.getDate());
+        if (dueDay > today) return false;
+        if (status === 'completed') return false;
       }
 
       // Search term filter
       const matchesSearch = searchTerm === '' ||
-        checklist.question.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        checklist.assignee.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (checklist.question?.toLowerCase().includes(searchTerm.toLowerCase())) ||
+        (checklist.assignee?.toLowerCase().includes(searchTerm.toLowerCase())) ||
         (checklist.doer_name?.toLowerCase().includes(searchTerm.toLowerCase())) ||
         (checklist.department?.toLowerCase().includes(searchTerm.toLowerCase()));
 
@@ -1349,38 +1209,10 @@ function ChecklistContent() {
         return false;
       }
 
-      // Verification required filter
-      if (filters.verificationRequired !== null) {
-        if (checklist.verification_required !== filters.verificationRequired) {
-          return false;
-        }
-      }
-
-      // Attachment required filter
-      if (filters.attachmentRequired !== null) {
-        if (checklist.attachment_required !== filters.attachmentRequired) {
-          return false;
-        }
-      }
-
       // Due date range filter
       if (filters.dueDateFrom || filters.dueDateTo) {
-        if (!checklist.due_date) {
-          // If date range filter is active but checklist has no due date, exclude it
-          return false;
-        }
-
-        // Parse dd/mm/yyyy format correctly
-        const dateStr = checklist.due_date.replace(/^'/, '');
-        const ddmmyyyyMatch = dateStr.match(/(\d{2})\/(\d{2})\/(\d{4})/);
-
-        if (!ddmmyyyyMatch) {
-          // If due date doesn't match expected format, exclude it
-          return false;
-        }
-
-        const [_, day, month, year] = ddmmyyyyMatch;
-        const dueDate = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
+        const dueDate = parseDateString(checklist.due_date);
+        if (!dueDate) return false;
         dueDate.setHours(0, 0, 0, 0);
 
         if (filters.dueDateFrom) {
@@ -1391,14 +1223,14 @@ function ChecklistContent() {
 
         if (filters.dueDateTo) {
           const toDate = new Date(filters.dueDateTo);
-          toDate.setHours(23, 59, 59, 999); // End of day
+          toDate.setHours(23, 59, 59, 999);
           if (dueDate > toDate) return false;
         }
       }
 
       // Time-Based Filter (Quick Filters)
       if (activeTimeFilter) {
-        if (!checklist.due_date || checklist.status?.toLowerCase() === 'completed') return false;
+        if (!checklist.due_date) return false;
         const now = new Date();
         const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
         const oneDayMs = 24 * 60 * 60 * 1000;
@@ -1422,32 +1254,26 @@ function ChecklistContent() {
       return true;
     });
 
-    // Apply sorting
+    // Apply sorting: today's tasks first, then latest due date first
     filtered.sort((a, b) => {
+      if (sortColumn === 'due_date') {
+        return compareByTodayThenLatest(a, b, sortDirection);
+      }
+
       let aVal: any = a[sortColumn as keyof Checklist];
       let bVal: any = b[sortColumn as keyof Checklist];
 
-      // Handle null/undefined values
       if (aVal === null || aVal === undefined) aVal = '';
       if (bVal === null || bVal === undefined) bVal = '';
 
-      // Convert to comparable values
       if (sortColumn === 'id') {
-        // Convert IDs to numbers for proper numeric sorting
         aVal = Number(aVal);
         bVal = Number(bVal);
-      } else if (sortColumn === 'due_date' || sortColumn === 'created_at') {
-        // Parse dd/mm/yyyy HH:mm:ss format to Date
-        const parseDate = (dateStr: string) => {
-          if (!dateStr) return 0;
-          const [datePart, timePart] = dateStr.split(', ');
-          if (!datePart) return 0;
-          const [day, month, year] = datePart.split('/');
-          const [hours = '0', minutes = '0', seconds = '0'] = (timePart || '00:00:00').split(':');
-          return new Date(Number(year), Number(month) - 1, Number(day), Number(hours), Number(minutes), Number(seconds)).getTime();
-        };
-        aVal = parseDate(aVal);
-        bVal = parseDate(bVal);
+      } else if (sortColumn === 'created_at') {
+        const parsedA = parseDateString(aVal);
+        const parsedB = parseDateString(bVal);
+        aVal = parsedA ? parsedA.getTime() : 0;
+        bVal = parsedB ? parsedB.getTime() : 0;
       } else if (typeof aVal === 'string') {
         aVal = aVal.toLowerCase();
         bVal = bVal.toLowerCase();
@@ -1455,25 +1281,63 @@ function ChecklistContent() {
 
       if (aVal < bVal) return sortDirection === 'asc' ? -1 : 1;
       if (aVal > bVal) return sortDirection === 'asc' ? 1 : -1;
-      return 0;
+      return dueTime(b.created_at) - dueTime(a.created_at);
     });
 
     return filtered;
   }, [checklists, searchTerm, sortColumn, sortDirection, showOpenTasks, filters, targetId, activeTimeFilter]);
 
-  // Group view - show only first checklist per group_id
+  // Master view - all sheet rows, latest created first
   const groupedChecklists = useMemo(() => {
-    const groups = new Map<string, Checklist>();
-
-    filteredChecklists.forEach(checklist => {
-      const groupId = checklist.group_id || 'no-group';
-      if (!groups.has(groupId)) {
-        groups.set(groupId, checklist);
-      }
+    const statusById = new Map<number, string[]>();
+    checklists.forEach((checklist) => {
+      const masterId = Number(checklist.id);
+      if (Number.isNaN(masterId)) return;
+      const status = (checklist.status || '').toLowerCase();
+      const statuses = statusById.get(masterId);
+      if (statuses) statuses.push(status);
+      else statusById.set(masterId, [status]);
     });
 
-    return Array.from(groups.values());
-  }, [filteredChecklists]);
+    const masters = masterChecklists.filter((checklist) => {
+      const matchesSearch = searchTerm === '' ||
+        (checklist.question?.toLowerCase().includes(searchTerm.toLowerCase())) ||
+        (checklist.assignee?.toLowerCase().includes(searchTerm.toLowerCase())) ||
+        (checklist.doer_name?.toLowerCase().includes(searchTerm.toLowerCase())) ||
+        (checklist.department?.toLowerCase().includes(searchTerm.toLowerCase()));
+      if (!matchesSearch) return false;
+      if (filters.questions.length > 0 && !filters.questions.includes(checklist.question)) return false;
+      if (filters.assignees.length > 0 && !filters.assignees.includes(checklist.assignee)) return false;
+      if (filters.doers.length > 0 && !filters.doers.includes(checklist.doer_name || '')) return false;
+      if (filters.departments.length > 0 && !filters.departments.includes(checklist.department || '')) return false;
+      if (filters.priorities.length > 0 && !filters.priorities.includes(checklist.priority)) return false;
+      if (filters.frequencies.length > 0 && !filters.frequencies.includes(checklist.frequency)) return false;
+      return true;
+    }).map((checklist) => {
+      const masterId = Number(checklist.id);
+      const statuses = statusById.get(masterId) || [];
+      let status = checklist.status || '';
+      if (statuses.length > 0) {
+        if (statuses.every((s) => s === 'completed')) status = 'completed';
+        else if (statuses.some((s) => s === 'overdue')) status = 'overdue';
+        else if (statuses.some((s) => s === 'pending')) status = 'pending';
+        else if (statuses.some((s) => s === 'planned')) status = 'planned';
+      }
+      return {
+        ...checklist,
+        master_due_date: checklist.due_date,
+        status,
+      };
+    });
+
+    masters.sort((a, b) => {
+      const createdDiff = dueTime(b.created_at) - dueTime(a.created_at);
+      if (createdDiff !== 0) return createdDiff;
+      return Number((b as any)._sheetIndex || 0) - Number((a as any)._sheetIndex || 0);
+    });
+
+    return masters;
+  }, [masterChecklists, checklists, searchTerm, filters]);
 
   // Pagination logic
   const totalPages = Math.ceil((viewMode === 'group' ? groupedChecklists.length : filteredChecklists.length) / itemsPerPage);
@@ -1579,7 +1443,11 @@ function ChecklistContent() {
 
             {/* Add Button - Moved to front on mobile */}
             <motion.button
-              onClick={() => setShowAddModal(true)}
+              onClick={() => {
+                setEditingChecklist(null);
+                resetForm();
+                setShowAddModal(true);
+              }}
               className="flex items-center gap-2 bg-[var(--theme-primary)] hover:bg-[var(--theme-secondary)] text-gray-900 font-semibold py-2 px-4 rounded-lg shadow-sm transition flex-shrink-0 md:order-last"
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
@@ -1593,7 +1461,7 @@ function ChecklistContent() {
             {/* View Mode Toggle Buttons */}
             <div className="flex items-center gap-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg p-1 flex-shrink-0 md:order-1">
               <button
-                onClick={() => setViewMode('list')}
+                onClick={() => { setViewMode('list'); setCurrentPage(1); }}
                 className={`flex items-center gap-2 px-3 py-1.5 rounded transition ${viewMode === 'list'
                   ? 'bg-[var(--theme-primary)] text-gray-900 font-semibold'
                   : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
@@ -1605,7 +1473,7 @@ function ChecklistContent() {
                 <span className="hidden sm:inline">List</span>
               </button>
               <button
-                onClick={() => setViewMode('tile')}
+                onClick={() => { setViewMode('tile'); setCurrentPage(1); }}
                 className={`flex items-center gap-2 px-3 py-1.5 rounded transition ${viewMode === 'tile'
                   ? 'bg-[var(--theme-primary)] text-gray-900 font-semibold'
                   : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
@@ -1617,19 +1485,7 @@ function ChecklistContent() {
                 <span className="hidden sm:inline">Tiles</span>
               </button>
               <button
-                onClick={() => setViewMode('calendar')}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded transition ${viewMode === 'calendar'
-                  ? 'bg-[var(--theme-primary)] text-gray-900 font-semibold'
-                  : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
-                  }`}
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                </svg>
-                <span className="hidden sm:inline">Calendar</span>
-              </button>
-              <button
-                onClick={() => setViewMode('group')}
+                onClick={() => { setViewMode('group'); setCurrentPage(1); }}
                 className={`flex items-center gap-2 px-3 py-1.5 rounded transition ${viewMode === 'group'
                   ? 'bg-[var(--theme-primary)] text-gray-900 font-semibold'
                   : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
@@ -1638,7 +1494,7 @@ function ChecklistContent() {
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
                 </svg>
-                <span className="hidden sm:inline">Groups</span>
+                <span className="hidden sm:inline">Master</span>
               </button>
             </div>
 
@@ -1818,14 +1674,13 @@ function ChecklistContent() {
                           )}
                         </div>
                       </th>
-                      <th className="px-6 py-4 text-left text-sm font-semibold text-gray-900">Verification</th>
                       <th className="px-6 py-4 text-left text-sm font-semibold text-gray-900">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-200 dark:divide-gray-700 whitespace-nowrap">
                     {paginatedChecklists.length === 0 ? (
                       <tr>
-                        <td colSpan={11} className="px-6 py-12 text-center">
+                        <td colSpan={10} className="px-6 py-12 text-center">
                           <div className="flex flex-col items-center justify-center">
                             <div className="w-16 h-16 bg-gradient-to-br from-[var(--theme-primary)] to-[var(--theme-secondary)] rounded-full flex items-center justify-center mb-4 text-3xl">
                               📋
@@ -1838,7 +1693,7 @@ function ChecklistContent() {
                     ) : (
                       paginatedChecklists.map((checklist) => (
                         <motion.tr
-                          key={checklist.id}
+                          key={checklist.occurrence_id || checklist.id}
                           initial={{ opacity: 0 }}
                           animate={{ opacity: 1 }}
                           whileHover={{ backgroundColor: 'rgba(244, 210, 74, 0.05)' }}
@@ -1855,16 +1710,20 @@ function ChecklistContent() {
                             </p>
                           </td>
                           <td className="px-6 py-4">
-                            <div className="flex items-center gap-2">
-                              {getUserImage(checklist.assignee) ? (
-                                <img src={`/api/image-proxy?url=${encodeURIComponent(getUserImage(checklist.assignee)!)}`} alt={checklist.assignee} className="w-8 h-8 rounded-full object-cover border-2 border-[var(--theme-primary)]" />
-                              ) : (
-                                <div className="w-8 h-8 bg-gradient-to-br from-[var(--theme-primary)] to-[var(--theme-secondary)] rounded-full flex items-center justify-center text-sm font-bold text-gray-900 shadow-md">
-                                  {checklist.assignee[0]?.toUpperCase() || '?'}
-                                </div>
-                              )}
-                              <span className="text-gray-900 dark:text-white">{checklist.assignee}</span>
-                            </div>
+                            {checklist.assignee ? (
+                              <div className="flex items-center gap-2">
+                                {getUserImage(checklist.assignee) ? (
+                                  <img src={`/api/image-proxy?url=${encodeURIComponent(getUserImage(checklist.assignee)!)}`} alt={checklist.assignee} className="w-8 h-8 rounded-full object-cover border-2 border-[var(--theme-primary)]" />
+                                ) : (
+                                  <div className="w-8 h-8 bg-gradient-to-br from-[var(--theme-primary)] to-[var(--theme-secondary)] rounded-full flex items-center justify-center text-sm font-bold text-gray-900 shadow-md">
+                                    {checklist.assignee[0]?.toUpperCase() || '?'}
+                                  </div>
+                                )}
+                                <span className="text-gray-900 dark:text-white">{checklist.assignee}</span>
+                              </div>
+                            ) : (
+                              <span className="text-gray-500 dark:text-gray-400">N/A</span>
+                            )}
                           </td>
                           <td className="px-6 py-4">
                             {checklist.doer_name ? (
@@ -1908,22 +1767,6 @@ function ChecklistContent() {
                             </span>
                           </td>
                           <td className="px-6 py-4">
-                            {checklist.verification_required ? (
-                              <div className="text-sm">
-                                <span className="inline-flex items-center px-2 py-1 rounded-full bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300 text-xs font-medium mb-1">
-                                  ✓ Required
-                                </span>
-                                {checklist.verifier_name && (
-                                  <p className="text-xs text-gray-600 dark:text-gray-400">
-                                    By: {checklist.verifier_name}
-                                  </p>
-                                )}
-                              </div>
-                            ) : (
-                              <span className="text-gray-400 dark:text-gray-500 text-xs">Not Required</span>
-                            )}
-                          </td>
-                          <td className="px-6 py-4">
                             <div className="flex items-center gap-2">
                               <motion.button
                                 whileHover={{ scale: 1.1 }}
@@ -1937,17 +1780,6 @@ function ChecklistContent() {
                                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
                                 </svg>
                               </motion.button>
-                              <motion.button
-                                whileHover={{ scale: 1.1 }}
-                                whileTap={{ scale: 0.95 }}
-                                onClick={() => openDeleteModal(checklist.id)}
-                                className="p-2 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition"
-                                title="Delete"
-                              >
-                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                                </svg>
-                              </motion.button>
                             </div>
                           </td>
                         </motion.tr>
@@ -1959,160 +1791,6 @@ function ChecklistContent() {
 
               {/* Pagination Controls Removed from bottom */}
             </>
-          )}
-
-          {/* Calendar View */}
-          {viewMode === 'calendar' && (
-            <div className="p-6">
-              {/* Calendar Header */}
-              <div className="flex items-center justify-between mb-6">
-                <h2 className="text-2xl font-bold text-gray-900 dark:text-white">
-                  {calendarDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
-                </h2>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => {
-                      const newDate = new Date(calendarDate);
-                      newDate.setMonth(newDate.getMonth() - 1);
-                      setCalendarDate(newDate);
-                    }}
-                    className="p-2 hover:bg-[var(--theme-lighter)] dark:hover:bg-gray-700 rounded-lg transition"
-                  >
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-                    </svg>
-                  </button>
-                  <button
-                    onClick={() => setCalendarDate(new Date())}
-                    className="px-4 py-2 bg-[var(--theme-primary)] hover:bg-[var(--theme-secondary)] text-gray-900 font-semibold rounded-lg transition text-sm"
-                  >
-                    Today
-                  </button>
-                  <button
-                    onClick={() => {
-                      const newDate = new Date(calendarDate);
-                      newDate.setMonth(newDate.getMonth() + 1);
-                      setCalendarDate(newDate);
-                    }}
-                    className="p-2 hover:bg-[var(--theme-lighter)] dark:hover:bg-gray-700 rounded-lg transition"
-                  >
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                    </svg>
-                  </button>
-                </div>
-              </div>
-
-              {/* Calendar Grid */}
-              <div className="grid grid-cols-7 gap-2">
-                {/* Day Headers */}
-                {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
-                  <div key={day} className="text-center font-semibold text-gray-600 dark:text-gray-400 py-2 text-sm">
-                    {day}
-                  </div>
-                ))}
-
-                {/* Calendar Days */}
-                {(() => {
-                  const { daysInMonth, startingDayOfWeek } = getCalendarDays(
-                    calendarDate.getFullYear(),
-                    calendarDate.getMonth()
-                  );
-                  const days = [];
-
-                  // Empty cells before first day
-                  for (let i = 0; i < startingDayOfWeek; i++) {
-                    days.push(<div key={`empty-${i}`} className="h-44 bg-gray-50 dark:bg-gray-900 rounded-lg" />);
-                  }
-
-                  // Days of the month
-                  for (let day = 1; day <= daysInMonth; day++) {
-                    const date = new Date(calendarDate.getFullYear(), calendarDate.getMonth(), day);
-                    const checklistsForDay = getChecklistsForDate(date);
-                    const isToday =
-                      date.getDate() === new Date().getDate() &&
-                      date.getMonth() === new Date().getMonth() &&
-                      date.getFullYear() === new Date().getFullYear();
-
-                    days.push(
-                      <div
-                        key={day}
-                        className={`h-44 rounded-lg border-2 p-2 overflow-hidden ${isToday
-                          ? 'border-[var(--theme-primary)] bg-[var(--theme-light)] dark:bg-gray-800'
-                          : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800'
-                          }`}
-                      >
-                        <div className="flex items-center justify-between mb-1">
-                          <span className={`text-sm font-semibold ${isToday
-                            ? 'text-[var(--theme-primary)]'
-                            : 'text-gray-900 dark:text-white'
-                            }`}>
-                            {day}
-                          </span>
-                          {checklistsForDay.length > 0 && (
-                            <span className="text-xs bg-[var(--theme-primary)] text-gray-900 px-1.5 py-0.5 rounded-full font-bold">
-                              {checklistsForDay.length}
-                            </span>
-                          )}
-                        </div>
-                        <div className="space-y-1 overflow-y-auto max-h-36">
-                          {checklistsForDay.map((checklist: Checklist) => (
-                            <motion.div
-                              key={checklist.id}
-                              whileHover={{ scale: 1.02 }}
-                              className="group relative"
-                            >
-                              <div
-                                className={`text-xs p-1.5 rounded cursor-pointer ${getStatusColor(checklist.status)} hover:shadow-md transition`}
-                                onClick={() => handleViewDetails(checklist)}
-                              >
-                                <div className="font-semibold truncate text-white">
-                                  {checklist.question}
-                                </div>
-                                <div className="text-[10px] opacity-90 truncate text-white">
-                                  {checklist.assignee}
-                                </div>
-                              </div>
-
-                              {/* Action buttons on hover */}
-                              <div className="absolute top-0 right-0 hidden group-hover:flex gap-1 bg-white dark:bg-gray-700 rounded shadow-lg p-1 z-10">
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleViewDetails(checklist);
-                                  }}
-                                  className="p-1 text-[var(--theme-primary)] hover:bg-[var(--theme-lighter)] dark:hover:bg-gray-600 rounded"
-                                  title="View Details"
-                                >
-                                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                                  </svg>
-                                </button>
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    openDeleteModal(checklist.id);
-                                  }}
-                                  className="p-1 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded"
-                                  title="Delete"
-                                >
-                                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                                  </svg>
-                                </button>
-                              </div>
-                            </motion.div>
-                          ))}
-                        </div>
-                      </div>
-                    );
-                  }
-
-                  return days;
-                })()}
-              </div>
-            </div>
           )}
 
           {/* Tile View */}
@@ -2171,7 +1849,7 @@ function ChecklistContent() {
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {paginatedChecklists.map((checklist, index) => (
                   <motion.div
-                    key={checklist.id}
+                    key={checklist.occurrence_id || checklist.id}
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: index * 0.05 }}
@@ -2330,7 +2008,7 @@ function ChecklistContent() {
             </div>
           )}
 
-          {/* Group View */}
+          {/* Master View */}
           {viewMode === 'group' && (
             <>
               {/* Pagination Row Above Table (Group View) */}
@@ -2388,7 +2066,7 @@ function ChecklistContent() {
                   <thead className="whitespace-nowrap">
                     <tr className="bg-[var(--theme-primary)] border-b border-gray-200 dark:border-gray-600">
                       <th className="px-6 py-4 text-left text-sm font-semibold text-gray-900">
-                        Group ID
+                        ID
                       </th>
                       <th className="px-6 py-4 text-left text-sm font-semibold text-gray-900 w-full min-w-[400px]">
                         Question/Task
@@ -2414,19 +2092,18 @@ function ChecklistContent() {
                       <th className="px-6 py-4 text-left text-sm font-semibold text-gray-900">
                         Status
                       </th>
-                      <th className="px-6 py-4 text-left text-sm font-semibold text-gray-900">Verification</th>
                       <th className="px-6 py-4 text-left text-sm font-semibold text-gray-900">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-200 dark:divide-gray-700 whitespace-nowrap">
                     {paginatedChecklists.length === 0 ? (
                       <tr>
-                        <td colSpan={11} className="px-6 py-12 text-center">
+                        <td colSpan={10} className="px-6 py-12 text-center">
                           <div className="flex flex-col items-center justify-center">
                             <div className="w-16 h-16 bg-gradient-to-br from-[var(--theme-primary)] to-[var(--theme-secondary)] rounded-full flex items-center justify-center mb-4 text-3xl">
                               📋
                             </div>
-                            <p className="text-gray-500 dark:text-gray-400 text-lg mb-2">No groups found</p>
+                            <p className="text-gray-500 dark:text-gray-400 text-lg mb-2">No master tasks found</p>
                             <p className="text-gray-400 dark:text-gray-500 text-sm">Create your first checklist to get started</p>
                           </div>
                         </td>
@@ -2442,7 +2119,7 @@ function ChecklistContent() {
                         >
                           <td className="px-6 py-4">
                             <span className="font-mono text-sm font-semibold text-gray-900 dark:text-white">
-                              {checklist.group_id || 'N/A'}
+                              {checklist.id}
                             </span>
                           </td>
                           <td className="px-6 py-4">
@@ -2451,16 +2128,20 @@ function ChecklistContent() {
                             </p>
                           </td>
                           <td className="px-6 py-4">
-                            <div className="flex items-center gap-2">
-                              {getUserImage(checklist.assignee) ? (
-                                <img src={`/api/image-proxy?url=${encodeURIComponent(getUserImage(checklist.assignee)!)}`} alt={checklist.assignee} className="w-8 h-8 rounded-full object-cover border-2 border-[var(--theme-primary)]" />
-                              ) : (
-                                <div className="w-8 h-8 bg-gradient-to-br from-[var(--theme-primary)] to-[var(--theme-secondary)] rounded-full flex items-center justify-center text-sm font-bold text-gray-900 shadow-md">
-                                  {checklist.assignee[0]?.toUpperCase() || '?'}
-                                </div>
-                              )}
-                              <span className="text-gray-900 dark:text-white">{checklist.assignee}</span>
-                            </div>
+                            {checklist.assignee ? (
+                              <div className="flex items-center gap-2">
+                                {getUserImage(checklist.assignee) ? (
+                                  <img src={`/api/image-proxy?url=${encodeURIComponent(getUserImage(checklist.assignee)!)}`} alt={checklist.assignee} className="w-8 h-8 rounded-full object-cover border-2 border-[var(--theme-primary)]" />
+                                ) : (
+                                  <div className="w-8 h-8 bg-gradient-to-br from-[var(--theme-primary)] to-[var(--theme-secondary)] rounded-full flex items-center justify-center text-sm font-bold text-gray-900 shadow-md">
+                                    {checklist.assignee[0]?.toUpperCase() || '?'}
+                                  </div>
+                                )}
+                                <span className="text-gray-900 dark:text-white">{checklist.assignee}</span>
+                              </div>
+                            ) : (
+                              <span className="text-gray-500 dark:text-gray-400">N/A</span>
+                            )}
                           </td>
                           <td className="px-6 py-4">
                             {checklist.doer_name ? (
@@ -2502,22 +2183,6 @@ function ChecklistContent() {
                             <span className={`px-3 py-1 rounded-full text-xs font-semibold ${getStatusColor(checklist.status)}`}>
                               {checklist.status?.toUpperCase()}
                             </span>
-                          </td>
-                          <td className="px-6 py-4">
-                            {checklist.verification_required ? (
-                              <div className="text-sm">
-                                <span className="inline-flex items-center px-2 py-1 rounded-full bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300 text-xs font-medium mb-1">
-                                  ✓ Required
-                                </span>
-                                {checklist.verifier_name && (
-                                  <p className="text-xs text-gray-600 dark:text-gray-400">
-                                    By: {checklist.verifier_name}
-                                  </p>
-                                )}
-                              </div>
-                            ) : (
-                              <span className="text-gray-400 dark:text-gray-500 text-xs">Not Required</span>
-                            )}
                           </td>
                           <td className="px-6 py-4">
                             <div className="flex items-center gap-2">
@@ -2577,7 +2242,11 @@ function ChecklistContent() {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
-              onClick={() => setShowAddModal(false)}
+              onClick={() => {
+                setShowAddModal(false);
+                setEditingChecklist(null);
+                resetForm();
+              }}
             >
               <motion.div
                 initial={{ scale: 0.95, opacity: 0 }}
@@ -2587,11 +2256,11 @@ function ChecklistContent() {
                 className="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl max-w-5xl w-full max-h-[90vh] overflow-y-auto"
               >
                 <div className="sticky top-0 bg-gradient-to-r from-[var(--theme-primary)] to-[var(--theme-secondary)] px-6 py-4 rounded-t-2xl">
-                  <h2 className="text-2xl font-bold text-gray-900">✅ Add New Checklist</h2>
-                  <p className="text-gray-700 text-sm mt-1">Tasks will be automatically generated based on frequency</p>
+                  <h2 className="text-2xl font-bold text-gray-900">{editingChecklist ? '✏️ Edit Checklist' : '✅ Add New Checklist'}</h2>
+                  <p className="text-gray-700 text-sm mt-1">{editingChecklist ? 'Update this master task' : 'Tasks will be automatically generated based on frequency'}</p>
                 </div>
 
-                <form onSubmit={handleAddChecklist} className="p-4 md:p-6">
+                <form onSubmit={editingChecklist ? handleEditChecklist : handleAddChecklist} className="p-4 md:p-6">
                   {/* Two Column Layout */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
                     {/* Left Column */}
@@ -2946,16 +2615,16 @@ function ChecklistContent() {
                             <span className="block text-xs text-gray-500 mt-1">When to start the weekly tasks</span>
                           )}
                           {formData.frequency === 'daily' && (
-                            <span className="block text-xs text-gray-500 mt-1">Tasks will be created daily (excluding Sundays) until Dec 31</span>
+                            <span className="block text-xs text-gray-500 mt-1">Tasks will be created daily (Sundays skipped)</span>
                           )}
                           {formData.frequency === 'monthly' && (
-                            <span className="block text-xs text-gray-500 mt-1">Tasks will repeat on this day each month until Dec 31</span>
+                            <span className="block text-xs text-gray-500 mt-1">Repeats this day each month. If it falls on Sunday, the task is shown on Saturday</span>
                           )}
                           {formData.frequency === 'quarterly' && (
-                            <span className="block text-xs text-gray-500 mt-1">Tasks will repeat every 3 months until Dec 31</span>
+                            <span className="block text-xs text-gray-500 mt-1">Repeats every 3 months. If it falls on Sunday, the task is shown on Saturday</span>
                           )}
                           {formData.frequency === 'yearly' && (
-                            <span className="block text-xs text-gray-500 mt-1">Single task on this date</span>
+                            <span className="block text-xs text-gray-500 mt-1">Repeats this date each year. If it falls on Sunday, the task is shown on Saturday</span>
                           )}
                         </label>
                         <button
@@ -2969,87 +2638,6 @@ function ChecklistContent() {
                           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
                           </svg>
-                        </button>
-                      </div>
-
-                      {/* Verification Required */}
-                      <div className="flex items-center justify-between p-4 bg-gradient-to-r from-[var(--theme-light)] to-[var(--theme-lighter)] dark:bg-slate-700/50 rounded-xl border border-[var(--theme-primary)]/30">
-                        <label htmlFor="verificationRequired" className="text-sm font-medium text-gray-900 dark:text-gray-300">
-                          ✓ Verification Required
-                        </label>
-                        <button
-                          type="button"
-                          onClick={() => setFormData({ ...formData, verificationRequired: !formData.verificationRequired })}
-                          className={`relative inline-flex h-7 w-14 items-center rounded-full transition-colors ${formData.verificationRequired ? 'bg-gradient-to-r from-[var(--theme-primary)] to-[var(--theme-secondary)]' : 'bg-gray-300 dark:bg-slate-600'
-                            }`}
-                        >
-                          <span
-                            className={`inline-block h-5 w-5 transform rounded-full bg-white shadow-md transition-transform ${formData.verificationRequired ? 'translate-x-8' : 'translate-x-1'
-                              }`}
-                          />
-                        </button>
-                      </div>
-
-                      {/* Verifier Name - Shows when Verification is Required */}
-                      {formData.verificationRequired && (
-                        <motion.div
-                          initial={{ opacity: 0, height: 0 }}
-                          animate={{ opacity: 1, height: 'auto' }}
-                          exit={{ opacity: 0, height: 0 }}
-                          className="relative" ref={verifierRef}
-                        >
-                          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                            Verifier Name
-                          </label>
-                          <div className="relative">
-                            <input
-                              type="text"
-                              value={formData.verifierName || verifierSearch}
-                              onChange={(e) => {
-                                setVerifierSearch(e.target.value);
-                                setFormData({ ...formData, verifierName: '' });
-                                setShowVerifierDropdown(true);
-                              }}
-                              onFocus={() => setShowVerifierDropdown(true)}
-                              placeholder="Search verifier..."
-                              className="w-full px-4 py-2.5 bg-white dark:bg-slate-700 border border-[var(--theme-primary)]/30 dark:border-slate-600 rounded-xl focus:ring-2 focus:ring-[var(--theme-primary)] outline-none text-gray-900 dark:text-white"
-                            />
-                            {showVerifierDropdown && (
-                              <div className="absolute z-10 w-full mt-1 bg-white dark:bg-slate-700 border border-[var(--theme-primary)]/30 rounded-xl shadow-lg max-h-48 overflow-y-auto">
-                                {users.filter(u => u.username.toLowerCase().includes(verifierSearch.toLowerCase())).map(u => (
-                                  <div
-                                    key={u.id}
-                                    onClick={() => {
-                                      setFormData({ ...formData, verifierName: u.username });
-                                      setVerifierSearch('');
-                                      setShowVerifierDropdown(false);
-                                    }}
-                                    className="px-4 py-2 hover:bg-[var(--theme-primary)]/20 cursor-pointer text-gray-900 dark:text-white"
-                                  >
-                                    {u.username}
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        </motion.div>
-                      )}
-
-                      {/* Attachment Required */}
-                      <div className="flex items-center justify-between p-4 bg-gradient-to-r from-[var(--theme-light)] to-[var(--theme-lighter)] dark:bg-slate-700/50 rounded-xl border border-[var(--theme-primary)]/30">
-                        <label htmlFor="attachmentRequired" className="text-sm font-medium text-gray-900 dark:text-gray-300">
-                          📎 Task Attachment Required
-                        </label>
-                        <button
-                          type="button"
-                          onClick={() => setFormData({ ...formData, attachmentRequired: !formData.attachmentRequired })}
-                          className={`relative inline-flex h-7 w-14 items-center rounded-full transition-colors ${formData.attachmentRequired ? 'bg-gradient-to-r from-[var(--theme-primary)] to-[var(--theme-secondary)]' : 'bg-gray-300 dark:bg-slate-600'
-                            }`}
-                        >
-                          <span
-                            className={`inline-block h-5 w-5 transform rounded-full bg-white shadow-md transition-transform ${formData.attachmentRequired ? 'translate-x-8' : 'translate-x-1'
-                              }`}
-                          />
                         </button>
                       </div>
                     </div>
@@ -3146,11 +2734,14 @@ function ChecklistContent() {
                                       if (isMultiSelect) {
                                         // Multi-date selection for monthly/quarterly/yearly
                                         if (selectedMultipleDates.includes(dateStr)) {
-                                          // Remove date if already selected
-                                          setSelectedMultipleDates(selectedMultipleDates.filter(d => d !== dateStr));
+                                          const nextDates = selectedMultipleDates.filter(d => d !== dateStr);
+                                          setSelectedMultipleDates(nextDates);
                                         } else {
-                                          // Add date to selection
-                                          setSelectedMultipleDates([...selectedMultipleDates, dateStr]);
+                                          const nextDates = [...selectedMultipleDates, dateStr];
+                                          setSelectedMultipleDates(nextDates);
+                                          if (!formData.dueDate) {
+                                            setFormData({ ...formData, dueDate: buildDueDateIsoFromYmd(dateStr) });
+                                          }
                                         }
                                       } else {
                                         // Single date selection for daily/weekly
@@ -3276,7 +2867,7 @@ function ChecklistContent() {
                       type="submit"
                       className="flex-1 bg-gradient-to-r from-[var(--theme-primary)] to-[var(--theme-secondary)] text-gray-900 px-6 py-3 rounded-xl font-semibold hover:shadow-lg transition"
                     >
-                      Create Checklist
+                      {editingChecklist ? 'Update Checklist' : 'Create Checklist'}
                     </motion.button>
                     <motion.button
                       whileHover={{ scale: 1.02 }}
@@ -3284,344 +2875,12 @@ function ChecklistContent() {
                       type="button"
                       onClick={() => {
                         setShowAddModal(false);
+                        setEditingChecklist(null);
                         resetForm();
                       }}
                       className="px-6 py-3 bg-gray-200 dark:bg-slate-700 text-gray-700 dark:text-gray-300 rounded-xl font-semibold hover:bg-gray-300 dark:hover:bg-slate-600 transition"
                     >
                       Cancel
-                    </motion.button>
-                  </div>
-                </form>
-              </motion.div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {/* Edit Modal - Similar structure to Add Modal */}
-        <AnimatePresence>
-          {showEditModal && editingChecklist && (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
-              onClick={() => {
-                setShowEditModal(false);
-                setEditingChecklist(null);
-                resetForm();
-              }}
-            >
-              <motion.div
-                initial={{ scale: 0.95, opacity: 0 }}
-                animate={{ scale: 1, opacity: 1 }}
-                exit={{ scale: 0.95, opacity: 0 }}
-                onClick={(e) => e.stopPropagation()}
-                className="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto"
-              >
-                <div className="sticky top-0 bg-gradient-to-r from-[var(--theme-primary)] to-[var(--theme-secondary)] px-6 py-4 rounded-t-2xl">
-                  <h2 className="text-2xl font-bold text-gray-900">✏️ Edit Checklist</h2>
-                  <p className="text-gray-700 text-sm mt-1">Update checklist details</p>
-                </div>
-
-                <form onSubmit={handleEditChecklist} className="p-4 md:p-6">
-                  {/* Two Column Layout */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
-                    {/* Question - Full width on mobile */}
-                    <div className="space-y-4 md:col-span-2">
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                          Question/Task *
-                        </label>
-                        <textarea
-                          required
-                          value={formData.question}
-                          onChange={(e) => setFormData({ ...formData, question: e.target.value })}
-                          className="w-full px-4 py-2.5 bg-white dark:bg-slate-700 border border-[var(--theme-primary)]/30 dark:border-slate-600 rounded-xl focus:ring-2 focus:ring-[var(--theme-primary)] outline-none text-gray-900 dark:text-white resize-none"
-                          rows={4}
-                          placeholder="Enter the task or question..."
-                        />
-                      </div>
-                    </div>
-
-                    {/* Left Column - Other fields */}
-                    <div className="space-y-4">
-
-                      {/* Assignee */}
-                      <div className="relative" ref={assigneeRef}>
-                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                          Assignee *
-                        </label>
-                        <div className="relative">
-                          <input
-                            type="text"
-                            required
-                            value={formData.assignee || assigneeSearch}
-                            onChange={(e) => {
-                              setAssigneeSearch(e.target.value);
-                              setFormData({ ...formData, assignee: '' });
-                              setShowAssigneeDropdown(true);
-                            }}
-                            onFocus={() => setShowAssigneeDropdown(true)}
-                            placeholder="Search assignee..."
-                            className="w-full px-4 py-2.5 bg-white dark:bg-slate-700 border border-[var(--theme-primary)]/30 dark:border-slate-600 rounded-xl focus:ring-2 focus:ring-[var(--theme-primary)] outline-none text-gray-900 dark:text-white"
-                          />
-                          {showAssigneeDropdown && (
-                            <div className="absolute z-10 w-full mt-1 bg-white dark:bg-slate-700 border border-[var(--theme-primary)]/30 rounded-xl shadow-lg max-h-48 overflow-y-auto">
-                              {users.filter(u => u.username.toLowerCase().includes(assigneeSearch.toLowerCase())).map(u => (
-                                <div
-                                  key={u.id}
-                                  onClick={() => {
-                                    setFormData({ ...formData, assignee: u.username });
-                                    setAssigneeSearch('');
-                                    setShowAssigneeDropdown(false);
-                                  }}
-                                  className="px-4 py-2 hover:bg-[var(--theme-primary)]/20 cursor-pointer text-gray-900 dark:text-white"
-                                >
-                                  {u.username}
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Doer */}
-                      <div className="relative" ref={doerRef}>
-                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                          Doer
-                        </label>
-                        <div className="relative">
-                          <input
-                            type="text"
-                            value={formData.doerName || doerSearch}
-                            onChange={(e) => {
-                              setDoerSearch(e.target.value);
-                              setFormData({ ...formData, doerName: '' });
-                              setShowDoerDropdown(true);
-                            }}
-                            onFocus={() => setShowDoerDropdown(true)}
-                            placeholder="Search doer..."
-                            className="w-full px-4 py-2.5 bg-white dark:bg-slate-700 border border-[var(--theme-primary)]/30 dark:border-slate-600 rounded-xl focus:ring-2 focus:ring-[var(--theme-primary)] outline-none text-gray-900 dark:text-white"
-                          />
-                          {showDoerDropdown && (
-                            <div className="absolute z-10 w-full mt-1 bg-white dark:bg-slate-700 border border-[var(--theme-primary)]/30 rounded-xl shadow-lg max-h-48 overflow-y-auto">
-                              {users.filter(u => u.username.toLowerCase().includes(doerSearch.toLowerCase())).map(u => (
-                                <div
-                                  key={u.id}
-                                  onClick={() => {
-                                    setFormData({ ...formData, doerName: u.username });
-                                    setDoerSearch('');
-                                    setShowDoerDropdown(false);
-                                  }}
-                                  className="px-4 py-2 hover:bg-[var(--theme-primary)]/20 cursor-pointer text-gray-900 dark:text-white"
-                                >
-                                  {u.username}
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Department */}
-                      <div className="relative" ref={departmentRef}>
-                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                          Department
-                        </label>
-                        <div className="flex gap-2">
-                          <div className="relative flex-1">
-                            <input
-                              type="text"
-                              value={formData.department || departmentSearch}
-                              onChange={(e) => {
-                                setDepartmentSearch(e.target.value);
-                                setFormData({ ...formData, department: '' });
-                                setShowDepartmentDropdown(true);
-                              }}
-                              onFocus={() => setShowDepartmentDropdown(true)}
-                              placeholder="Search department..."
-                              className="w-full px-4 py-2.5 bg-white dark:bg-slate-700 border border-[var(--theme-primary)]/30 dark:border-slate-600 rounded-xl focus:ring-2 focus:ring-[var(--theme-primary)] outline-none text-gray-900 dark:text-white"
-                            />
-                            {showDepartmentDropdown && (
-                              <div className="absolute z-10 w-full mt-1 bg-white dark:bg-slate-700 border border-[var(--theme-primary)]/30 rounded-xl shadow-lg max-h-48 overflow-y-auto">
-                                {allDepartments.filter(d => d.toLowerCase().includes(departmentSearch.toLowerCase())).map(d => (
-                                  <div
-                                    key={d}
-                                    onClick={() => {
-                                      setFormData({ ...formData, department: d });
-                                      setDepartmentSearch('');
-                                      setShowDepartmentDropdown(false);
-                                    }}
-                                    className="px-4 py-2 hover:bg-[var(--theme-primary)]/20 cursor-pointer text-gray-900 dark:text-white"
-                                  >
-                                    {d}
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-
-                          {/* Add Department Button */}
-                          <button
-                            type="button"
-                            onClick={() => setShowAddDepartmentModal(true)}
-                            className="px-3 py-2.5 bg-[var(--theme-primary)] hover:bg-[var(--theme-secondary)] text-gray-900 rounded-xl font-semibold transition text-sm flex items-center gap-1"
-                            title="Add new department"
-                          >
-                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                            </svg>
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* Priority */}
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                          Priority *
-                        </label>
-                        <div className="flex gap-2">
-                          {PRIORITIES.map(p => {
-                            let selectedColor = '';
-                            let unselectedColor = '';
-
-                            if (p.value === 'high') {
-                              selectedColor = 'bg-gradient-to-r from-red-500 to-red-600 text-white shadow-md';
-                              unselectedColor = 'hover:border-red-500';
-                            } else if (p.value === 'medium') {
-                              selectedColor = 'bg-gradient-to-r from-yellow-500 to-yellow-600 text-white shadow-md';
-                              unselectedColor = 'hover:border-yellow-500';
-                            } else {
-                              selectedColor = 'bg-gradient-to-r from-green-500 to-green-600 text-white shadow-md';
-                              unselectedColor = 'hover:border-green-500';
-                            }
-
-                            return (
-                              <motion.button
-                                key={p.value}
-                                type="button"
-                                whileHover={{ scale: 1.05 }}
-                                whileTap={{ scale: 0.95 }}
-                                onClick={() => setFormData({ ...formData, priority: p.value })}
-                                className={`flex-1 px-4 py-2.5 rounded-xl font-medium transition ${formData.priority === p.value
-                                  ? selectedColor
-                                  : `bg-white dark:bg-slate-700 text-gray-700 dark:text-gray-300 border border-gray-300 dark:border-slate-600 ${unselectedColor}`
-                                  }`}
-                              >
-                                {p.label}
-                              </motion.button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Right Column */}
-                    <div className="space-y-4">
-                      {/* Verification Required */}
-                      <div className="flex items-center justify-between p-4 bg-gradient-to-r from-[var(--theme-light)] to-[var(--theme-lighter)] dark:bg-slate-700/50 rounded-xl border border-[var(--theme-primary)]/30">
-                        <label htmlFor="editVerificationRequired" className="text-sm font-medium text-gray-900 dark:text-gray-300">
-                          ✓ Verification Required
-                        </label>
-                        <button
-                          type="button"
-                          onClick={() => setFormData({ ...formData, verificationRequired: !formData.verificationRequired })}
-                          className={`relative inline-flex h-7 w-14 items-center rounded-full transition-colors ${formData.verificationRequired ? 'bg-gradient-to-r from-[var(--theme-primary)] to-[var(--theme-secondary)]' : 'bg-gray-300 dark:bg-slate-600'
-                            }`}
-                        >
-                          <span
-                            className={`inline-block h-5 w-5 transform rounded-full bg-white shadow-md transition-transform ${formData.verificationRequired ? 'translate-x-8' : 'translate-x-1'
-                              }`}
-                          />
-                        </button>
-                      </div>
-
-                      {/* Verifier Name - Shows when Verification is Required */}
-                      {formData.verificationRequired && (
-                        <motion.div
-                          initial={{ opacity: 0, height: 0 }}
-                          animate={{ opacity: 1, height: 'auto' }}
-                          exit={{ opacity: 0, height: 0 }}
-                          className="relative" ref={verifierRef}
-                        >
-                          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                            Verifier Name
-                          </label>
-                          <div className="relative">
-                            <input
-                              type="text"
-                              value={formData.verifierName || verifierSearch}
-                              onChange={(e) => {
-                                setVerifierSearch(e.target.value);
-                                setFormData({ ...formData, verifierName: '' });
-                                setShowVerifierDropdown(true);
-                              }}
-                              onFocus={() => setShowVerifierDropdown(true)}
-                              placeholder="Search verifier..."
-                              className="w-full px-4 py-2.5 bg-white dark:bg-slate-700 border border-[var(--theme-primary)]/30 dark:border-slate-600 rounded-xl focus:ring-2 focus:ring-[var(--theme-primary)] outline-none text-gray-900 dark:text-white"
-                            />
-                            {showVerifierDropdown && (
-                              <div className="absolute z-10 w-full mt-1 bg-white dark:bg-slate-700 border border-[var(--theme-primary)]/30 rounded-xl shadow-lg max-h-48 overflow-y-auto">
-                                {users.filter(u => u.username.toLowerCase().includes(verifierSearch.toLowerCase())).map(u => (
-                                  <div
-                                    key={u.id}
-                                    onClick={() => {
-                                      setFormData({ ...formData, verifierName: u.username });
-                                      setVerifierSearch('');
-                                      setShowVerifierDropdown(false);
-                                    }}
-                                    className="px-4 py-2 hover:bg-[var(--theme-primary)]/20 cursor-pointer text-gray-900 dark:text-white"
-                                  >
-                                    {u.username}
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        </motion.div>
-                      )}
-
-                      {/* Attachment Required */}
-                      <div className="flex items-center justify-between p-4 bg-gradient-to-r from-[var(--theme-light)] to-[var(--theme-lighter)] dark:bg-slate-700/50 rounded-xl border border-[var(--theme-primary)]/30">
-                        <label htmlFor="editAttachmentRequired" className="text-sm font-medium text-gray-900 dark:text-gray-300">
-                          📎 Task Attachment Required
-                        </label>
-                        <button
-                          type="button"
-                          onClick={() => setFormData({ ...formData, attachmentRequired: !formData.attachmentRequired })}
-                          className={`relative inline-flex h-7 w-14 items-center rounded-full transition-colors ${formData.attachmentRequired ? 'bg-gradient-to-r from-[var(--theme-primary)] to-[var(--theme-secondary)]' : 'bg-gray-300 dark:bg-slate-600'
-                            }`}
-                        >
-                          <span
-                            className={`inline-block h-5 w-5 transform rounded-full bg-white shadow-md transition-transform ${formData.attachmentRequired ? 'translate-x-8' : 'translate-x-1'
-                              }`}
-                          />
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="flex gap-3 pt-4">
-                    <motion.button
-                      whileHover={{ scale: 1.02 }}
-                      whileTap={{ scale: 0.98 }}
-                      type="button"
-                      onClick={() => {
-                        setShowEditModal(false);
-                        setEditingChecklist(null);
-                        resetForm();
-                      }}
-                      className="flex-1 bg-gray-200 dark:bg-slate-700 text-gray-700 dark:text-gray-300 px-6 py-3 rounded-xl font-semibold hover:bg-gray-300 dark:hover:bg-slate-600 transition"
-                    >
-                      Cancel
-                    </motion.button>
-                    <motion.button
-                      whileHover={{ scale: 1.02 }}
-                      whileTap={{ scale: 0.98 }}
-                      type="submit"
-                      className="flex-1 bg-gradient-to-r from-[var(--theme-primary)] to-[var(--theme-secondary)] text-gray-900 px-6 py-3 rounded-xl font-semibold hover:shadow-lg transition"
-                    >
-                      Update Checklist
                     </motion.button>
                   </div>
                 </form>
@@ -3677,6 +2936,7 @@ function ChecklistContent() {
                         </svg>
                         Delete This Task Only
                       </motion.button>
+                      {checklists.find(ch => ch.id === deleteId)?.group_id && (
                       <motion.button
                         whileHover={{ scale: 1.02 }}
                         whileTap={{ scale: 0.98 }}
@@ -3686,8 +2946,9 @@ function ChecklistContent() {
                         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
                         </svg>
-                        Delete All Group Tasks ({checklists.filter(c => c.group_id === checklists.find(ch => ch.id === deleteId)?.group_id).length})
+                        Delete All Group Tasks ({checklists.filter(c => c.group_id && c.group_id === checklists.find(ch => ch.id === deleteId)?.group_id).length})
                       </motion.button>
+                      )}
                       <motion.button
                         whileHover={{ scale: 1.02 }}
                         whileTap={{ scale: 0.98 }}
@@ -3707,7 +2968,7 @@ function ChecklistContent() {
                     <p className="text-center text-gray-600 dark:text-gray-400 mb-6">
                       {deleteMode === 'single'
                         ? 'Are you sure you want to delete this checklist? This action cannot be undone.'
-                        : `Are you sure you want to delete all ${checklists.filter(c => c.group_id === checklists.find(ch => ch.id === deleteId)?.group_id).length} tasks in this group? This action cannot be undone.`
+                        : `Are you sure you want to delete all ${checklists.filter(c => c.group_id && c.group_id === checklists.find(ch => ch.id === deleteId)?.group_id).length} tasks in this group? This action cannot be undone.`
                       }
                     </p>
                     <div className="flex gap-3">
@@ -4061,77 +3322,6 @@ function ChecklistContent() {
                       </div>
                     </div>
 
-                    {/* Verification & Attachment - 2 columns */}
-                    <div className="grid grid-cols-2 gap-3">
-                      {/* Verification Required */}
-                      <div>
-                        <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1.5">Verification</label>
-                        <div className="space-y-1.5">
-                          <label className="flex items-center gap-2 cursor-pointer hover:bg-[var(--theme-lighter)] dark:hover:bg-gray-700 p-2 rounded-lg transition">
-                            <input
-                              type="radio"
-                              checked={filters.verificationRequired === null}
-                              onChange={() => setFilters(prev => ({ ...prev, verificationRequired: null }))}
-                              className="w-3.5 h-3.5 text-[var(--theme-primary)] focus:ring-[var(--theme-primary)]"
-                            />
-                            <span className="text-xs font-medium text-gray-900 dark:text-white">All</span>
-                          </label>
-                          <label className="flex items-center gap-2 cursor-pointer hover:bg-[var(--theme-lighter)] dark:hover:bg-gray-700 p-2 rounded-lg transition">
-                            <input
-                              type="radio"
-                              checked={filters.verificationRequired === true}
-                              onChange={() => setFilters(prev => ({ ...prev, verificationRequired: true }))}
-                              className="w-3.5 h-3.5 text-[var(--theme-primary)] focus:ring-[var(--theme-primary)]"
-                            />
-                            <span className="text-xs font-medium text-gray-900 dark:text-white">Required</span>
-                          </label>
-                          <label className="flex items-center gap-2 cursor-pointer hover:bg-[var(--theme-lighter)] dark:hover:bg-gray-700 p-2 rounded-lg transition">
-                            <input
-                              type="radio"
-                              checked={filters.verificationRequired === false}
-                              onChange={() => setFilters(prev => ({ ...prev, verificationRequired: false }))}
-                              className="w-3.5 h-3.5 text-[var(--theme-primary)] focus:ring-[var(--theme-primary)]"
-                            />
-                            <span className="text-xs font-medium text-gray-900 dark:text-white">Not Required</span>
-                          </label>
-                        </div>
-                      </div>
-
-                      {/* Attachment Required */}
-                      <div>
-                        <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1.5">Attachment</label>
-                        <div className="space-y-1.5">
-                          <label className="flex items-center gap-2 cursor-pointer hover:bg-[var(--theme-lighter)] dark:hover:bg-gray-700 p-2 rounded-lg transition">
-                            <input
-                              type="radio"
-                              checked={filters.attachmentRequired === null}
-                              onChange={() => setFilters(prev => ({ ...prev, attachmentRequired: null }))}
-                              className="w-3.5 h-3.5 text-[var(--theme-primary)] focus:ring-[var(--theme-primary)]"
-                            />
-                            <span className="text-xs font-medium text-gray-900 dark:text-white">All</span>
-                          </label>
-                          <label className="flex items-center gap-2 cursor-pointer hover:bg-[var(--theme-lighter)] dark:hover:bg-gray-700 p-2 rounded-lg transition">
-                            <input
-                              type="radio"
-                              checked={filters.attachmentRequired === true}
-                              onChange={() => setFilters(prev => ({ ...prev, attachmentRequired: true }))}
-                              className="w-3.5 h-3.5 text-[var(--theme-primary)] focus:ring-[var(--theme-primary)]"
-                            />
-                            <span className="text-xs font-medium text-gray-900 dark:text-white">Required</span>
-                          </label>
-                          <label className="flex items-center gap-2 cursor-pointer hover:bg-[var(--theme-lighter)] dark:hover:bg-gray-700 p-2 rounded-lg transition">
-                            <input
-                              type="radio"
-                              checked={filters.attachmentRequired === false}
-                              onChange={() => setFilters(prev => ({ ...prev, attachmentRequired: false }))}
-                              className="w-3.5 h-3.5 text-[var(--theme-primary)] focus:ring-[var(--theme-primary)]"
-                            />
-                            <span className="text-xs font-medium text-gray-900 dark:text-white">Not Required</span>
-                          </label>
-                        </div>
-                      </div>
-                    </div>
-
                     {/* Actions */}
                     <div className="flex gap-2 pt-3 border-t border-gray-200 dark:border-gray-700">
                       <button
@@ -4276,34 +3466,6 @@ function ChecklistContent() {
                             <p className="text-sm font-semibold text-gray-900 dark:text-white">{formatDateToLocalTimezone(selectedChecklist.due_date)}</p>
                           </div>
                         </div>
-                        <div className="flex items-start gap-2">
-                          <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${selectedChecklist.verification_required ? 'bg-blue-500' : 'bg-gray-400'
-                            }`}>
-                            <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-                            </svg>
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-xs text-gray-600 dark:text-gray-400 mb-1">Verification</p>
-                            <span className={`text-sm font-semibold ${selectedChecklist.verification_required ? 'text-blue-600' : 'text-gray-400'}`}>
-                              {selectedChecklist.verification_required ? `Yes (${selectedChecklist.verifier_name})` : 'No'}
-                            </span>
-                          </div>
-                        </div>
-                        <div className="flex items-start gap-2">
-                          <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${selectedChecklist.attachment_required ? 'bg-green-500' : 'bg-gray-400'
-                            }`}>
-                            <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
-                            </svg>
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-xs text-gray-600 dark:text-gray-400 mb-1">Attachment</p>
-                            <span className={`text-sm font-semibold ${selectedChecklist.attachment_required ? 'text-green-600' : 'text-gray-400'}`}>
-                              {selectedChecklist.attachment_required ? 'Required' : 'Not Required'}
-                            </span>
-                          </div>
-                        </div>
                       </div>
                     </div>
                   </div>
@@ -4350,150 +3512,19 @@ function ChecklistContent() {
                     );
                   })()}
 
-                  {/* Status Update */}
+                  {/* Complete Task */}
                   <div className="border-t border-gray-200 dark:border-gray-700 pt-6">
-                    <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">Update Status</h3>
-                    <div className="space-y-4">
-                      <div>
-                        <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                          Select Status
-                        </label>
-                        <div className="flex flex-wrap gap-2">
-                          {selectedChecklist.verification_required && (
-                            <button
-                              onClick={() => setTaskStatus('approval_waiting')}
-                              className={`px-4 py-2 rounded-lg font-semibold text-sm flex items-center gap-2 transition ${taskStatus === 'approval_waiting'
-                                ? 'bg-yellow-500 text-white'
-                                : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'
-                                }`}
-                            >
-                              <span>⏳</span>
-                              Approval Waiting
-                            </button>
-                          )}
-                          <button
-                            onClick={() => setTaskStatus('completed')}
-                            className={`px-4 py-2 rounded-lg font-semibold text-sm flex items-center gap-2 transition ${taskStatus === 'completed'
-                              ? 'bg-green-500 text-white'
-                              : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'
-                              }`}
-                          >
-                            <span>✓</span>
-                            Completed
-                          </button>
-                        </div>
-                      </div>
-
-                      <div>
-                        <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                          Add Remark
-                        </label>
-                        <textarea
-                          value={remarkText}
-                          onChange={(e) => setRemarkText(e.target.value)}
-                          placeholder="Enter your remark..."
-                          rows={3}
-                          className="w-full px-4 py-2.5 bg-[var(--theme-lighter)] dark:bg-gray-700 border-0 rounded-xl text-gray-900 dark:text-white focus:ring-2 focus:ring-[var(--theme-primary)] transition text-sm resize-none"
-                        />
-                      </div>
-
-                      {/* Existing Attachments */}
-                      {/* Existing Attachments - REMOVED as we now only track in history */}
-
-
-                      {selectedChecklist.attachment_required && (
-                        <div>
-                          <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                            Attach File <span className="text-red-500">*</span>
-                          </label>
-                          <div className="border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-xl p-4 text-center hover:border-[var(--theme-primary)] transition cursor-pointer"
-                            onClick={() => document.getElementById('attachmentFileInput')?.click()}
-                          >
-                            <input
-                              id="attachmentFileInput"
-                              type="file"
-                              onChange={(e) => setAttachmentFile(e.target.files?.[0] || null)}
-                              className="hidden"
-                              accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.mp3,.wav,.mp4"
-                            />
-                            <svg className="w-8 h-8 mx-auto mb-2 text-gray-500 dark:text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                            </svg>
-                            <p className="text-sm text-gray-700 dark:text-gray-300">
-                              Click to select file or drag and drop
-                            </p>
-                            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                              Accepted: PDF, DOC, DOCX, JPG, PNG, MP3, WAV, MP4
-                            </p>
-                          </div>
-
-                          {/* Selected file display */}
-                          {attachmentFile && (
-                            <div className="mt-3">
-                              <div className="flex items-center justify-between bg-[var(--theme-lighter)] dark:bg-gray-700 p-3 rounded-lg">
-                                <div className="flex items-center gap-2 flex-1">
-                                  <svg className="w-4 h-4 text-gray-600 dark:text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                                  </svg>
-                                  <div className="flex-1">
-                                    <p className="text-sm font-medium text-gray-900 dark:text-white truncate">{attachmentFile.name}</p>
-                                    <p className="text-xs text-gray-500 dark:text-gray-400">{(attachmentFile.size / 1024).toFixed(2)} KB</p>
-                                  </div>
-                                </div>
-                                <button
-                                  type="button"
-                                  onClick={() => setAttachmentFile(null)}
-                                  className="ml-2 text-red-500 hover:text-red-600"
-                                >
-                                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                                  </svg>
-                                </button>
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                      <div className="flex gap-3">
-                        <button
-                          onClick={handleStatusUpdate}
-                          className="flex-1 px-4 py-2.5 bg-[var(--theme-primary)] hover:bg-[var(--theme-secondary)] text-gray-900 font-bold rounded-xl transition"
-                        >
-                          Update Status
-                        </button>
-                        <button
-                          onClick={handleAddRemark}
-                          className="px-4 py-2.5 bg-blue-500 hover:bg-blue-600 text-white font-semibold rounded-xl transition"
-                        >
-                          Add Remark Only
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Remark History */}
-                  <div className="border-t border-gray-200 dark:border-gray-700 pt-6">
-                    <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">Remark History</h3>
-                    <div className="space-y-3 max-h-96 overflow-y-auto">
-                      {loadingRemarks ? (
-                        <div className="flex justify-center items-center py-8">
-                          <div className="animate-spin rounded-full h-8 w-8 border-4 border-[var(--theme-primary)] border-t-transparent"></div>
-                        </div>
-                      ) : remarks.length === 0 ? (
-                        <p className="text-sm text-gray-500 dark:text-gray-400 text-center py-4">No remarks yet</p>
-                      ) : (
-                        remarks.map((remark, index) => (
-                          <div key={index} className="bg-[var(--theme-lighter)] dark:bg-gray-700 rounded-lg p-4">
-                            <div className="flex justify-between items-start mb-2">
-                              <p className="font-semibold text-sm text-gray-900 dark:text-white">{remark.username}</p>
-                              <p className="text-xs text-gray-500 dark:text-gray-400">{formatDateToLocalTimezone(remark.created_at)}</p>
-                            </div>
-                            <p className="text-sm text-gray-700 dark:text-gray-300">{remark.remark}</p>
-                          </div>
-                        ))
-                      )}
-                    </div>
+                    <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">Complete Task</h3>
+                    {selectedChecklist.status?.toLowerCase() === 'completed' ? (
+                      <p className="text-sm font-semibold text-green-600">This task is already completed.</p>
+                    ) : (
+                      <button
+                        onClick={handleStatusUpdate}
+                        className="w-full px-4 py-2.5 bg-[var(--theme-primary)] hover:bg-[var(--theme-secondary)] text-gray-900 font-bold rounded-xl transition"
+                      >
+                        Complete Task
+                      </button>
+                    )}
                   </div>
 
                   {/* Revision History */}

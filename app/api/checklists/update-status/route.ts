@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getChecklistById, updateChecklist, createChecklistHistory, createChecklistRemark } from '@/lib/sheets';
+import { getChecklistById, updateChecklist, createChecklistHistory } from '@/lib/sheets';
+import { toDateKey } from '@/lib/checklistOccurrences';
 
 // Helper to format date to dd/mm/yyyy HH:mm:ss
 function formatDateTime(date: Date): string {
@@ -9,7 +10,7 @@ function formatDateTime(date: Date): string {
 
 export async function POST(request: NextRequest) {
   try {
-    const { checklistId, status, remark, userId, username, attachmentUrl } = await request.json();
+    const { checklistId, status, remark, userId, username, attachmentUrl, dueDate } = await request.json();
 
     if (!checklistId || !status || !userId) {
       return NextResponse.json(
@@ -36,45 +37,28 @@ export async function POST(request: NextRequest) {
     }
 
     const oldStatus = currentChecklist.status || 'pending';
+    const occurrenceDue = toDateKey(dueDate) || toDateKey(currentChecklist.due_date) || dueDate || currentChecklist.due_date || '';
     const now = new Date().toISOString();
 
-    // Update checklist status
-    const updatedData: any = {
-      status: status,
+    await updateChecklist(parsedChecklistId, {
       updated_at: now
-    };
+    });
 
-    // Removed attachment_url update for checklist sheet as per new requirement
-    // Attachments are now only tracked in history to support multiple files
-
-
-    await updateChecklist(parsedChecklistId, updatedData);
-
-    // Create history record
     const historyData = {
       checklist_id: parsedChecklistId,
+      group_id: currentChecklist.group_id || `chk_${parsedChecklistId}`,
       user_id: userId,
       username: username || 'Unknown User',
       action: 'status_change',
       old_status: oldStatus,
       new_status: status,
+      due_date: occurrenceDue,
       remark: remark || null,
       attachment_url: attachmentUrl || null,
       timestamp: now
     };
 
     await createChecklistHistory(historyData);
-
-    // If remark provided, also save to remarks table
-    if (remark) {
-      const remarkData = {
-        checklist_id: parsedChecklistId,
-        user_id: userId,
-        username: username || 'Unknown User',
-        remark: remark
-      };
-      await createChecklistRemark(remarkData);
-    }
 
     return NextResponse.json({
       message: 'Checklist status updated successfully',

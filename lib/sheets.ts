@@ -170,6 +170,34 @@ export function objectToRow(headers: string[], obj: any): any[] {
   });
 }
 
+function masterGroupId(id: number | string, existing?: string | null): string {
+  const trimmed = String(existing || '').trim();
+  if (trimmed) return trimmed;
+  return `chk_${id}`;
+}
+
+async function ensureNamedColumn(
+  sheets: any,
+  spreadsheetId: string,
+  sheetName: string,
+  sheetId: number | undefined,
+  headers: string[],
+  columnName: string,
+  afterColumn?: string
+): Promise<string[]> {
+  const trimmed = headers.map((h) => String(h || '').trim()).filter((h) => h !== '');
+  if (trimmed.includes(columnName)) return trimmed;
+
+  const nextHeaders = [...trimmed, columnName];
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `${sheetName}!A1`,
+    valueInputOption: 'RAW',
+    requestBody: { values: [nextHeaders] },
+  });
+  return nextHeaders;
+}
+
 // EXPORT FMS HELPER FUNCTIONS
 
 // Helper function to add days while skipping Sundays
@@ -1289,11 +1317,12 @@ async function ensureChecklistSheetExists(sheets: any, spreadsheetId: string, sh
     });
 
     const sheet = spreadsheet.data.sheets?.find((s: any) => s.properties?.title === sheetName);
+    let sheetId = sheet?.properties?.sheetId;
 
     if (!sheet) {
       // Create the sheet if it doesn't exist
       console.log(`Creating ${sheetName} sheet in checklist spreadsheet...`);
-      await sheets.spreadsheets.batchUpdate({
+      const addResult = await sheets.spreadsheets.batchUpdate({
         spreadsheetId,
         requestBody: {
           requests: [{
@@ -1305,14 +1334,13 @@ async function ensureChecklistSheetExists(sheets: any, spreadsheetId: string, sh
           }],
         },
       });
+      sheetId = addResult.data.replies?.[0]?.addSheet?.properties?.sheetId;
     }
 
     // Ensure headers are present
     const defaultHeaders = [
       'id', 'question', 'assignee', 'doer_name', 'priority', 'department',
-      'verification_required', 'verifier_name', 'attachment_required',
-      'frequency', 'due_date', 'status', 'group_id', 'created_by',
-      'created_at', 'updated_at'
+      'frequency', 'group_id', 'due_date', 'created_at', 'updated_at'
     ];
 
     // Check if headers exist
@@ -1320,40 +1348,36 @@ async function ensureChecklistSheetExists(sheets: any, spreadsheetId: string, sh
     try {
       headerResponse = await sheets.spreadsheets.values.get({
         spreadsheetId,
-        range: `${sheetName}!A1:P1`,
+        range: `${sheetName}!A1:Z1`,
         valueRenderOption: 'UNFORMATTED_VALUE',
       });
     } catch (error) {
       headerResponse = null;
     }
 
-    const existingHeaders = headerResponse?.data.values?.[0] || [];
+    const existingHeaders = (headerResponse?.data.values?.[0] || []).map((h: any) => String(h || '').trim()).filter(Boolean);
 
     if (existingHeaders.length === 0) {
       // Create headers
       console.log('Creating checklist sheet headers...');
       await sheets.spreadsheets.values.update({
         spreadsheetId,
-        range: `${sheetName}!A1:Q1`,
+        range: `${sheetName}!A1:K1`,
         valueInputOption: 'RAW',
         requestBody: {
           values: [defaultHeaders],
         },
       });
-    } else {
-      // Update headers if they don't match expected format
-      const headersMatch = JSON.stringify(existingHeaders.slice(0, 17)) === JSON.stringify(defaultHeaders);
-      if (!headersMatch) {
-        console.log('Updating checklist sheet headers to match expected format...');
-        await sheets.spreadsheets.values.update({
-          spreadsheetId,
-          range: `${sheetName}!A1:Q1`,
-          valueInputOption: 'RAW',
-          requestBody: {
-            values: [defaultHeaders],
-          },
-        });
-      }
+    } else if (!existingHeaders.includes('group_id')) {
+      await ensureNamedColumn(
+        sheets,
+        spreadsheetId,
+        sheetName,
+        sheetId,
+        existingHeaders,
+        'group_id',
+        'frequency'
+      );
     }
     ensuredSheets.add(cacheKey);
   } catch (error) {
@@ -1373,7 +1397,11 @@ export async function getChecklists() {
 
     // Ensure sheet exists
     console.log('getChecklists: Ensuring sheet exists...');
-    await ensureChecklistSheetExists(sheets, SPREADSHEET_IDS.CHECKLISTS, sheetName);
+    try {
+      await ensureChecklistSheetExists(sheets, SPREADSHEET_IDS.CHECKLISTS, sheetName);
+    } catch (ensureError) {
+      console.error('getChecklists: Sheet ensure failed, reading anyway', ensureError);
+    }
     console.log('getChecklists: Sheet ensured');
 
     // Read all data from the sheet
@@ -1397,22 +1425,18 @@ export async function getChecklists() {
 
     // Convert rows to objects
     const checklists = dataRows
-      .map(row => rowToObject(headers, row))
-      .filter(checklist => checklist.id) // Filter out empty rows
-      .map(checklist => ({
-        ...checklist,
-        due_date: ensureIsoDate(checklist.due_date),
-        created_at: ensureIsoDate(checklist.created_at),
-        updated_at: ensureIsoDate(checklist.updated_at)
-      }));
-
-    // Sort by due_date ascending, then created_at descending
-    checklists.sort((a, b) => {
-      const dateA = new Date(a.due_date).getTime();
-      const dateB = new Date(b.due_date).getTime();
-      if (dateA !== dateB) return dateA - dateB;
-      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
-    });
+      .map((row, index) => {
+        const checklist = rowToObject(headers, row);
+        return {
+          ...checklist,
+          group_id: masterGroupId(checklist.id, checklist.group_id),
+          _sheetIndex: index,
+          due_date: ensureIsoDate(checklist.due_date),
+          created_at: ensureIsoDate(checklist.created_at),
+          updated_at: ensureIsoDate(checklist.updated_at)
+        };
+      })
+      .filter((checklist) => checklist.id || checklist.question);
 
     return checklists;
   } catch (error) {
@@ -1433,7 +1457,7 @@ export async function createChecklistsBatch(checklistsData: any[]) {
     // Read headers
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_IDS.CHECKLISTS,
-      range: `${sheetName}!A1:P1`,
+      range: `${sheetName}!A1:Z1`,
       valueRenderOption: 'UNFORMATTED_VALUE',
     });
 
@@ -1460,9 +1484,11 @@ export async function createChecklistsBatch(checklistsData: any[]) {
     // Prepare all rows with sequential IDs
     const now = new Date().toISOString();
     const rowsData = checklistsData.map(checklistData => {
+      const assignedId = nextId++;
       const checklist = {
-        id: nextId++,
+        id: assignedId,
         ...checklistData,
+        group_id: masterGroupId(assignedId, checklistData.group_id),
         created_at: now,
         updated_at: now
       };
@@ -1497,7 +1523,7 @@ export async function createChecklist(checklistData: any) {
     // Read headers
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_IDS.CHECKLISTS,
-      range: `${sheetName}!A1:P1`,
+      range: `${sheetName}!A1:Z1`,
       valueRenderOption: 'UNFORMATTED_VALUE',
     });
 
@@ -1525,6 +1551,7 @@ export async function createChecklist(checklistData: any) {
     const checklist = {
       id: newId,
       ...checklistData,
+      group_id: masterGroupId(newId, checklistData.group_id),
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
     };
@@ -1691,7 +1718,7 @@ export async function updateChecklistsByGroupId(groupId: string, checklistData: 
     const groupIdIndex = headers.indexOf('group_id');
 
     if (groupIdIndex === -1) {
-      throw new Error('group_id column not found');
+      return { updated: 0 };
     }
 
     const dataRows = rows.slice(1);
@@ -1760,7 +1787,7 @@ export async function deleteChecklistsByGroupId(groupId: string) {
     const groupIdIndex = headers.indexOf('group_id');
 
     if (groupIdIndex === -1) {
-      throw new Error('group_id column not found');
+      return { deleted: 0 };
     }
 
     const dataRows = rows.slice(1);
@@ -1852,129 +1879,16 @@ export async function getChecklistById(id: number) {
       console.log(`Found checklist:`, checklist);
     }
 
-    return checklist || null;
+    if (!checklist) {
+      return null;
+    }
+
+    return {
+      ...checklist,
+      group_id: masterGroupId(checklist.id, checklist.group_id),
+    };
   } catch (error) {
     console.error('Error fetching checklist by ID:', error);
-    throw error;
-  }
-}
-
-export async function getChecklistRemarks(checklistId: number) {
-  try {
-    const sheets = await getGoogleSheetsClient();
-    const sheetName = 'checklist_remarks';
-
-    const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_IDS.CHECKLISTS,
-      range: `${sheetName}!A:AZ`,
-    });
-
-    const rows = response.data.values;
-    if (!rows || rows.length === 0) {
-      return [];
-    }
-
-    const headers = rows[0];
-    const dataRows = rows.slice(1);
-
-    const remarks = dataRows
-      .map(row => rowToObject(headers, row))
-      .filter(remark => parseInt(remark.checklist_id) === checklistId)
-      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-
-    return remarks;
-  } catch (error) {
-    console.error('Error fetching checklist remarks from Google Sheets:', error);
-    throw error;
-  }
-}
-
-export async function createChecklistRemark(remarkData: any) {
-  try {
-    const sheets = await getGoogleSheetsClient();
-    const sheetName = 'checklist_remarks';
-
-    // Ensure sheet exists
-    const spreadsheet = await sheets.spreadsheets.get({
-      spreadsheetId: SPREADSHEET_IDS.CHECKLISTS,
-    });
-
-    const sheet = spreadsheet.data.sheets?.find((s: any) => s.properties?.title === sheetName);
-
-    if (!sheet) {
-      // Create the sheet if it doesn't exist
-      console.log(`Creating ${sheetName} sheet...`);
-      await sheets.spreadsheets.batchUpdate({
-        spreadsheetId: SPREADSHEET_IDS.CHECKLISTS,
-        requestBody: {
-          requests: [{
-            addSheet: {
-              properties: {
-                title: sheetName,
-              },
-            },
-          }],
-        },
-      });
-    }
-
-    // Read headers
-    let response;
-    try {
-      response = await sheets.spreadsheets.values.get({
-        spreadsheetId: SPREADSHEET_IDS.CHECKLISTS,
-        range: `${sheetName}!A1:Z1`,
-      });
-    } catch (error) {
-      response = { data: { values: [] } };
-    }
-
-    const headers = response.data.values?.[0] || [];
-
-    // If no headers, initialize the sheet
-    if (headers.length === 0) {
-      const defaultHeaders = ['id', 'checklist_id', 'user_id', 'username', 'remark', 'created_at'];
-
-      await sheets.spreadsheets.values.update({
-        spreadsheetId: SPREADSHEET_IDS.CHECKLISTS,
-        range: `${sheetName}!A1:F1`,
-        valueInputOption: 'RAW',
-        requestBody: {
-          values: [defaultHeaders],
-        },
-      });
-
-      headers.push(...defaultHeaders);
-    }
-
-    // Generate ID
-    const allDataResponse = await sheets.spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_IDS.CHECKLISTS,
-      range: `${sheetName}!A:A`,
-    });
-    const allRows = allDataResponse.data.values || [];
-    const newId = allRows.length;
-
-    const remark = {
-      id: newId,
-      ...remarkData,
-      created_at: formatToSheetDate(new Date())
-    };
-
-    const rowData = objectToRow(headers, remark);
-
-    await sheets.spreadsheets.values.append({
-      spreadsheetId: SPREADSHEET_IDS.CHECKLISTS,
-      range: `${sheetName}!A:AZ`,
-      valueInputOption: 'RAW',
-      requestBody: {
-        values: [rowData],
-      },
-    });
-
-    return remark;
-  } catch (error) {
-    console.error('Error creating checklist remark in Google Sheets:', error);
     throw error;
   }
 }
@@ -2019,38 +1933,49 @@ export async function createChecklistHistory(historyData: any) {
       response = { data: { values: [] } };
     }
 
-    const headers = response.data.values?.[0] || [];
+    let headers = (response.data.values?.[0] || []).map((h: any) => String(h || '').trim()).filter(Boolean);
 
     // If no headers, initialize the sheet
     if (headers.length === 0) {
       const defaultHeaders = [
-        'id', 'checklist_id', 'user_id', 'username', 'action',
-        'old_status', 'new_status', 'remark', 'attachment_url', 'timestamp'
+        'id', 'old_status', 'new_status', 'due_date', 'timestamp', 'group_id'
       ];
 
       await sheets.spreadsheets.values.update({
         spreadsheetId: SPREADSHEET_IDS.CHECKLISTS,
-        range: `${sheetName}!A1:J1`,
+        range: `${sheetName}!A1:F1`,
         valueInputOption: 'RAW',
         requestBody: {
           values: [defaultHeaders],
         },
       });
 
-      headers.push(...defaultHeaders);
+      headers = defaultHeaders;
+    } else {
+      const missing = ['due_date', 'group_id'].filter((col) => !headers.includes(col));
+      if (missing.length > 0) {
+        headers = [...headers, ...missing];
+        await sheets.spreadsheets.values.update({
+          spreadsheetId: SPREADSHEET_IDS.CHECKLISTS,
+          range: `${sheetName}!A1`,
+          valueInputOption: 'RAW',
+          requestBody: { values: [headers] },
+        });
+      }
     }
 
-    // Generate ID
-    const allDataResponse = await sheets.spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_IDS.CHECKLISTS,
-      range: `${sheetName}!A:A`,
-    });
-    const allRows = allDataResponse.data.values || [];
-    const newId = allRows.length;
+    const hasChecklistId = headers.includes('checklist_id');
+    const hasGroupId = headers.includes('group_id');
+    const groupId = masterGroupId(historyData.checklist_id || historyData.id, historyData.group_id);
+    const newId = Date.now();
 
     const history = {
-      id: newId,
-      ...historyData
+      ...historyData,
+      id: (hasGroupId || hasChecklistId) ? newId : (historyData.checklist_id ?? newId),
+      group_id: groupId,
+      checklist_id: historyData.checklist_id,
+      due_date: historyData.due_date || '',
+      timestamp: historyData.timestamp || new Date().toISOString(),
     };
 
     const rowData = objectToRow(headers, history);
@@ -2071,39 +1996,58 @@ export async function createChecklistHistory(historyData: any) {
   }
 }
 
-export async function getChecklistIdsWithHistory(): Promise<Set<number>> {
+export async function getChecklistIdsWithHistory(): Promise<{ ids: Set<number>; latestStatus: Map<string, string> }> {
+  const empty = { ids: new Set<number>(), latestStatus: new Map<string, string>() };
   try {
     const sheets = await getGoogleSheetsClient();
     const sheetName = 'checklist_revision_history';
 
-    // Check if sheet exists first (optimistic check) to avoid errors
     try {
       const response = await sheets.spreadsheets.values.get({
         spreadsheetId: SPREADSHEET_IDS.CHECKLISTS,
-        range: `${sheetName}!B:B`, // Column B is checklist_id based on createChecklistHistory
+        range: `${sheetName}!A:Z`,
       });
 
       const rows = response.data.values;
       if (!rows || rows.length <= 1) {
-        return new Set();
+        return empty;
       }
 
-      // Skip header (row 0) and filter valid IDs
+      const headers = rows[0].map((h: any) => String(h || '').trim());
+      const checklistIdIdx = headers.indexOf('checklist_id');
+      const groupIdx = headers.indexOf('group_id');
+      const idIdx = headers.indexOf('id');
+      const statusIdx = headers.indexOf('new_status');
+      const dueIdx = headers.indexOf('due_date');
+      const { toDateKey, occurrenceKey } = await import('@/lib/checklistOccurrences');
+
       const ids = new Set<number>();
+      const latestStatus = new Map<string, string>();
       for (let i = 1; i < rows.length; i++) {
-        const id = parseInt(rows[i][0]);
-        if (!isNaN(id)) {
-          ids.add(id);
-        }
+        const groupId = groupIdx !== -1 ? String(rows[i][groupIdx] || '').trim() : '';
+        const checklistId = checklistIdIdx !== -1 ? String(rows[i][checklistIdIdx] || '').trim() : '';
+        const rawId = idIdx !== -1 ? String(rows[i][idIdx] || '').trim() : '';
+        const numericFromGroup = parseInt(String(groupId).replace(/^chk_/, ''));
+        const numericId = parseInt(checklistId || rawId);
+        if (!isNaN(numericId)) ids.add(numericId);
+        if (!isNaN(numericFromGroup)) ids.add(numericFromGroup);
+
+        const status = statusIdx !== -1 ? String(rows[i][statusIdx] || '').trim().toLowerCase() : '';
+        const dateKey = dueIdx !== -1 ? toDateKey(rows[i][dueIdx]) : null;
+        if (!status || !dateKey) continue;
+
+        if (groupId) latestStatus.set(occurrenceKey(groupId, dateKey), status);
+        if (checklistId) latestStatus.set(occurrenceKey(checklistId, dateKey), status);
+        if (!isNaN(numericId)) latestStatus.set(occurrenceKey(numericId, dateKey), status);
+        if (!isNaN(numericFromGroup)) latestStatus.set(occurrenceKey(numericFromGroup, dateKey), status);
       }
-      return ids;
-    } catch (error) {
-      // If sheet doesn't exist or other error, return empty set
-      return new Set();
+      return { ids, latestStatus };
+    } catch {
+      return empty;
     }
   } catch (error) {
     console.error('Error fetching checklist IDs with history:', error);
-    return new Set();
+    return empty;
   }
 }
 

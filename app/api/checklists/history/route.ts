@@ -43,12 +43,20 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ history: [] });
     }
 
-    const headers = rows[0];
+    const headers = rows[0].map((h: any) => String(h || '').trim());
     const dataRows = rows.slice(1);
 
     const history = dataRows
       .map(row => rowToObject(headers, row))
-      .filter(record => parseInt(record.checklist_id) === parseInt(checklistId))
+      .filter(record => {
+        const expectedGroup = `chk_${checklistId}`;
+        const recordGroup = String(record.group_id || '').trim();
+        if (recordGroup && (recordGroup === expectedGroup || recordGroup === String(checklistId))) {
+          return true;
+        }
+        const recordId = record.checklist_id || record.id;
+        return parseInt(recordId) === parseInt(checklistId);
+      })
       .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
 
     return NextResponse.json({ history });

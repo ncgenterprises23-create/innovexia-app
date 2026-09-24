@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getChecklists, createChecklist, createChecklistsBatch, updateChecklist, deleteChecklist, deleteChecklistsByGroupId, updateChecklistsByGroupId, getChecklistIdsWithHistory } from '@/lib/sheets';
+import { expandMasterChecklist } from '@/lib/checklistOccurrences';
 
 // Helper function to get day of week in IST (0=Sunday, 1=Monday, etc.)
 function getISTDayOfWeek(date: Date): number {
@@ -235,28 +236,16 @@ function generateDatesFromFrequency(
 // GET - Fetch all checklists
 export async function GET(request: NextRequest) {
   try {
-    const [checklists, checklistIdsWithHistory] = await Promise.all([
+    const [checklists, historyLookup] = await Promise.all([
       getChecklists(),
       getChecklistIdsWithHistory()
     ]);
 
-    // Update status based on due date, BUT only if no history exists
-    // If history exists, it means user has manually intervened, so we trust the stored status
-    const updatedChecklists = checklists.map((checklist: any) => {
-      let status = checklist.status;
+    const updatedChecklists = checklists.flatMap((checklist: any) => (
+      expandMasterChecklist(checklist, historyLookup.latestStatus)
+    ));
 
-      // Only auto-calculate status if there is NO history for this checklist
-      if (!checklistIdsWithHistory.has(checklist.id)) {
-        status = calculateStatus(checklist.due_date);
-      }
-
-      return {
-        ...checklist,
-        status
-      };
-    });
-
-    return NextResponse.json({ checklists: updatedChecklists });
+    return NextResponse.json({ checklists: updatedChecklists, masters: checklists });
   } catch (error: any) {
     console.error('Error fetching checklists (FULL):', error);
     console.error('Stack:', error.stack);
@@ -277,9 +266,6 @@ export async function POST(request: NextRequest) {
       doerName,
       priority,
       department,
-      verificationRequired,
-      verifierName,
-      attachmentRequired,
       frequency,
       dueDate,
       weeklyDays, // Array of selected day numbers for weekly
@@ -288,16 +274,24 @@ export async function POST(request: NextRequest) {
       createdBy
     } = body;
 
+    let effectiveDueDate = dueDate;
+    if (!effectiveDueDate && Array.isArray(selectedDates) && selectedDates.length > 0) {
+      const first = [...selectedDates].sort()[0];
+      effectiveDueDate = /^\d{4}-\d{2}-\d{2}$/.test(String(first))
+        ? `${first}T09:00:00+05:30`
+        : first;
+    }
+
     // Validate required fields
-    if (!question || !assignee || !frequency || !dueDate) {
+    if (!question || !assignee || !frequency || !effectiveDueDate) {
       return NextResponse.json(
-        { error: 'Missing required fields' },
+        { error: !effectiveDueDate ? 'Please select a start date' : 'Missing required fields' },
         { status: 400 }
       );
     }
 
     // Parse and validate dueDate
-    const parsedDueDate = new Date(dueDate);
+    const parsedDueDate = new Date(effectiveDueDate);
     if (isNaN(parsedDueDate.getTime())) {
       return NextResponse.json(
         { error: 'Invalid due date format' },
@@ -314,46 +308,49 @@ export async function POST(request: NextRequest) {
       year: parsedDueDate.getFullYear()
     });
 
-    // Generate dates based on frequency
-    const dates = generateDatesFromFrequency(parsedDueDate, frequency, weeklyDays, selectedDates);
-
-    console.log(`Generated ${dates.length} dates for frequency: ${frequency}, starting from: ${parsedDueDate.toISOString()}`);
-
-    if (dates.length === 0) {
-      return NextResponse.json(
-        { error: 'No valid dates generated from frequency' },
-        { status: 400 }
-      );
-    }
-
-    // Handle multiple doers - create separate checklist for each doer with unique group_id
+    // Store one master row per doer. Occurrences are generated on read from frequency + due_date.
     const doersArray = doers && doers.length > 0 ? doers : [doerName || null];
     const allChecklistsData: any[] = [];
 
-    // For each doer, create checklists for all dates with a unique group_id
-    for (const doer of doersArray) {
-      const checklistsData = dates.map(dueDate => {
-        // Generate unique group_id for each row (doer + date combination)
-        const groupId = `GRP-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-        const status = calculateStatus(dueDate.toISOString());
+    const masterDates: Date[] = [];
+    if (String(frequency).toLowerCase() === 'weekly' && Array.isArray(weeklyDays) && weeklyDays.length > 0) {
+      weeklyDays.forEach((targetDay: number) => {
+        const dateForDay = new Date(parsedDueDate.getFullYear(), parsedDueDate.getMonth(), parsedDueDate.getDate());
+        const currentDay = dateForDay.getDay();
+        let daysUntilTarget = targetDay - currentDay;
+        if (daysUntilTarget < 0) daysUntilTarget += 7;
+        dateForDay.setDate(dateForDay.getDate() + daysUntilTarget);
+        masterDates.push(new Date(
+          dateForDay.getFullYear(),
+          dateForDay.getMonth(),
+          dateForDay.getDate(),
+          parsedDueDate.getHours(),
+          parsedDueDate.getMinutes(),
+          parsedDueDate.getSeconds()
+        ));
+      });
+    } else if (Array.isArray(selectedDates) && selectedDates.length > 0) {
+      selectedDates.forEach((dateStr: string) => {
+        const [year, month, day] = String(dateStr).split('-').map(Number);
+        if (year && month && day) {
+          masterDates.push(new Date(year, month - 1, day, parsedDueDate.getHours(), parsedDueDate.getMinutes(), parsedDueDate.getSeconds()));
+        }
+      });
+    }
+    if (masterDates.length === 0) masterDates.push(parsedDueDate);
 
-        return {
+    for (const doer of doersArray) {
+      for (const masterDue of masterDates) {
+        allChecklistsData.push({
           question,
           assignee,
           doer_name: doer,
           priority: priority || 'medium',
           department: department || null,
-          verification_required: verificationRequired || false,
-          verifier_name: verifierName || null,
-          attachment_required: attachmentRequired || false,
           frequency,
-          due_date: dueDate.toISOString(),
-          status,
-          group_id: groupId,
-          created_by: createdBy || null
-        };
-      });
-      allChecklistsData.push(...checklistsData);
+          due_date: masterDue.toISOString(),
+        });
+      }
     }
 
     // Use batch insert for better performance and proper ID sequencing
@@ -382,50 +379,33 @@ export async function PUT(request: NextRequest) {
       doerName,
       priority,
       department,
-      verificationRequired,
-      verifierName,
-      attachmentRequired,
-      status
     } = body;
 
-    // If group_id is provided, update all checklists in the group
-    if (group_id) {
-      const result = await updateChecklistsByGroupId(group_id, {
-        question,
-        assignee,
-        doer_name: doerName || null,
-        priority,
-        department: department || null,
-        verification_required: verificationRequired || false,
-        verifier_name: verifierName || null,
-        attachment_required: attachmentRequired || false,
-        status: status || 'pending'
-      });
+    const updates: Record<string, any> = {
+      question,
+      assignee,
+      doer_name: doerName || null,
+      priority,
+      department: department || null,
+    };
+    if (body.frequency) updates.frequency = body.frequency;
+    if (body.dueDate) updates.due_date = body.dueDate;
 
+    // Prefer id now that group_id is no longer on the sheet
+    if (id) {
+      const updatedChecklist = await updateChecklist(id, updates);
+      return NextResponse.json({ checklist: updatedChecklist, updated: 1 });
+    }
+
+    if (group_id) {
+      const result = await updateChecklistsByGroupId(group_id, updates);
       return NextResponse.json({
         message: 'Checklists updated successfully',
         updated: result.updated
       });
     }
 
-    // Otherwise, update single checklist by id
-    if (!id) {
-      return NextResponse.json({ error: 'Checklist ID or group_id is required' }, { status: 400 });
-    }
-
-    const updatedChecklist = await updateChecklist(id, {
-      question,
-      assignee,
-      doer_name: doerName || null,
-      priority,
-      department: department || null,
-      verification_required: verificationRequired || false,
-      verifier_name: verifierName || null,
-      attachment_required: attachmentRequired || false,
-      status: status || 'pending'
-    });
-
-    return NextResponse.json({ checklist: updatedChecklist });
+    return NextResponse.json({ error: 'Checklist ID or group_id is required' }, { status: 400 });
   } catch (error) {
     console.error('Error updating checklist:', error);
     return NextResponse.json({ error: 'Failed to update checklist' }, { status: 500 });
