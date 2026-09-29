@@ -503,23 +503,14 @@ export default function PurchaseFMSPage() {
                     updatedData.Recieved_Qty_4 = rowUpdate.Recieved_Qty_4;
                 }
 
-                // Dynamic Step 3 Completion Logic: 
-                // If in Step 3 and a next follow-up date is provided, we NEVER mark it as done, even if toggled.
-                // This allows for iterative follow-ups.
+                // Step 3: a next follow-up date keeps the item in follow-up instead of closing it.
                 let isMarkingDone = itemsToMarkDone.has(order.id);
                 if (currentStep === 3 && rowUpdate.Next_Follow_Up_Date) {
                     isMarkingDone = false;
                 }
-                
-                // Dynamic Step 4 Completion Logic:
-                if (currentStep === 4) {
-                    const currentRecievedQty = Number(rowUpdate.Recieved_Qty_4 ?? order.Recieved_Qty_4 ?? 0);
-                    const moq = Number(order.MOQ ?? 0);
-                    if (currentRecievedQty !== moq) {
-                        isMarkingDone = false;
-                    }
-                }
 
+                // Step 4 is the last stage. Received qty is shown from the PO sheet and
+                // often does not exactly equal MOQ, so it must not block closing the step.
                 if (isMarkingDone && currentStep <= 4) {
                     updatedData[`Actual_${currentStep}`] = currentTime.toISOString();
                     updatedData[`Status_${currentStep}`] = 'Done';
@@ -554,12 +545,17 @@ export default function PurchaseFMSPage() {
                 });
             });
 
-            await Promise.all(updatePromises);
-            toast.success('Bulk updates applied successfully');
-            // Keep modal open and selection active for real-time progression
-            setItemsToMarkDone(new Set());
-            setBulkUpdates({});
-            fetchOrders();
+            const results = await Promise.all(updatePromises);
+            const failed = results.filter((res): res is Response => !!res && !res.ok);
+            if (failed.length > 0) {
+                toast.error(failed.length === results.filter(Boolean).length ? 'Failed to apply bulk updates' : 'Some updates failed');
+            } else {
+                toast.success('Bulk updates applied successfully');
+                // Keep modal open and selection active for real-time progression
+                setItemsToMarkDone(new Set());
+                setBulkUpdates({});
+                fetchOrders();
+            }
         } catch (error) {
             toast.error('Failed to apply bulk updates');
         } finally {

@@ -4510,7 +4510,7 @@ export async function createPurchaseFMSOrder(data: any) {
 
     const headerResponse = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_IDS.PURCHASE_FMS,
-      range: `${sheetName}!A1:Z1`,
+      range: `${sheetName}!A1:AZ1`,
       valueRenderOption: 'UNFORMATTED_VALUE',
     });
 
@@ -4523,6 +4523,7 @@ export async function createPurchaseFMSOrder(data: any) {
         'Planned_1', 'Actual_1', 'Status_1',
         'Planned_2', 'Actual_2', 'Status_2',
         'Planned_3', 'Actual_3', 'Status_3',
+        'Planned_4', 'Actual_4', 'Status_4',
         'Next_Follow_Up_Date', 'Remark',
         'Planned_5', 'Actual_5', 'Status_5'
       ];
@@ -4571,11 +4572,24 @@ export async function updatePurchaseFMSOrder(id: number, data: any) {
 
     const headersRes = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_IDS.PURCHASE_FMS,
-      range: `${sheetName}!A1:Z1`,
+      range: `${sheetName}!A1:AZ1`,
       valueRenderOption: 'UNFORMATTED_VALUE',
     });
-    const headers = headersRes.data.values?.[0];
-    if (!headers) throw new Error('Headers not found');
+    let headers = (headersRes.data.values?.[0] || []).map((h: any) => String(h ?? '').trim());
+    if (!headers.length) throw new Error('Headers not found');
+
+    // Step 4 columns are not in the original header template. Append any
+    // payload fields that are missing so Actual_4 / Status_4 can be saved.
+    const missingKeys = Object.keys(data).filter((key) => key && !headers.includes(key));
+    if (missingKeys.length > 0) {
+      headers = [...headers, ...missingKeys];
+      await sheets.spreadsheets.values.update({
+        spreadsheetId: SPREADSHEET_IDS.PURCHASE_FMS,
+        range: `${sheetName}!A1`,
+        valueInputOption: 'RAW',
+        requestBody: { values: [headers] },
+      });
+    }
 
     const idRes = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_IDS.PURCHASE_FMS,
