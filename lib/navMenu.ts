@@ -56,6 +56,7 @@ export const NAV_MENU_ITEMS: NavMenuItem[] = [
     roles: ['Admin', 'Manager'],
     children: [
       { label: 'Export FMS', icon: 'clipboard', href: '/export-fms', roles: ['Admin', 'Manager'] },
+      { label: 'Export Enquiry', icon: 'clipboard', href: '/export-enquiry', roles: ['Admin', 'Manager'] },
       { label: 'IGST Refund', icon: 'currency-dollar', href: '/igst-refund', roles: ['Admin', 'Manager'] },
     ]
   },

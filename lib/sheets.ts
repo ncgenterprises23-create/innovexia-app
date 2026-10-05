@@ -34,6 +34,7 @@ export const SPREADSHEET_IDS = {
   EXPORT_FMS: '1W88Vnskum-0lYaKKe2vKVDKa1cd3TmwTt1uJYODT60g',
   IMPORT_FMS: '1LS45YLgYzTx9nipqCyPouNuK6vGUkT8Yk36bULrRwWc',
   PRODUCT_FMS: '1CcwOIvFZrlZJLJ5Y20LWdVGAJ_8y53D5D3wrKveAuME',
+  EXPORT_ENQUIRY: '1q6unLBHrpXu8nCLv3yYOdPjuAFyQUrmKNAtDK-cR8LQ',
   FMS_PRODUCT_SEARCH: '150XDtKwHl3TjMj8INwFIAcMVoOSWjydPkHxJkiE7ZXM',
   SALES_EXPORT_PURCHASE_ENQUIRY_FMS: '1NEy9qSv-9fCGVOjkW9cfgVZNdJbta79lcxIJ6xe_msE',
   IGST_REFUND: '1pmf0FcgLs_U_883CGwl6KWkwfg4a9Cq1RhVfMpijqh0',
@@ -85,6 +86,8 @@ const SHEETS = {
   IMPORT_FMS_CONFIG: 'Step Configuration',
   PRODUCT_FMS: 'Product FMS',
   PRODUCT_FMS_CONFIG: 'Step Configuration',
+  EXPORT_ENQUIRY: 'Export Enquiry',
+  EXPORT_ENQUIRY_CONFIG: 'Step Configuration',
   FMS_PRODUCT_SEARCH: 'FMS',
   FMS_PRODUCT_SEARCH_CONFIG: 'Step Configuration',
   SALES_EXPORT_PURCHASE_ENQUIRY_FMS: 'Sheet1',
@@ -7680,6 +7683,527 @@ export async function updateProductFMSConfig(config: any[]) {
     return { success: true };
   } catch (error) {
     console.error('Error updating Product FMS config:', error);
+    throw error;
+  }
+}
+
+const EXPORT_ENQUIRY_RANGE = 'A:ZZ';
+const EXPORT_ENQUIRY_MAX_STEP = 8;
+const EXPORT_ENQUIRY_DEFAULT_TAT: Record<number, number> = {
+  1: 1, 2: 3, 3: 1, 4: 1, 5: 1, 6: 3, 7: 1, 8: 3,
+};
+const EXPORT_ENQUIRY_HEADERS = [
+  'id', 'Timestamp', 'Party Name', 'Major Products', 'Other Details',
+  'Cancelled', 'Cancelled Reason',
+  'Get_Back_Date_1', 'Price_Comparison_2', 'Approval_Note_3',
+  'Client_Feedback_5', 'Action_Notes_6', 'Client_Feedback_7',
+  'Action_Notes_8', 'Order_Confirmed_8',
+  'Planned_1', 'Actual_1', 'Status_1',
+  'Planned_2', 'Actual_2', 'Status_2',
+  'Planned_3', 'Actual_3', 'Status_3',
+  'Planned_4', 'Actual_4', 'Status_4',
+  'Planned_5', 'Actual_5', 'Status_5',
+  'Planned_6', 'Actual_6', 'Status_6',
+  'Planned_7', 'Actual_7', 'Status_7',
+  'Planned_8', 'Actual_8', 'Status_8',
+];
+const EXPORT_ENQUIRY_LOOP_FIELDS = [
+  'Client_Feedback_5', 'Action_Notes_6', 'Client_Feedback_7', 'Action_Notes_8', 'Order_Confirmed_8',
+];
+
+async function alignExportEnquiryHeaders(
+  sheets: any,
+  spreadsheetId: string,
+  sheetName: string,
+  headers: string[],
+) {
+  const present = new Set(headers.map((h) => h.toLowerCase().replace(/[\s._-]+/g, '')));
+  const missing = EXPORT_ENQUIRY_HEADERS.filter((h) => !present.has(h.toLowerCase().replace(/[\s._-]+/g, '')));
+  if (missing.length === 0) return headers;
+  const next = [...headers, ...missing];
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `${sheetName}!A1`,
+    valueInputOption: 'RAW',
+    requestBody: { values: [next] },
+  });
+  return next;
+}
+
+const ENQUIRY_OFFICE_OPEN_MINUTES = 10 * 60;
+const ENQUIRY_OFFICE_CLOSE_MINUTES = 19 * 60;
+
+function enquiryMinutesOfDay(date: Date) {
+  return date.getHours() * 60 + date.getMinutes();
+}
+
+function enquiryAtOfficeOpen(date: Date) {
+  const next = new Date(date);
+  next.setHours(10, 0, 0, 0);
+  return next;
+}
+
+function enquiryNextWorkingDay(date: Date) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + 1);
+  while (next.getDay() === 0) next.setDate(next.getDate() + 1);
+  return next;
+}
+
+function enquiryAlignToOffice(date: Date) {
+  const next = new Date(date);
+  if (next.getDay() === 0) return enquiryAtOfficeOpen(enquiryNextWorkingDay(next));
+  const minutes = enquiryMinutesOfDay(next);
+  if (minutes < ENQUIRY_OFFICE_OPEN_MINUTES) return enquiryAtOfficeOpen(next);
+  if (minutes >= ENQUIRY_OFFICE_CLOSE_MINUTES) return enquiryAtOfficeOpen(enquiryNextWorkingDay(next));
+  return next;
+}
+
+function enquiryClampToOffice(date: Date) {
+  let next = new Date(date);
+  while (next.getDay() === 0) next.setDate(next.getDate() + 1);
+  const minutes = enquiryMinutesOfDay(next);
+  if (minutes < ENQUIRY_OFFICE_OPEN_MINUTES) next.setHours(10, 0, 0, 0);
+  else if (minutes > ENQUIRY_OFFICE_CLOSE_MINUTES) next.setHours(19, 0, 0, 0);
+  else next.setSeconds(0, 0);
+  return next;
+}
+
+function addEnquiryOfficeHours(from: Date, hours: number) {
+  let cursor = enquiryAlignToOffice(from);
+  let remaining = Number(hours) * 60;
+  if (!Number.isFinite(remaining) || remaining <= 0) return cursor;
+  while (remaining > 0) {
+    const available = ENQUIRY_OFFICE_CLOSE_MINUTES - enquiryMinutesOfDay(cursor);
+    if (available <= 0) {
+      cursor = enquiryAtOfficeOpen(enquiryNextWorkingDay(cursor));
+      continue;
+    }
+    const used = Math.min(available, remaining);
+    cursor = new Date(cursor.getTime() + used * 60 * 1000);
+    remaining -= used;
+    if (remaining > 0) cursor = enquiryAtOfficeOpen(enquiryNextWorkingDay(cursor));
+  }
+  return cursor;
+}
+
+function addEnquiryOfficeDays(from: Date, days: number) {
+  const next = new Date(from);
+  let remaining = Number(days);
+  while (remaining > 0) {
+    next.setDate(next.getDate() + 1);
+    if (next.getDay() !== 0) remaining -= 1;
+  }
+  return enquiryClampToOffice(next);
+}
+
+function enquiryPlannedFromTat(from: Date, config: any[], step: number) {
+  const stepConfig = config.find((c: any) => Number(c.step) === step);
+  const configured = Number(stepConfig?.tatValue);
+  const tatValue = configured > 0 ? configured : (EXPORT_ENQUIRY_DEFAULT_TAT[step] || 1);
+  const tatUnit = String(stepConfig?.tatUnit || 'days');
+  const planned = /hour/i.test(tatUnit)
+    ? addEnquiryOfficeHours(from, tatValue)
+    : addEnquiryOfficeDays(from, tatValue);
+  return planned.toISOString();
+}
+
+function restartExportEnquiryFeedback(
+  row: Record<string, any>,
+  changed: Record<string, string>,
+) {
+  productWrite(row, changed, 'Actual_5', '');
+  productWrite(row, changed, 'Status_5', '');
+  [6, 7, 8].forEach((step) => {
+    productWrite(row, changed, `Planned_${step}`, '');
+    productWrite(row, changed, `Actual_${step}`, '');
+    productWrite(row, changed, `Status_${step}`, '');
+  });
+  EXPORT_ENQUIRY_LOOP_FIELDS.forEach((field) => productWrite(row, changed, field, ''));
+}
+
+function applyExportEnquiryStepCompletion(
+  step: number,
+  actualDate: Date,
+  row: Record<string, any>,
+  changed: Record<string, string>,
+  config: any[],
+) {
+  if (step === 8) {
+    const confirmed = String(getProductField(row, 'Order_Confirmed_8', 'Order Confirmed') || '').trim();
+    if (!confirmed) throw new Error('Select Yes or No');
+    if (!isYesValue(confirmed)) restartExportEnquiryFeedback(row, changed);
+    return;
+  }
+  const nextStep = step + 1;
+  if (nextStep > EXPORT_ENQUIRY_MAX_STEP) return;
+  productWrite(row, changed, `Planned_${nextStep}`, enquiryPlannedFromTat(actualDate, config, nextStep));
+}
+
+async function ensureExportEnquirySheet(sheets: any, spreadsheetId: string, sheetName: string) {
+  try {
+    await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${sheetName}!A1`,
+    });
+  } catch (error: any) {
+    if (error.code === 400 || error.message?.includes('Unable to parse range')) {
+      await sheets.spreadsheets.batchUpdate({
+        spreadsheetId,
+        requestBody: {
+          requests: [{ addSheet: { properties: { title: sheetName } } }],
+        },
+      });
+      return;
+    }
+    throw error;
+  }
+}
+
+export async function getExportEnquiryData() {
+  try {
+    const sheets = await getGoogleSheetsClient();
+    const spreadsheetId = SPREADSHEET_IDS.EXPORT_ENQUIRY;
+    const sheetName = SHEETS.EXPORT_ENQUIRY;
+
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${sheetName}!${EXPORT_ENQUIRY_RANGE}`,
+      valueRenderOption: 'UNFORMATTED_VALUE',
+    });
+
+    const rows = response.data.values;
+    if (!rows || rows.length === 0) return { data: [], headers: [] };
+
+    const headers = rows[0].map((h: string) => String(h || '').trim());
+    const data = rows.slice(1).map((row, idx) => {
+      const obj = rowToObject(headers, row);
+      headers.forEach((header) => {
+        if (!/^(Planned|Actual)_\d+$/i.test(header) && !/timestamp|due.?date|get_back_date/i.test(header)) return;
+        const parsed = parseSheetDate(obj[header]);
+        if (parsed) obj[header] = parsed;
+      });
+      return { ...obj, _rowIndex: idx + 2 };
+    }).filter((row) => String(row.id || '').trim());
+    return { data, headers };
+  } catch (error: any) {
+    if (error.code === 400 || error.message?.includes('Unable to parse range')) {
+      return { data: [], headers: [] };
+    }
+    console.error('Error fetching Export Enquiry data:', error);
+    throw error;
+  }
+}
+
+export async function createExportEnquiryData(records: any[]) {
+  try {
+    const sheets = await getGoogleSheetsClient();
+    const spreadsheetId = SPREADSHEET_IDS.EXPORT_ENQUIRY;
+    const sheetName = SHEETS.EXPORT_ENQUIRY;
+    const now = new Date();
+    const timestamp = now.toISOString();
+    const config = await getExportEnquiryConfig();
+    const planned1 = enquiryPlannedFromTat(now, config, 1);
+
+    await ensureExportEnquirySheet(sheets, spreadsheetId, sheetName);
+
+    const existingRes = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${sheetName}!${EXPORT_ENQUIRY_RANGE}`,
+      valueRenderOption: 'UNFORMATTED_VALUE',
+    });
+    const existingRows = existingRes.data.values || [];
+    let headers: string[] = (existingRows[0] || []).map((h: string) => String(h || '').trim()).filter(Boolean);
+    if (headers.length === 0) {
+      headers = [...EXPORT_ENQUIRY_HEADERS];
+      await sheets.spreadsheets.values.update({
+        spreadsheetId,
+        range: `${sheetName}!A1`,
+        valueInputOption: 'RAW',
+        requestBody: { values: [headers] },
+      });
+    } else {
+      headers = await alignExportEnquiryHeaders(sheets, spreadsheetId, sheetName, headers);
+    }
+
+    const idColIdx = headers.findIndex((h) => h.toLowerCase() === 'id');
+    let maxId = 0;
+    if (idColIdx !== -1 && existingRows.length > 1) {
+      existingRows.slice(1).forEach((row) => {
+        const val = parseInt(row[idColIdx] || '0', 10);
+        if (!isNaN(val) && val > maxId) maxId = val;
+      });
+    }
+
+    const createdRecords: any[] = [];
+    const rowsData = records.map((rec, index) => {
+      const newId = (maxId + index + 1).toString();
+      const rowMap: Record<string, string> = {};
+      headers.forEach((h) => { rowMap[h] = ''; });
+      const idHeader = resolveProductHeader(headers, 'id');
+      if (idHeader) rowMap[idHeader] = newId;
+      const tsHeader = resolveProductHeader(headers, 'Timestamp') || resolveProductHeader(headers, 'timestamp');
+      if (tsHeader) rowMap[tsHeader] = timestamp;
+      const plannedHeader = resolveProductHeader(headers, 'Planned_1');
+      if (plannedHeader) rowMap[plannedHeader] = planned1;
+
+      Object.keys(rec || {}).forEach((key) => {
+        if (key === 'id' || key === '_rowIndex') return;
+        const headerName = resolveProductHeader(headers, key);
+        if (!headerName || !isProductIdentityHeader(headerName)) return;
+        const value = rec[key];
+        rowMap[headerName] = value === null || value === undefined ? '' : String(value);
+      });
+
+      createdRecords.push({ id: newId, ...rowMap });
+      return headers.map((h) => rowMap[h] ?? '');
+    });
+
+    await sheets.spreadsheets.values.append({
+      spreadsheetId,
+      range: `${sheetName}!${EXPORT_ENQUIRY_RANGE}`,
+      valueInputOption: 'USER_ENTERED',
+      requestBody: { values: rowsData },
+    });
+
+    return { success: true, count: records.length, records: createdRecords };
+  } catch (error) {
+    console.error('Error creating Export Enquiry data:', error);
+    throw error;
+  }
+}
+
+export async function updateExportEnquiryData(id: string, updates: any) {
+  try {
+    const sheets = await getGoogleSheetsClient();
+    const spreadsheetId = SPREADSHEET_IDS.EXPORT_ENQUIRY;
+    const sheetName = SHEETS.EXPORT_ENQUIRY;
+    const config = await getExportEnquiryConfig();
+
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${sheetName}!${EXPORT_ENQUIRY_RANGE}`,
+      valueRenderOption: 'UNFORMATTED_VALUE',
+    });
+    const rows = response.data.values;
+    if (!rows || rows.length === 0) throw new Error('Sheet is empty');
+
+    let headers: string[] = rows[0].map((h: string) => String(h || '').trim());
+    headers = await alignExportEnquiryHeaders(sheets, spreadsheetId, sheetName, headers);
+    const idColIdx = headers.findIndex((h) => h.toLowerCase() === 'id');
+    if (idColIdx === -1) throw new Error('id column not found');
+
+    const rowIdx = rows.findIndex((row, i) => i > 0 && (row[idColIdx] || '').toString().trim() === id.toString().trim());
+    if (rowIdx === -1) throw new Error('Record not found');
+
+    const sheetRowNumber = rowIdx + 1;
+    const existingRow = rows[rowIdx];
+    const updatedRowMap: Record<string, string> = {};
+    const changedCells: Record<string, string> = {};
+    headers.forEach((h, i) => { updatedRowMap[h] = existingRow[i] == null ? '' : String(existingRow[i]); });
+
+    const skipKeys = new Set(['id', '_rowIndex', 'piNumber', 'containerType']);
+    Object.keys(updates).forEach((key) => {
+      if (skipKeys.has(key)) return;
+      const headerName = resolveProductHeader(headers, key);
+      const value = updates[key];
+      const written = typeof value === 'object' && value !== null ? JSON.stringify(value) : (value === null || value === undefined ? '' : String(value));
+      if (!headerName) return;
+      updatedRowMap[headerName] = written;
+      changedCells[headerName] = written;
+    });
+
+    let startExportOrder = false;
+    Object.keys(updates).forEach((key) => {
+      const actualMatch = key.match(/^Actual_(\d+)$/);
+      if (!actualMatch || !updates[key]) return;
+      const step = parseInt(actualMatch[1], 10);
+      if (step === 8 && isYesValue(getProductField(updatedRowMap, 'Order_Confirmed_8'))) {
+        const piNumber = String(updates.piNumber || '').trim();
+        if (!piNumber) throw new Error('PI Number is required to start Export FMS');
+        startExportOrder = true;
+      }
+      if (!updatedRowMap[`Status_${step}`]) {
+        productWrite(updatedRowMap, changedCells, `Status_${step}`, 'Completed');
+      }
+      const actualDate = parseDate(updates[key]);
+      if (!actualDate) return;
+      applyExportEnquiryStepCompletion(step, actualDate, updatedRowMap, changedCells, config);
+    });
+
+    if (startExportOrder && isYesValue(getProductField(updatedRowMap, 'Order_Confirmed_8'))) {
+      const products = String(getProductField(updatedRowMap, 'Major Products') || '')
+        .split(/[,|\n]/)
+        .map((part) => part.trim())
+        .filter(Boolean);
+      await createExportFMSData([{
+        piNumber: String(updates.piNumber || '').trim(),
+        partyName: String(getProductField(updatedRowMap, 'Party Name') || ''),
+        containerType: String(updates.containerType || '').trim(),
+        products,
+      }]);
+    }
+
+    const valueRanges = Object.entries(changedCells)
+      .map(([header, value]) => {
+        const colIndex = headers.indexOf(header);
+        if (colIndex === -1) return null;
+        return {
+          range: `${sheetName}!${getColLetter(colIndex)}${sheetRowNumber}`,
+          values: [[value]],
+        };
+      })
+      .filter((item): item is { range: string; values: string[][] } => item !== null);
+
+    if (valueRanges.length > 0) {
+      await sheets.spreadsheets.values.batchUpdate({
+        spreadsheetId,
+        requestBody: {
+          valueInputOption: 'USER_ENTERED',
+          data: valueRanges,
+        },
+      });
+    }
+
+    return { success: true };
+  } catch (error) {
+    console.error('Error updating Export Enquiry data:', error);
+    throw error;
+  }
+}
+
+export async function deleteExportEnquiryData(id: string) {
+  try {
+    const sheets = await getGoogleSheetsClient();
+    const spreadsheetId = SPREADSHEET_IDS.EXPORT_ENQUIRY;
+    const sheetName = SHEETS.EXPORT_ENQUIRY;
+
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${sheetName}!${EXPORT_ENQUIRY_RANGE}`,
+      valueRenderOption: 'UNFORMATTED_VALUE',
+    });
+    const rows = response.data.values;
+    if (!rows || rows.length === 0) throw new Error('Sheet is empty');
+
+    const headers: string[] = rows[0].map((h: string) => String(h || '').trim());
+    const idColIdx = headers.findIndex((h) => h.toLowerCase() === 'id');
+    if (idColIdx === -1) throw new Error('id column not found');
+
+    const rowIdx = rows.findIndex((row, i) => i > 0 && (row[idColIdx] || '').toString().trim() === id.toString().trim());
+    if (rowIdx === -1) throw new Error('Record not found');
+
+    const spreadsheetMeta = await sheets.spreadsheets.get({ spreadsheetId });
+    const sheet = spreadsheetMeta.data.sheets?.find((s: any) => s.properties?.title === sheetName);
+    if (!sheet) throw new Error('Sheet not found');
+    const sheetId = sheet.properties?.sheetId;
+
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        requests: [{
+          deleteDimension: {
+            range: {
+              sheetId,
+              dimension: 'ROWS',
+              startIndex: rowIdx,
+              endIndex: rowIdx + 1,
+            },
+          },
+        }],
+      },
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error('Error deleting Export Enquiry data:', error);
+    throw error;
+  }
+}
+
+export async function getExportEnquiryConfig() {
+  try {
+    const sheets = await getGoogleSheetsClient();
+    const spreadsheetId = SPREADSHEET_IDS.EXPORT_ENQUIRY;
+    let sheetName = SHEETS.EXPORT_ENQUIRY_CONFIG;
+
+    try {
+      const meta = await sheets.spreadsheets.get({
+        spreadsheetId,
+        fields: 'sheets.properties.title',
+      });
+      const titles = (meta.data.sheets || [])
+        .map((s: any) => String(s.properties?.title || '').trim())
+        .filter(Boolean);
+      const match = titles.find((t: string) => t.toLowerCase() === 'step configuration')
+        || titles.find((t: string) => t.toLowerCase().includes('step') && t.toLowerCase().includes('config'));
+      if (match) sheetName = match;
+    } catch (error) {
+      console.error('Error listing Export Enquiry sheets:', error);
+    }
+
+    try {
+      const response = await sheets.spreadsheets.values.get({
+        spreadsheetId,
+        range: `${sheetName}!A:Z`,
+        valueRenderOption: 'UNFORMATTED_VALUE',
+      });
+      return parseImportFMSConfigRows(response.data.values || []);
+    } catch (error: any) {
+      if (error.code === 400 || error.message?.includes('Unable to parse range')) {
+        return [];
+      }
+      throw error;
+    }
+  } catch (error) {
+    console.error('Error fetching Export Enquiry config:', error);
+    return [];
+  }
+}
+
+export async function updateExportEnquiryConfig(config: any[]) {
+  try {
+    const sheets = await getGoogleSheetsClient();
+    const spreadsheetId = SPREADSHEET_IDS.EXPORT_ENQUIRY;
+    const sheetName = SHEETS.EXPORT_ENQUIRY_CONFIG;
+
+    const headers = ['step', 'step_name', 'doer_name', 'tat_value', 'tat_unit'];
+    const rows = [
+      headers,
+      ...config.map((c) => [c.step, c.stepName, c.doerName, c.tatValue, c.tatUnit]),
+    ];
+
+    try {
+      await sheets.spreadsheets.values.get({
+        spreadsheetId,
+        range: `${sheetName}!A1`,
+      });
+    } catch (error: any) {
+      if (error.code === 400 || error.message?.includes('Unable to parse range')) {
+        await sheets.spreadsheets.batchUpdate({
+          spreadsheetId,
+          requestBody: {
+            requests: [{ addSheet: { properties: { title: sheetName } } }],
+          },
+        });
+      }
+    }
+
+    await sheets.spreadsheets.values.clear({
+      spreadsheetId,
+      range: `${sheetName}!A:E`,
+    });
+
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `${sheetName}!A1`,
+      valueInputOption: 'RAW',
+      requestBody: { values: rows },
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error('Error updating Export Enquiry config:', error);
     throw error;
   }
 }
