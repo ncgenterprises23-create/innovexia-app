@@ -39,6 +39,7 @@ export const NAV_MENU_ITEMS: NavMenuItem[] = [
   {
     label: 'Factory', icon: 'clipboard', roles: ['Admin', 'Manager'], children: [
       { label: 'Production', icon: 'factory', href: '/production', roles: ['Admin', 'Manager'] },
+      { label: 'Machine Breakdown', icon: 'alert', href: '/machine-breakdown', roles: ['Admin', 'Manager'] },
       { label: 'Scrap Sales', icon: 'clipboard', href: '/scrap-sales', roles: ['Admin', 'Manager'] },
       { label: 'Purchase FMS', icon: 'clock', href: '/purchase-fms', roles: ['Admin', 'Manager'] },
       { label: 'Factory Requirement', icon: 'document', href: '/factory-requirements', roles: ['Admin', 'Manager'] },

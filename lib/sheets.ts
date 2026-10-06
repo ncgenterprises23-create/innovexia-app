@@ -35,6 +35,7 @@ export const SPREADSHEET_IDS = {
   IMPORT_FMS: '1LS45YLgYzTx9nipqCyPouNuK6vGUkT8Yk36bULrRwWc',
   PRODUCT_FMS: '1CcwOIvFZrlZJLJ5Y20LWdVGAJ_8y53D5D3wrKveAuME',
   EXPORT_ENQUIRY: '1q6unLBHrpXu8nCLv3yYOdPjuAFyQUrmKNAtDK-cR8LQ',
+  MACHINE_BREAKDOWN: '13CrI8cIr4wUACAO2q6x0N1fJsdfAz6-zHtp28jQChw4',
   FMS_PRODUCT_SEARCH: '150XDtKwHl3TjMj8INwFIAcMVoOSWjydPkHxJkiE7ZXM',
   SALES_EXPORT_PURCHASE_ENQUIRY_FMS: '1NEy9qSv-9fCGVOjkW9cfgVZNdJbta79lcxIJ6xe_msE',
   IGST_REFUND: '1pmf0FcgLs_U_883CGwl6KWkwfg4a9Cq1RhVfMpijqh0',
@@ -88,6 +89,8 @@ const SHEETS = {
   PRODUCT_FMS_CONFIG: 'Step Configuration',
   EXPORT_ENQUIRY: 'Export Enquiry',
   EXPORT_ENQUIRY_CONFIG: 'Step Configuration',
+  MACHINE_BREAKDOWN: 'Machine Breakdown',
+  MACHINE_BREAKDOWN_CONFIG: 'Step Configuration',
   FMS_PRODUCT_SEARCH: 'FMS',
   FMS_PRODUCT_SEARCH_CONFIG: 'Step Configuration',
   SALES_EXPORT_PURCHASE_ENQUIRY_FMS: 'Sheet1',
@@ -7797,10 +7800,10 @@ function addEnquiryOfficeDays(from: Date, days: number) {
   return enquiryClampToOffice(next);
 }
 
-function enquiryPlannedFromTat(from: Date, config: any[], step: number) {
+function enquiryPlannedFromTat(from: Date, config: any[], step: number, defaultTat: Record<number, number> = EXPORT_ENQUIRY_DEFAULT_TAT) {
   const stepConfig = config.find((c: any) => Number(c.step) === step);
   const configured = Number(stepConfig?.tatValue);
-  const tatValue = configured > 0 ? configured : (EXPORT_ENQUIRY_DEFAULT_TAT[step] || 1);
+  const tatValue = configured > 0 ? configured : (defaultTat[step] || 1);
   const tatUnit = String(stepConfig?.tatUnit || 'days');
   const planned = /hour/i.test(tatUnit)
     ? addEnquiryOfficeHours(from, tatValue)
@@ -8204,6 +8207,471 @@ export async function updateExportEnquiryConfig(config: any[]) {
     return { success: true };
   } catch (error) {
     console.error('Error updating Export Enquiry config:', error);
+    throw error;
+  }
+}
+
+const MACHINE_BREAKDOWN_RANGE = 'A:ZZ';
+const MACHINE_BREAKDOWN_DEFAULT_TAT: Record<number, number> = {
+  1: 1, 2: 1, 3: 1, 4: 1, 5: 1, 6: 1, 7: 1,
+};
+const MACHINE_BREAKDOWN_HEADERS = [
+  'id', 'Timestamp', 'Machine Name', 'Breakdown Details', 'Required Spare Part',
+  'Cancelled', 'Cancelled Reason',
+  'Spare_Available_1', 'Repair_Notes_2', 'Machine_OK_3', 'Replenish_Notes_4',
+  'Urgent_Repair_Notes_5', 'Machine_OK_6', 'Order_Notes_7',
+  'Planned_1', 'Actual_1', 'Status_1',
+  'Planned_2', 'Actual_2', 'Status_2',
+  'Planned_3', 'Actual_3', 'Status_3',
+  'Planned_4', 'Actual_4', 'Status_4',
+  'Planned_5', 'Actual_5', 'Status_5',
+  'Planned_6', 'Actual_6', 'Status_6',
+  'Planned_7', 'Actual_7', 'Status_7',
+];
+
+function isBreakdownYesNo(value: any) {
+  return isYesValue(value) || /^(n|no)$/i.test(String(value || '').trim());
+}
+
+function breakdownPlanned(from: Date, config: any[], step: number) {
+  return enquiryPlannedFromTat(from, config, step, MACHINE_BREAKDOWN_DEFAULT_TAT);
+}
+
+function clearBreakdownLoop(
+  row: Record<string, any>,
+  changed: Record<string, string>,
+  restartStep: number,
+  laterSteps: number[],
+  fields: string[],
+) {
+  productWrite(row, changed, `Actual_${restartStep}`, '');
+  productWrite(row, changed, `Status_${restartStep}`, '');
+  laterSteps.forEach((step) => {
+    productWrite(row, changed, `Planned_${step}`, '');
+    productWrite(row, changed, `Actual_${step}`, '');
+    productWrite(row, changed, `Status_${step}`, '');
+  });
+  fields.forEach((field) => productWrite(row, changed, field, ''));
+}
+
+function applyMachineBreakdownStepCompletion(
+  step: number,
+  actualDate: Date,
+  row: Record<string, any>,
+  changed: Record<string, string>,
+  config: any[],
+) {
+  if (step === 1) {
+    const available = String(getProductField(row, 'Spare_Available_1', 'Spare Available') || '').trim();
+    if (!isBreakdownYesNo(available)) throw new Error('Select Yes or No');
+    if (isYesValue(available)) {
+      productWrite(row, changed, 'Planned_2', breakdownPlanned(actualDate, config, 2));
+      [5, 6, 7].forEach((skipped) => productSkipStep(row, changed, skipped));
+    } else {
+      [2, 3, 4].forEach((skipped) => productSkipStep(row, changed, skipped));
+      productWrite(row, changed, 'Planned_5', breakdownPlanned(actualDate, config, 5));
+    }
+    return;
+  }
+
+  if (step === 2) {
+    productWrite(row, changed, 'Planned_3', breakdownPlanned(actualDate, config, 3));
+    return;
+  }
+
+  if (step === 3) {
+    const machineOk = String(getProductField(row, 'Machine_OK_3', 'Machine OK') || '').trim();
+    if (!isBreakdownYesNo(machineOk)) throw new Error('Select Yes or No');
+    if (isYesValue(machineOk)) {
+      productWrite(row, changed, 'Planned_4', breakdownPlanned(actualDate, config, 4));
+    } else {
+      clearBreakdownLoop(row, changed, 2, [3, 4], ['Repair_Notes_2', 'Machine_OK_3', 'Replenish_Notes_4']);
+    }
+    return;
+  }
+
+  if (step === 4) return;
+
+  if (step === 5) {
+    productWrite(row, changed, 'Planned_6', breakdownPlanned(actualDate, config, 6));
+    return;
+  }
+
+  if (step === 6) {
+    const machineOk = String(getProductField(row, 'Machine_OK_6', 'Machine OK') || '').trim();
+    if (!isBreakdownYesNo(machineOk)) throw new Error('Select Yes or No');
+    if (isYesValue(machineOk)) {
+      productWrite(row, changed, 'Planned_7', breakdownPlanned(actualDate, config, 7));
+    } else {
+      clearBreakdownLoop(row, changed, 5, [6, 7], ['Urgent_Repair_Notes_5', 'Machine_OK_6', 'Order_Notes_7']);
+    }
+    return;
+  }
+}
+
+async function alignMachineBreakdownHeaders(
+  sheets: any,
+  spreadsheetId: string,
+  sheetName: string,
+  headers: string[],
+) {
+  const present = new Set(headers.map((h) => h.toLowerCase().replace(/[\s._-]+/g, '')));
+  const missing = MACHINE_BREAKDOWN_HEADERS.filter((h) => !present.has(h.toLowerCase().replace(/[\s._-]+/g, '')));
+  if (missing.length === 0) return headers;
+  const next = [...headers, ...missing];
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `${sheetName}!A1`,
+    valueInputOption: 'RAW',
+    requestBody: { values: [next] },
+  });
+  return next;
+}
+
+async function ensureMachineBreakdownSheet(sheets: any, spreadsheetId: string, sheetName: string) {
+  try {
+    await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${sheetName}!A1`,
+    });
+  } catch (error: any) {
+    if (error.code === 400 || error.message?.includes('Unable to parse range')) {
+      await sheets.spreadsheets.batchUpdate({
+        spreadsheetId,
+        requestBody: {
+          requests: [{ addSheet: { properties: { title: sheetName } } }],
+        },
+      });
+      return;
+    }
+    throw error;
+  }
+}
+
+export async function getMachineBreakdownData() {
+  try {
+    const sheets = await getGoogleSheetsClient();
+    const spreadsheetId = SPREADSHEET_IDS.MACHINE_BREAKDOWN;
+    const sheetName = SHEETS.MACHINE_BREAKDOWN;
+
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${sheetName}!${MACHINE_BREAKDOWN_RANGE}`,
+      valueRenderOption: 'UNFORMATTED_VALUE',
+    });
+
+    const rows = response.data.values;
+    if (!rows || rows.length === 0) return { data: [], headers: [] };
+
+    const headers = rows[0].map((h: string) => String(h || '').trim());
+    const data = rows.slice(1).map((row, idx) => {
+      const obj = rowToObject(headers, row);
+      headers.forEach((header) => {
+        if (!/^(Planned|Actual)_\d+$/i.test(header) && !/timestamp/i.test(header)) return;
+        const parsed = parseSheetDate(obj[header]);
+        if (parsed) obj[header] = parsed;
+      });
+      return { ...obj, _rowIndex: idx + 2 };
+    }).filter((row) => String(row.id || '').trim());
+    return { data, headers };
+  } catch (error: any) {
+    if (error.code === 400 || error.message?.includes('Unable to parse range')) {
+      return { data: [], headers: [] };
+    }
+    console.error('Error fetching Machine Breakdown data:', error);
+    throw error;
+  }
+}
+
+export async function createMachineBreakdownData(records: any[]) {
+  try {
+    const sheets = await getGoogleSheetsClient();
+    const spreadsheetId = SPREADSHEET_IDS.MACHINE_BREAKDOWN;
+    const sheetName = SHEETS.MACHINE_BREAKDOWN;
+    const now = new Date();
+    const timestamp = now.toISOString();
+    const config = await getMachineBreakdownConfig();
+    const planned1 = breakdownPlanned(now, config, 1);
+
+    await ensureMachineBreakdownSheet(sheets, spreadsheetId, sheetName);
+
+    const existingRes = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${sheetName}!${MACHINE_BREAKDOWN_RANGE}`,
+      valueRenderOption: 'UNFORMATTED_VALUE',
+    });
+    const existingRows = existingRes.data.values || [];
+    let headers: string[] = (existingRows[0] || []).map((h: string) => String(h || '').trim()).filter(Boolean);
+    if (headers.length === 0) {
+      headers = [...MACHINE_BREAKDOWN_HEADERS];
+      await sheets.spreadsheets.values.update({
+        spreadsheetId,
+        range: `${sheetName}!A1`,
+        valueInputOption: 'RAW',
+        requestBody: { values: [headers] },
+      });
+    } else {
+      headers = await alignMachineBreakdownHeaders(sheets, spreadsheetId, sheetName, headers);
+    }
+
+    const idColIdx = headers.findIndex((h) => h.toLowerCase() === 'id');
+    let maxId = 0;
+    if (idColIdx !== -1 && existingRows.length > 1) {
+      existingRows.slice(1).forEach((row) => {
+        const val = parseInt(row[idColIdx] || '0', 10);
+        if (!isNaN(val) && val > maxId) maxId = val;
+      });
+    }
+
+    const createdRecords: any[] = [];
+    const rowsData = records.map((rec, index) => {
+      const newId = (maxId + index + 1).toString();
+      const rowMap: Record<string, string> = {};
+      headers.forEach((h) => { rowMap[h] = ''; });
+      const idHeader = resolveProductHeader(headers, 'id');
+      if (idHeader) rowMap[idHeader] = newId;
+      const tsHeader = resolveProductHeader(headers, 'Timestamp') || resolveProductHeader(headers, 'timestamp');
+      if (tsHeader) rowMap[tsHeader] = timestamp;
+      const plannedHeader = resolveProductHeader(headers, 'Planned_1');
+      if (plannedHeader) rowMap[plannedHeader] = planned1;
+
+      Object.keys(rec || {}).forEach((key) => {
+        if (key === 'id' || key === '_rowIndex') return;
+        const headerName = resolveProductHeader(headers, key);
+        if (!headerName || !isProductIdentityHeader(headerName)) return;
+        const value = rec[key];
+        rowMap[headerName] = value === null || value === undefined ? '' : String(value);
+      });
+
+      createdRecords.push({ id: newId, ...rowMap });
+      return headers.map((h) => rowMap[h] ?? '');
+    });
+
+    await sheets.spreadsheets.values.append({
+      spreadsheetId,
+      range: `${sheetName}!${MACHINE_BREAKDOWN_RANGE}`,
+      valueInputOption: 'USER_ENTERED',
+      requestBody: { values: rowsData },
+    });
+
+    return { success: true, count: records.length, records: createdRecords };
+  } catch (error) {
+    console.error('Error creating Machine Breakdown data:', error);
+    throw error;
+  }
+}
+
+export async function updateMachineBreakdownData(id: string, updates: any) {
+  try {
+    const sheets = await getGoogleSheetsClient();
+    const spreadsheetId = SPREADSHEET_IDS.MACHINE_BREAKDOWN;
+    const sheetName = SHEETS.MACHINE_BREAKDOWN;
+    const config = await getMachineBreakdownConfig();
+
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${sheetName}!${MACHINE_BREAKDOWN_RANGE}`,
+      valueRenderOption: 'UNFORMATTED_VALUE',
+    });
+    const rows = response.data.values;
+    if (!rows || rows.length === 0) throw new Error('Sheet is empty');
+
+    let headers: string[] = rows[0].map((h: string) => String(h || '').trim());
+    headers = await alignMachineBreakdownHeaders(sheets, spreadsheetId, sheetName, headers);
+    const idColIdx = headers.findIndex((h) => h.toLowerCase() === 'id');
+    if (idColIdx === -1) throw new Error('id column not found');
+
+    const rowIdx = rows.findIndex((row, i) => i > 0 && (row[idColIdx] || '').toString().trim() === id.toString().trim());
+    if (rowIdx === -1) throw new Error('Record not found');
+
+    const sheetRowNumber = rowIdx + 1;
+    const existingRow = rows[rowIdx];
+    const updatedRowMap: Record<string, string> = {};
+    const changedCells: Record<string, string> = {};
+    headers.forEach((h, i) => { updatedRowMap[h] = existingRow[i] == null ? '' : String(existingRow[i]); });
+
+    Object.keys(updates).forEach((key) => {
+      if (key === 'id' || key === '_rowIndex') return;
+      const headerName = resolveProductHeader(headers, key);
+      const value = updates[key];
+      const written = typeof value === 'object' && value !== null ? JSON.stringify(value) : (value === null || value === undefined ? '' : String(value));
+      if (!headerName) return;
+      updatedRowMap[headerName] = written;
+      changedCells[headerName] = written;
+    });
+
+    Object.keys(updates).forEach((key) => {
+      const actualMatch = key.match(/^Actual_(\d+)$/);
+      if (!actualMatch || !updates[key]) return;
+      const step = parseInt(actualMatch[1], 10);
+      if (!updatedRowMap[`Status_${step}`]) {
+        productWrite(updatedRowMap, changedCells, `Status_${step}`, 'Completed');
+      }
+      const actualDate = parseDate(updates[key]);
+      if (!actualDate) return;
+      applyMachineBreakdownStepCompletion(step, actualDate, updatedRowMap, changedCells, config);
+    });
+
+    const valueRanges = Object.entries(changedCells)
+      .map(([header, value]) => {
+        const colIndex = headers.indexOf(header);
+        if (colIndex === -1) return null;
+        return {
+          range: `${sheetName}!${getColLetter(colIndex)}${sheetRowNumber}`,
+          values: [[value]],
+        };
+      })
+      .filter((item): item is { range: string; values: string[][] } => item !== null);
+
+    if (valueRanges.length > 0) {
+      await sheets.spreadsheets.values.batchUpdate({
+        spreadsheetId,
+        requestBody: {
+          valueInputOption: 'USER_ENTERED',
+          data: valueRanges,
+        },
+      });
+    }
+
+    return { success: true };
+  } catch (error) {
+    console.error('Error updating Machine Breakdown data:', error);
+    throw error;
+  }
+}
+
+export async function deleteMachineBreakdownData(id: string) {
+  try {
+    const sheets = await getGoogleSheetsClient();
+    const spreadsheetId = SPREADSHEET_IDS.MACHINE_BREAKDOWN;
+    const sheetName = SHEETS.MACHINE_BREAKDOWN;
+
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${sheetName}!${MACHINE_BREAKDOWN_RANGE}`,
+      valueRenderOption: 'UNFORMATTED_VALUE',
+    });
+    const rows = response.data.values;
+    if (!rows || rows.length === 0) throw new Error('Sheet is empty');
+
+    const headers: string[] = rows[0].map((h: string) => String(h || '').trim());
+    const idColIdx = headers.findIndex((h) => h.toLowerCase() === 'id');
+    if (idColIdx === -1) throw new Error('id column not found');
+
+    const rowIdx = rows.findIndex((row, i) => i > 0 && (row[idColIdx] || '').toString().trim() === id.toString().trim());
+    if (rowIdx === -1) throw new Error('Record not found');
+
+    const spreadsheetMeta = await sheets.spreadsheets.get({ spreadsheetId });
+    const sheet = spreadsheetMeta.data.sheets?.find((s: any) => s.properties?.title === sheetName);
+    if (!sheet) throw new Error('Sheet not found');
+    const sheetId = sheet.properties?.sheetId;
+
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        requests: [{
+          deleteDimension: {
+            range: {
+              sheetId,
+              dimension: 'ROWS',
+              startIndex: rowIdx,
+              endIndex: rowIdx + 1,
+            },
+          },
+        }],
+      },
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error('Error deleting Machine Breakdown data:', error);
+    throw error;
+  }
+}
+
+export async function getMachineBreakdownConfig() {
+  try {
+    const sheets = await getGoogleSheetsClient();
+    const spreadsheetId = SPREADSHEET_IDS.MACHINE_BREAKDOWN;
+    let sheetName = SHEETS.MACHINE_BREAKDOWN_CONFIG;
+
+    try {
+      const meta = await sheets.spreadsheets.get({
+        spreadsheetId,
+        fields: 'sheets.properties.title',
+      });
+      const titles = (meta.data.sheets || [])
+        .map((s: any) => String(s.properties?.title || '').trim())
+        .filter(Boolean);
+      const match = titles.find((t: string) => t.toLowerCase() === 'step configuration')
+        || titles.find((t: string) => t.toLowerCase().includes('step') && t.toLowerCase().includes('config'));
+      if (match) sheetName = match;
+    } catch (error) {
+      console.error('Error listing Machine Breakdown sheets:', error);
+    }
+
+    try {
+      const response = await sheets.spreadsheets.values.get({
+        spreadsheetId,
+        range: `${sheetName}!A:Z`,
+        valueRenderOption: 'UNFORMATTED_VALUE',
+      });
+      return parseImportFMSConfigRows(response.data.values || []);
+    } catch (error: any) {
+      if (error.code === 400 || error.message?.includes('Unable to parse range')) {
+        return [];
+      }
+      throw error;
+    }
+  } catch (error) {
+    console.error('Error fetching Machine Breakdown config:', error);
+    return [];
+  }
+}
+
+export async function updateMachineBreakdownConfig(config: any[]) {
+  try {
+    const sheets = await getGoogleSheetsClient();
+    const spreadsheetId = SPREADSHEET_IDS.MACHINE_BREAKDOWN;
+    const sheetName = SHEETS.MACHINE_BREAKDOWN_CONFIG;
+
+    const headers = ['step', 'step_name', 'doer_name', 'tat_value', 'tat_unit'];
+    const rows = [
+      headers,
+      ...config.map((c) => [c.step, c.stepName, c.doerName, c.tatValue, c.tatUnit]),
+    ];
+
+    try {
+      await sheets.spreadsheets.values.get({
+        spreadsheetId,
+        range: `${sheetName}!A1`,
+      });
+    } catch (error: any) {
+      if (error.code === 400 || error.message?.includes('Unable to parse range')) {
+        await sheets.spreadsheets.batchUpdate({
+          spreadsheetId,
+          requestBody: {
+            requests: [{ addSheet: { properties: { title: sheetName } } }],
+          },
+        });
+      }
+    }
+
+    await sheets.spreadsheets.values.clear({
+      spreadsheetId,
+      range: `${sheetName}!A:E`,
+    });
+
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `${sheetName}!A1`,
+      valueInputOption: 'RAW',
+      requestBody: { values: rows },
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error('Error updating Machine Breakdown config:', error);
     throw error;
   }
 }

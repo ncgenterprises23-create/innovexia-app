@@ -34,13 +34,13 @@ type ListStyle = 'smart' | 'standard';
 type ColumnFilters = Record<string, string[]>;
 
 const ITEMS_PER_PAGE = 10;
-const PRODUCT_MAX_STEP = 8;
-const ENQUIRY_DEFAULT_TAT: Record<number, number> = { 1: 1, 2: 3, 3: 1, 4: 1, 5: 1, 6: 3, 7: 1, 8: 3 };
-const FALLBACK_IDENTITY = ['Party Name', 'Major Products', 'Other Details'];
+const PRODUCT_MAX_STEP = 7;
+const ENQUIRY_DEFAULT_TAT: Record<number, number> = { 1: 1, 2: 1, 3: 1, 4: 1, 5: 1, 6: 1, 7: 1 };
+const FALLBACK_IDENTITY = ['Machine Name', 'Breakdown Details', 'Required Spare Part'];
 const IDENTITY_LABELS: Record<string, string> = {
-    'Party Name': 'Party Name',
-    'Major Products': 'Major Products',
-    'Other Details': 'Other Details',
+    'Machine Name': 'Machine Name',
+    'Breakdown Details': 'Breakdown Details',
+    'Required Spare Part': 'Required Spare Part',
 };
 
 function identityLabel(key: string) {
@@ -166,7 +166,7 @@ function isDateish(key: string) {
 }
 
 function isYesNoField(key: string) {
-    return /order.?confirmed/i.test(key);
+    return /spare.?available|machine.?ok/i.test(key);
 }
 
 function isLongTextField(key: string) {
@@ -194,23 +194,22 @@ function extraFieldMeta(key: string) {
 }
 
 function productTitle(item: ProductFMS) {
-    return String(gv(item, 'Party Name', 'Party_Name') || 'Untitled');
+    return String(gv(item, 'Machine Name', 'Machine_Name') || 'Untitled');
 }
 
 function productMaterial(item: ProductFMS) {
-    return String(gv(item, 'Major Products', 'Major_Products') || '');
+    return String(gv(item, 'Required Spare Part', 'Required_Spare_Part') || '');
 }
 
 function extraDetailFields(item: ProductFMS) {
     const preferred = [
-        'Get_Back_Date_1',
-        'Price_Comparison_2',
-        'Approval_Note_3',
-        'Client_Feedback_5',
-        'Action_Notes_6',
-        'Client_Feedback_7',
-        'Action_Notes_8',
-        'Order_Confirmed_8',
+        'Spare_Available_1',
+        'Repair_Notes_2',
+        'Machine_OK_3',
+        'Replenish_Notes_4',
+        'Urgent_Repair_Notes_5',
+        'Machine_OK_6',
+        'Order_Notes_7',
     ];
     const seen = new Set<string>();
     const details: { key: string; label: string; value: string }[] = [];
@@ -241,16 +240,13 @@ function ensureCompleteExtras(item: ProductFMS, step: number) {
     const set = (key: string, ...aliases: string[]) => {
         extras[key] = String(gv(item, key, ...aliases) || '');
     };
-    if (step === 1) set('Get_Back_Date_1', 'Get Back Date');
-    if (step === 2) set('Price_Comparison_2', 'Price Comparison');
-    if (step === 3) set('Approval_Note_3', 'Approval Note');
-    if (step === 5) set('Client_Feedback_5', 'Client Feedback');
-    if (step === 6) set('Action_Notes_6', 'Action Notes');
-    if (step === 7) set('Client_Feedback_7', 'Client Feedback');
-    if (step === 8) {
-        set('Action_Notes_8', 'Action Notes');
-        set('Order_Confirmed_8', 'Order Confirmed');
-    }
+    if (step === 1) set('Spare_Available_1', 'Spare Available');
+    if (step === 2) set('Repair_Notes_2', 'Repair Notes');
+    if (step === 3) set('Machine_OK_3', 'Machine OK');
+    if (step === 4) set('Replenish_Notes_4', 'Replenish Notes');
+    if (step === 5) set('Urgent_Repair_Notes_5', 'Urgent Repair Notes');
+    if (step === 6) set('Machine_OK_6', 'Machine OK');
+    if (step === 7) set('Order_Notes_7', 'Order Notes');
     extraFieldKeys(item, step).forEach((key) => {
         if (extras[key] == null) extras[key] = item[key] == null ? '' : String(item[key]);
     });
@@ -282,25 +278,23 @@ const LIGHT_BORDER = 'border border-[var(--theme-primary)]/25';
 const LIGHT_SURFACE = `${LIGHT_BG} ${LIGHT_BORDER} ${DASH_SHADOW}`;
 
 const STEP_LABELS: Record<number, string> = {
-    1: 'Acknowledge the Enquiry',
-    2: 'Search for the Best Prices',
-    3: 'Get It Approved by Director',
-    4: 'Send the Price Sheet to Client',
-    5: 'Client Feedback',
-    6: 'Action on Feedback',
-    7: 'Send Update / Get Client Feedback',
-    8: 'Action on Feedback',
+    1: 'Check Spare Part',
+    2: 'Repair / Replace',
+    3: 'Check Machine and Report OK',
+    4: 'Order New Spare Part / Get Damaged Part Repaired',
+    5: 'Get It Repaired Urgently',
+    6: 'Check Machine and Report OK',
+    7: 'Order New Spare Part',
 };
 
 const STEP_SHORT_LABELS: Record<number, string> = {
-    1: 'Acknowledge Enquiry',
-    2: 'Search Best Prices',
-    3: 'Director Approval',
-    4: 'Send Price Sheet',
-    5: 'Client Feedback',
-    6: 'Action on Feedback',
-    7: 'Send Update',
-    8: 'Action on Feedback',
+    1: 'Check Spare Part',
+    2: 'Repair / Replace',
+    3: 'Check Machine',
+    4: 'Replenish Spare',
+    5: 'Urgent Repair',
+    6: 'Check Machine',
+    7: 'Order Fresh Spare',
 };
 
 function labelForStep(step: number, sheetName?: string) {
@@ -514,7 +508,7 @@ function StepMiniCard({
     );
 }
 
-export default function ExportEnquiryPage() {
+export default function MachineBreakdownPage() {
     const [data, setData] = useState<ProductFMS[]>([]);
     const [sheetHeaders, setSheetHeaders] = useState<string[]>([]);
     const [loading, setLoading] = useState(true);
@@ -538,7 +532,6 @@ export default function ExportEnquiryPage() {
     const [isFormOpen, setIsFormOpen] = useState(false);
     const [cancellingItem, setCancellingItem] = useState<ProductFMS | null>(null);
     const [cancelReason, setCancelReason] = useState('');
-    const [handoff, setHandoff] = useState({ piNumber: '', containerType: "20'" });
     const [deletingItem, setDeletingItem] = useState<ProductFMS | null>(null);
     const [doneItem, setDoneItem] = useState<ProductFMS | null>(null);
     const [removeTarget, setRemoveTarget] = useState<ProductFMS | null>(null);
@@ -610,12 +603,12 @@ export default function ExportEnquiryPage() {
     const fetchData = async () => {
         try {
             setLoading(true);
-            const res = await fetch('/api/export-enquiry', { cache: 'no-store' });
+            const res = await fetch('/api/machine-breakdown', { cache: 'no-store' });
             const json = await res.json();
             setData(Array.isArray(json.data) ? json.data : []);
             setSheetHeaders(Array.isArray(json.headers) ? json.headers : []);
         } catch {
-            toast.error('Failed to load Export Enquiry data');
+            toast.error('Failed to load Machine Breakdown data');
         } finally {
             setLoading(false);
         }
@@ -623,7 +616,7 @@ export default function ExportEnquiryPage() {
 
     const fetchConfig = async () => {
         try {
-            const res = await fetch('/api/export-enquiry-config', { cache: 'no-store' });
+            const res = await fetch('/api/machine-breakdown-config', { cache: 'no-store' });
             const json = await res.json();
             setStepConfigs(defaultSetupRows(Array.isArray(json.config) ? json.config : []));
         } catch {
@@ -838,7 +831,7 @@ export default function ExportEnquiryPage() {
                 toast.error('Enter a cancellation reason');
                 return;
             }
-            const res = await fetch('/api/export-enquiry', {
+            const res = await fetch('/api/machine-breakdown', {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -864,7 +857,7 @@ export default function ExportEnquiryPage() {
         if (!deletingItem) return;
         try {
             loader.showLoader();
-            const res = await fetch('/api/export-enquiry', {
+            const res = await fetch('/api/machine-breakdown', {
                 method: 'DELETE',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ id: deletingItem.id }),
@@ -902,7 +895,7 @@ export default function ExportEnquiryPage() {
                 payload[`Status_${s}`] = '';
                 if (s > 1 && (removeStep === 'all' || s > from)) payload[`Planned_${s}`] = '';
             }
-            const res = await fetch('/api/export-enquiry', {
+            const res = await fetch('/api/machine-breakdown', {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload),
@@ -923,7 +916,6 @@ export default function ExportEnquiryPage() {
         const step = getCurrentStep(item, maxStep);
         if (step > maxStep) return;
         setStepExtras(ensureCompleteExtras(item, step));
-        setHandoff({ piNumber: '', containerType: "20'" });
         setDoneItem(item);
         setIsDoneModalOpen(true);
     };
@@ -936,22 +928,15 @@ export default function ExportEnquiryPage() {
             const key = Object.keys(stepExtras).find((name) => re.test(name));
             return key ? String(stepExtras[key] || '').trim() : '';
         };
-        if ((step === 5 || step === 7) && !extraValue(/feedback/i)) {
-            toast.error('Enter the client feedback');
-            return;
-        }
-        if (step === 8 && !isYesNoValue(extraValue(/order.?confirmed/i))) {
+        const yesNoPattern = step === 1 ? /spare.?available/i : /machine.?ok/i;
+        if ((step === 1 || step === 3 || step === 6) && !isYesNoValue(extraValue(yesNoPattern))) {
             toast.error('Select Yes or No');
             return;
         }
-        const orderConfirmed = /^y(es)?$/i.test(extraValue(/order.?confirmed/i));
-        if (step === 8 && orderConfirmed && !handoff.piNumber.trim()) {
-            toast.error('Enter the PI Number to start Export FMS');
-            return;
-        }
+        const answeredYes = /^y(es)?$/i.test(extraValue(yesNoPattern));
         try {
             loader.showLoader();
-            const res = await fetch('/api/export-enquiry', {
+            const res = await fetch('/api/machine-breakdown', {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -959,14 +944,24 @@ export default function ExportEnquiryPage() {
                     [`Actual_${step}`]: new Date().toISOString(),
                     [`Status_${step}`]: 'Completed',
                     ...stepExtras,
-                    ...(step === 8 && orderConfirmed ? { piNumber: handoff.piNumber.trim(), containerType: handoff.containerType } : {}),
                 }),
             });
             if (!res.ok) {
                 const json = await res.json().catch(() => ({}));
                 throw new Error(json.error || 'Mark done failed');
             }
-            toast.success(step === 8 && orderConfirmed ? 'Enquiry completed and Export FMS started' : step === 8 ? 'Sent back to Client Feedback' : 'Step completed');
+            const success = step === 1 && answeredYes
+                ? 'Spare is available. Repair is next'
+                : step === 1
+                    ? 'Spare is not available. Urgent repair is next'
+                    : step === 3 && !answeredYes
+                        ? 'Sent back to Repair / Replace'
+                        : step === 6 && !answeredYes
+                            ? 'Sent back to urgent repair'
+                            : (step === 4 || step === 7)
+                                ? 'Breakdown closed. Machine is running'
+                                : 'Step completed';
+            toast.success(success);
             setIsDoneModalOpen(false);
             setDoneItem(null);
             fetchData();
@@ -996,13 +991,13 @@ export default function ExportEnquiryPage() {
     };
 
     const handleSaveRecord = async () => {
-        if (!String(formValues['Party Name'] || '').trim()) {
-            toast.error('Enter the party name');
+        if (!String(formValues['Machine Name'] || '').trim()) {
+            toast.error('Enter the machine name');
             return;
         }
         try {
             loader.showLoader();
-            const res = await fetch('/api/export-enquiry', {
+            const res = await fetch('/api/machine-breakdown', {
                 method: editingItem ? 'PUT' : 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(editingItem ? { id: editingItem.id, ...formValues } : formValues),
@@ -1022,7 +1017,7 @@ export default function ExportEnquiryPage() {
     const handleSaveConfig = async () => {
         try {
             loader.showLoader();
-            const res = await fetch('/api/export-enquiry-config', {
+            const res = await fetch('/api/machine-breakdown-config', {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ config: stepConfigs }),
@@ -1056,7 +1051,7 @@ export default function ExportEnquiryPage() {
         const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
         const link = document.createElement('a');
         link.href = URL.createObjectURL(blob);
-        link.download = `Export_Enquiry_${new Date().toISOString().split('T')[0]}.csv`;
+        link.download = `Machine_Breakdown_${new Date().toISOString().split('T')[0]}.csv`;
         link.click();
     };
 
@@ -1070,7 +1065,7 @@ export default function ExportEnquiryPage() {
 
     const stepName = (step: number) => labelForStep(step, stepConfigs.find((c) => c.step === step)?.stepName) || `Step ${step}`;
     const tableIdentity = identityFields.filter((field) => (
-        !/^party name$/i.test(field.key) && !/^major products$/i.test(field.key)
+        !/^machine name$/i.test(field.key) && !/^required spare part$/i.test(field.key)
     ));
 
     if (loading && data.length === 0) {
@@ -1088,8 +1083,8 @@ export default function ExportEnquiryPage() {
             <div className="px-5 py-4 space-y-4">
                 <div className="flex flex-wrap items-center gap-3">
                     <div className="mr-auto">
-                        <h1 className="text-[26px] leading-none font-black text-[var(--theme-primary)] tracking-tight">Export Enquiry FMS</h1>
-                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.18em] mt-1">From enquiry to order confirmation or closure</p>
+                        <h1 className="text-[26px] leading-none font-black text-[var(--theme-primary)] tracking-tight">Machine Breakdown FMS</h1>
+                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.18em] mt-1">From breakdown report to machine running</p>
                     </div>
                     <div className={`flex items-center rounded-full overflow-hidden ${LIGHT_SURFACE}`}>
                         {viewMode !== 'setup' && viewMode !== 'cancelled' && (
@@ -1193,8 +1188,8 @@ export default function ExportEnquiryPage() {
                 ) : showFlowChart ? (
                     <div className={`${LIGHT_SURFACE} rounded-3xl p-3`}>
                         <img
-                            src="/api/export-enquiry-flowchart"
-                            alt="Export Enquiry flow chart"
+                            src="/api/machine-breakdown-flowchart"
+                            alt="Machine Breakdown flow chart"
                             className="w-full h-auto rounded-2xl bg-white"
                         />
                     </div>
@@ -1304,8 +1299,9 @@ export default function ExportEnquiryPage() {
                                         const expanded = expandedIds.has(item.id);
                                         const extraDetails = extraDetailFields(item);
                                         const cardStats = [
-                                            { key: 'Party Name', Icon: Landmark, label: 'Party Name', value: productTitle(item), tone: 'text-orange-500' },
-                                            { key: 'Major Products', Icon: Package, label: 'Major Products', value: productMaterial(item) || '—', tone: 'text-teal-600' },
+                                            { key: 'Machine Name', Icon: Factory, label: 'Machine Name', value: productTitle(item), tone: 'text-orange-500' },
+                                            { key: 'Breakdown Details', Icon: FileText, label: 'Breakdown Details', value: String(gv(item, 'Breakdown Details') || '—'), tone: 'text-slate-500' },
+                                            { key: 'Required Spare Part', Icon: Package, label: 'Required Spare Part', value: productMaterial(item) || '—', tone: 'text-teal-600' },
                                             { key: 'Created', Icon: CalendarDays, label: 'Created', value: formatDateTime(gv(item, 'Timestamp')), tone: 'text-sky-500' },
                                             ...extraDetails.map((field) => {
                                                 const meta = extraFieldMeta(field.key);
@@ -1325,9 +1321,9 @@ export default function ExportEnquiryPage() {
                                                 <div className="flex items-start justify-between gap-4">
                                                     <div className="min-w-0">
                                                         <div className="flex flex-wrap items-center gap-x-2.5 gap-y-0.5">
-                                                            <span className="text-[12px] font-black text-slate-500">ENQ - {item.id}</span>
+                                                            <span className="text-[12px] font-black text-slate-500">BD - {item.id}</span>
                                                             <span className="inline-flex items-center gap-1.5 text-[16px] font-black uppercase tracking-tight text-slate-800 dark:text-white">
-                                                                <Landmark className="w-4 h-4 text-indigo-500 shrink-0" />
+                                                                <Factory className="w-4 h-4 text-teal-600 shrink-0" />
                                                                 {productTitle(item)}
                                                             </span>
                                                         </div>
@@ -1423,8 +1419,8 @@ export default function ExportEnquiryPage() {
                                             <tr className="bg-[var(--theme-primary)] text-gray-900">
                                                 <th className="sticky left-0 z-20 bg-[var(--theme-primary)] px-3 py-3 text-[10px] font-black uppercase tracking-widest whitespace-nowrap">Actions</th>
                                                 <th className="px-3 py-3 text-[10px] font-black uppercase tracking-widest whitespace-nowrap">ID</th>
-                                                <th className="px-3 py-3 text-[10px] font-black uppercase tracking-widest whitespace-nowrap">Party Name</th>
-                                                <th className="px-3 py-3 text-[10px] font-black uppercase tracking-widest whitespace-nowrap">Major Products</th>
+                                                <th className="px-3 py-3 text-[10px] font-black uppercase tracking-widest whitespace-nowrap">Machine Name</th>
+                                                <th className="px-3 py-3 text-[10px] font-black uppercase tracking-widest whitespace-nowrap">Required Spare Part</th>
                                                 {tableIdentity.map((field) => (
                                                     <th key={field.key} className="px-3 py-3 text-[10px] font-black uppercase tracking-widest whitespace-nowrap">{field.label}</th>
                                                 ))}
@@ -1663,7 +1659,7 @@ export default function ExportEnquiryPage() {
                                                 <textarea
                                                     value={formValues[field.key] || ''}
                                                     onChange={(e) => setFormValues({ ...formValues, [field.key]: e.target.value })}
-                                                    placeholder="Country, quantity, application, and any other details"
+                                                    placeholder="What failed, and what spare part is required"
                                                     className={`w-full px-3 py-2.5 rounded-xl ${LIGHT_BG} ${LIGHT_BORDER} text-sm outline-none min-h-[90px]`}
                                                 />
                                             </div>
@@ -1837,32 +1833,6 @@ export default function ExportEnquiryPage() {
                                         </div>
                                     );
                                 })}
-                                {getCurrentStep(doneItem, maxStep) === 8 && /^y(es)?$/i.test(String(stepExtras.Order_Confirmed_8 || '').trim()) && (
-                                    <div className="space-y-3 pt-2 border-t border-[var(--theme-primary)]/20">
-                                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Start Export FMS</p>
-                                        <div>
-                                            <label className="block text-[10px] font-black uppercase tracking-widest mb-1">PI Number</label>
-                                            <input
-                                                type="text"
-                                                value={handoff.piNumber}
-                                                onChange={(e) => setHandoff({ ...handoff, piNumber: e.target.value })}
-                                                placeholder="Enter PI Number"
-                                                className={`w-full px-3 py-2.5 rounded-xl ${LIGHT_BG} ${LIGHT_BORDER} text-sm outline-none`}
-                                            />
-                                        </div>
-                                        <div>
-                                            <label className="block text-[10px] font-black uppercase tracking-widest mb-1">Container Type</label>
-                                            <select
-                                                value={handoff.containerType}
-                                                onChange={(e) => setHandoff({ ...handoff, containerType: e.target.value })}
-                                                className={`w-full px-3 py-2.5 rounded-xl ${LIGHT_BG} ${LIGHT_BORDER} text-sm outline-none font-bold`}
-                                            >
-                                                <option value="20'">20'</option>
-                                                <option value="40'">40'</option>
-                                            </select>
-                                        </div>
-                                    </div>
-                                )}
                             </div>
                             <div className="p-3 flex gap-2 shrink-0 border-t border-[var(--theme-primary)]/20">
                                 <button onClick={() => setIsDoneModalOpen(false)} className={`flex-1 px-4 py-2.5 rounded-xl ${LIGHT_BORDER} text-[10px] font-black uppercase`}>Cancel</button>
@@ -1879,7 +1849,7 @@ export default function ExportEnquiryPage() {
                         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setIsCancelModalOpen(false)} className="fixed inset-0 bg-black/40 z-[9998]" />
                         <motion.div initial={{ opacity: 0, scale: 0.96 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.96 }} className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
                             <div className="bg-white dark:bg-slate-900 rounded-2xl w-full max-w-sm p-6">
-                                <h3 className="font-black text-lg mb-2">{isCancelled(cancellingItem) ? 'Restore this record?' : 'Close this enquiry?'}</h3>
+                                <h3 className="font-black text-lg mb-2">{isCancelled(cancellingItem) ? 'Restore this record?' : 'Close this breakdown?'}</h3>
                                 <p className="text-sm text-slate-500 mb-4">{productTitle(cancellingItem)}</p>
                                 {!isCancelled(cancellingItem) && (
                                     <textarea

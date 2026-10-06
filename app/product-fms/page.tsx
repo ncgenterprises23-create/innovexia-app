@@ -9,7 +9,7 @@ import {
     Loader2, X, Search, Ban, RotateCcw, Filter, Plus, Pencil, Trash2,
     ChevronDown, ChevronLeft, ChevronRight, CheckCircle2, Settings2, Download,
     ClipboardList, FileText, Package, Factory, Boxes, Truck, Clock,
-    Hash, CalendarDays, Link2, CircleDollarSign, Landmark, Timer, Hammer
+    Hash, CalendarDays, Link2, CircleDollarSign, Landmark, Timer, Hammer, Workflow
 } from 'lucide-react';
 import { useSetupViewFromQuery } from '@/hooks/useSetupViewFromQuery';
 
@@ -538,6 +538,7 @@ export default function ProductFmsPage() {
     const [currentPage, setCurrentPage] = useState(1);
     const [viewMode, setViewMode] = useState<ViewMode>('data');
     const [listStyle, setListStyle] = useState<ListStyle>('smart');
+    const [showFlowChart, setShowFlowChart] = useState(false);
     useSetupViewFromQuery(setViewMode);
     const [activeStepFilter, setActiveStepFilter] = useState<number | 'all' | 'completed'>('all');
     const [activeTimeFilter, setActiveTimeFilter] = useState<string | null>(null);
@@ -1138,8 +1139,11 @@ export default function ProductFmsPage() {
                     </div>
                     {viewMode !== 'setup' && (
                         <div className={`flex items-center rounded-full overflow-hidden ${LIGHT_SURFACE}`}>
-                            <button onClick={() => setListStyle('standard')} className={`px-4 py-2 text-[10px] font-black uppercase tracking-widest ${listStyle === 'standard' ? 'bg-[var(--theme-primary)] text-gray-900' : 'text-slate-500'}`}>Standard</button>
-                            <button onClick={() => setListStyle('smart')} className={`px-4 py-2 text-[10px] font-black uppercase tracking-widest ${listStyle === 'smart' ? 'bg-[var(--theme-primary)] text-gray-900' : 'text-slate-500'}`}>Smart View</button>
+                            <button onClick={() => { setShowFlowChart(false); setListStyle('standard'); }} className={`px-4 py-2 text-[10px] font-black uppercase tracking-widest ${!showFlowChart && listStyle === 'standard' ? 'bg-[var(--theme-primary)] text-gray-900' : 'text-slate-500'}`}>Standard</button>
+                            <button onClick={() => { setShowFlowChart(false); setListStyle('smart'); }} className={`px-4 py-2 text-[10px] font-black uppercase tracking-widest ${!showFlowChart && listStyle === 'smart' ? 'bg-[var(--theme-primary)] text-gray-900' : 'text-slate-500'}`}>Smart View</button>
+                            <button onClick={() => setShowFlowChart(true)} className={`inline-flex items-center gap-1.5 px-4 py-2 text-[10px] font-black uppercase tracking-widest border-l border-[var(--theme-primary)]/25 ${showFlowChart ? 'bg-[var(--theme-primary)] text-gray-900' : 'text-slate-500'}`}>
+                                <Workflow className="w-3.5 h-3.5" /> Flow Chart
+                            </button>
                         </div>
                     )}
                 </div>
@@ -1215,6 +1219,14 @@ export default function ProductFmsPage() {
                                 </tbody>
                             </table>
                         </div>
+                    </div>
+                ) : showFlowChart ? (
+                    <div className={`${LIGHT_SURFACE} rounded-3xl p-3`}>
+                        <img
+                            src="/api/product-fms-flowchart"
+                            alt="New Product Requirement flow chart"
+                            className="w-full h-auto rounded-2xl bg-white"
+                        />
                     </div>
                 ) : (
                     <div className="flex items-start gap-5">
