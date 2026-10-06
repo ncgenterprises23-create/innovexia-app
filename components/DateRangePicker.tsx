@@ -7,9 +7,10 @@ interface DateRangePickerProps {
     fromDate: string;
     toDate: string;
     onRangeChange: (from: string, to: string) => void;
+    buttonClassName?: string;
 }
 
-export default function DateRangePicker({ fromDate, toDate, onRangeChange }: DateRangePickerProps) {
+export default function DateRangePicker({ fromDate, toDate, onRangeChange, buttonClassName }: DateRangePickerProps) {
     const [showPicker, setShowPicker] = useState(false);
     const [startDate, setStartDate] = useState<Date | null>(fromDate ? new Date(fromDate) : null);
     const [endDate, setEndDate] = useState<Date | null>(toDate ? new Date(toDate) : null);
@@ -167,7 +168,7 @@ export default function DateRangePicker({ fromDate, toDate, onRangeChange }: Dat
             <button
                 type="button"
                 onClick={() => setShowPicker(!showPicker)}
-                className="w-full px-4 py-2.5 bg-[var(--theme-lighter)] dark:bg-gray-700/50 rounded-xl font-semibold text-gray-900 dark:text-white placeholder:text-gray-400 focus:ring-2 focus:ring-[var(--theme-primary)] transition-all text-sm border-0 flex items-center justify-between"
+                className={buttonClassName || "w-full px-4 py-2.5 bg-[var(--theme-lighter)] dark:bg-gray-700/50 rounded-xl font-semibold text-gray-900 dark:text-white placeholder:text-gray-400 focus:ring-2 focus:ring-[var(--theme-primary)] transition-all text-sm border-0 flex items-center justify-between"}
             >
                 <span>{formatDisplayDate()}</span>
                 <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">

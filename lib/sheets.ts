@@ -257,6 +257,34 @@ function parseDate(dateStr: any): Date | null {
 
 // DELEGATION CRUD OPERATIONS
 
+async function getDelegationCompletedAtMap(): Promise<Map<number, string>> {
+  const completedAt = new Map<number, string>();
+  try {
+    const sheets = await getGoogleSheetsClient();
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId: DELEGATION_SPREADSHEET_ID,
+      range: `${SHEETS.DELEGATION_HISTORY}!A:AZ`,
+      valueRenderOption: 'UNFORMATTED_VALUE',
+    });
+    const rows = response.data.values;
+    if (!rows || rows.length < 2) return completedAt;
+    const headers = rows[0];
+    for (const row of rows.slice(1)) {
+      const record = rowToObject(headers, row);
+      const id = parseInt(record.delegation_id);
+      if (!id) continue;
+      if (String(record.new_status || '').toLowerCase() === 'completed' && record.created_at) {
+        completedAt.set(id, String(record.created_at));
+      } else {
+        completedAt.delete(id);
+      }
+    }
+  } catch (error) {
+    console.error('Error reading delegation completion dates:', error);
+  }
+  return completedAt;
+}
+
 export async function getDelegations(userId: number, role?: string, username?: string) {
   try {
 
@@ -301,6 +329,15 @@ export async function getDelegations(userId: number, role?: string, username?: s
         delegation.doer_name.toLowerCase() === username.toLowerCase()
       );
     }
+
+    const completedAt = await getDelegationCompletedAtMap();
+    delegations = delegations.map((delegation) => {
+      const completed = String(delegation.status || '').toLowerCase() === 'completed';
+      return {
+        ...delegation,
+        completed_at: completed ? (completedAt.get(Number(delegation.id)) || delegation.updated_at || '') : '',
+      };
+    });
 
     // Sort by created_at descending
     delegations.sort((a, b) => {
@@ -2002,8 +2039,8 @@ export async function createChecklistHistory(historyData: any) {
   }
 }
 
-export async function getChecklistIdsWithHistory(): Promise<{ ids: Set<number>; latestStatus: Map<string, string> }> {
-  const empty = { ids: new Set<number>(), latestStatus: new Map<string, string>() };
+export async function getChecklistIdsWithHistory(): Promise<{ ids: Set<number>; latestStatus: Map<string, string>; completedAt: Map<string, string> }> {
+  const empty = { ids: new Set<number>(), latestStatus: new Map<string, string>(), completedAt: new Map<string, string>() };
   try {
     const sheets = await getGoogleSheetsClient();
     const sheetName = 'checklist_revision_history';
@@ -2025,10 +2062,12 @@ export async function getChecklistIdsWithHistory(): Promise<{ ids: Set<number>; 
       const idIdx = headers.indexOf('id');
       const statusIdx = headers.indexOf('new_status');
       const dueIdx = headers.indexOf('due_date');
+      const timestampIdx = headers.findIndex((header: string) => header.toLowerCase() === 'timestamp');
       const { toDateKey, occurrenceKey } = await import('@/lib/checklistOccurrences');
 
       const ids = new Set<number>();
       const latestStatus = new Map<string, string>();
+      const completedAt = new Map<string, string>();
       for (let i = 1; i < rows.length; i++) {
         const groupId = groupIdx !== -1 ? String(rows[i][groupIdx] || '').trim() : '';
         const checklistId = checklistIdIdx !== -1 ? String(rows[i][checklistIdIdx] || '').trim() : '';
@@ -2040,14 +2079,23 @@ export async function getChecklistIdsWithHistory(): Promise<{ ids: Set<number>; 
 
         const status = statusIdx !== -1 ? String(rows[i][statusIdx] || '').trim().toLowerCase() : '';
         const dateKey = dueIdx !== -1 ? toDateKey(rows[i][dueIdx]) : null;
+        const stamp = timestampIdx !== -1 ? String(rows[i][timestampIdx] || '').trim() : '';
         if (!status || !dateKey) continue;
 
-        if (groupId) latestStatus.set(occurrenceKey(groupId, dateKey), status);
-        if (checklistId) latestStatus.set(occurrenceKey(checklistId, dateKey), status);
-        if (!isNaN(numericId)) latestStatus.set(occurrenceKey(numericId, dateKey), status);
-        if (!isNaN(numericFromGroup)) latestStatus.set(occurrenceKey(numericFromGroup, dateKey), status);
+        const keys = [
+          groupId ? occurrenceKey(groupId, dateKey) : '',
+          checklistId ? occurrenceKey(checklistId, dateKey) : '',
+          !isNaN(numericId) ? occurrenceKey(numericId, dateKey) : '',
+          !isNaN(numericFromGroup) ? occurrenceKey(numericFromGroup, dateKey) : '',
+        ].filter(Boolean);
+
+        keys.forEach((key) => {
+          latestStatus.set(key, status);
+          if (status === 'completed' && stamp) completedAt.set(key, stamp);
+          else completedAt.delete(key);
+        });
       }
-      return { ids, latestStatus };
+      return { ids, latestStatus, completedAt };
     } catch {
       return empty;
     }

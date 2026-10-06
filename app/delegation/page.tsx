@@ -7,9 +7,94 @@ import LayoutWrapper from '@/components/LayoutWrapper';
 import { ensureSessionId } from '@/utils/session';
 import { formatDateToLocalTimezone } from '@/utils/timezone';
 import { parseDateString, formatDateToString } from '@/lib/dateUtils';
+import { toDateKey } from '@/lib/checklistOccurrences';
 import { useToast } from '@/components/ToastProvider';
 import { useLoader } from '@/components/LoaderProvider';
 import DateRangePicker from '@/components/DateRangePicker';
+
+const DASH_SHADOW = 'shadow-[0_2px_4px_rgba(15,23,42,0.12),0_8px_16px_-2px_rgba(15,23,42,0.22)]';
+const LIGHT_BG = 'bg-[var(--theme-light)] dark:bg-[var(--theme-primary)]/15';
+const LIGHT_BORDER = 'border border-[var(--theme-primary)]/25';
+const LIGHT_SURFACE = `${LIGHT_BG} ${LIGHT_BORDER} ${DASH_SHADOW}`;
+const TIME_FILTERS = ['Delayed', 'Today', 'Tomorrow'] as const;
+
+function isCompletedAfterDue(item: { status?: string; completed_at?: string; due_date?: string }) {
+  if ((item.status || '').toLowerCase() !== 'completed' || !item.completed_at) return false;
+  const dueKey = toDateKey(item.due_date);
+  const doneKey = toDateKey(item.completed_at);
+  if (!dueKey || !doneKey) return false;
+  return doneKey > dueKey;
+}
+
+function formatShortDueDate(value: any): string {
+  const parsed = parseDateString(value);
+  if (!parsed) return '';
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Kolkata',
+    day: 'numeric',
+    month: 'short',
+    year: '2-digit',
+  }).formatToParts(parsed);
+  const day = parts.find((part) => part.type === 'day')?.value;
+  const month = parts.find((part) => part.type === 'month')?.value;
+  const year = parts.find((part) => part.type === 'year')?.value;
+  if (!day || !month || !year) return '';
+  return `${day} ${month} ${year}`;
+}
+
+function CompactToolbar({
+  currentPage,
+  totalPages,
+  itemsPerPage,
+  activeTimeFilter,
+  timeStats,
+  onTimeFilter,
+  onPage,
+  bulkCount = 0,
+  onBulkComplete,
+}: {
+  currentPage: number;
+  totalPages: number;
+  itemsPerPage: number;
+  activeTimeFilter: string | null;
+  timeStats: Record<string, number>;
+  onTimeFilter: (filter: string) => void;
+  onPage: (page: number) => void;
+  bulkCount?: number;
+  onBulkComplete?: () => void;
+}) {
+  const pages = Math.max(1, totalPages || 1);
+  const pageBtn = 'px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border border-[var(--theme-primary)]/25 bg-[var(--theme-light)] text-slate-600 hover:bg-[var(--theme-primary)]/20 disabled:opacity-30 disabled:pointer-events-none';
+  return (
+    <div className="flex flex-wrap items-center gap-2 px-3 py-2">
+      {TIME_FILTERS.map((label) => (
+        <button
+          key={label}
+          onClick={() => onTimeFilter(label)}
+          className={`px-3 py-1.5 rounded-full text-xs font-black uppercase tracking-widest ${DASH_SHADOW} ${activeTimeFilter === label ? 'bg-[var(--theme-primary)] text-gray-900' : `${LIGHT_BG} ${LIGHT_BORDER} text-slate-600 hover:bg-[var(--theme-primary)]/20`}`}
+        >
+          {label} <span className="ml-1">{timeStats[label] || 0}</span>
+        </button>
+      ))}
+      {bulkCount > 0 && (
+        <button
+          onClick={onBulkComplete}
+          className="px-3 py-1.5 rounded-full text-xs font-black uppercase tracking-widest bg-emerald-500 text-white shadow-sm"
+        >
+          Complete ({bulkCount})
+        </button>
+      )}
+      <div className="ml-auto flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-slate-500">
+        <span className="mr-1">Page {currentPage} of {pages}</span>
+        <button onClick={() => onPage(1)} disabled={currentPage <= 1} className={pageBtn}>First</button>
+        <button onClick={() => onPage(Math.max(1, currentPage - 1))} disabled={currentPage <= 1} className={pageBtn}>Prev</button>
+        <button onClick={() => onPage(Math.min(pages, currentPage + 1))} disabled={currentPage >= pages} className={pageBtn}>Next</button>
+        <button onClick={() => onPage(pages)} disabled={currentPage >= pages} className={pageBtn}>Last</button>
+        <span className="pl-2">Show {itemsPerPage}</span>
+      </div>
+    </div>
+  );
+}
 
 interface Delegation {
   id: number;
@@ -27,6 +112,7 @@ interface Delegation {
   evidence_urls?: string[];
   created_at: string;
   updated_at: string;
+  completed_at?: string;
   remarks?: Remark[];
   revision_history?: RevisionHistory[];
 }
@@ -126,7 +212,8 @@ function DelegationContent() {
     dueDateFrom: '',
     dueDateTo: '',
   });
-  const [showOpenTasks, setShowOpenTasks] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [activeTile, setActiveTile] = useState<string | null>(null);
   const [filterSearches, setFilterSearches] = useState({
     task: '',
     assignee: '',
@@ -192,7 +279,7 @@ function DelegationContent() {
   const [newDepartmentName, setNewDepartmentName] = useState('');
 
   // View mode state
-  const [viewMode, setViewMode] = useState<'list' | 'calendar' | 'tile'>('list');
+  const [viewMode, setViewMode] = useState<'list' | 'tile'>('list');
 
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -349,7 +436,6 @@ function DelegationContent() {
     });
   };
 
-  const [calendarDate, setCalendarDate] = useState(new Date());
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
@@ -986,7 +1072,13 @@ function DelegationContent() {
       // Update local state
       setDelegations(prev => prev.map(d =>
         d.id === selectedDelegation.id
-          ? { ...d, status: taskStatus, due_date: updatedDate, evidence_urls: uploadedEvidenceUrls.length > 0 ? uploadedEvidenceUrls : d.evidence_urls }
+          ? {
+              ...d,
+              status: taskStatus,
+              due_date: updatedDate,
+              completed_at: taskStatus.toLowerCase() === 'completed' ? new Date().toISOString() : '',
+              evidence_urls: uploadedEvidenceUrls.length > 0 ? uploadedEvidenceUrls : d.evidence_urls,
+            }
           : d
       ));
 
@@ -1162,40 +1254,17 @@ function DelegationContent() {
     }
   };
 
+  const delegationTile = (delegation: { status?: string; due_date?: string }) => {
+    const status = (delegation.status || '').toLowerCase();
+    if (status === 'approval_waiting' || status === 'completed' || status === 'need_revision' || status === 'hold') {
+      return status;
+    }
+    return calculateStatus(delegation.due_date || '') === 'planned' ? 'planned' : 'overdue';
+  };
+
   const priorityRank: Record<string, number> = { high: 3, medium: 2, low: 1 };
 
   const compareText = (a?: string, b?: string) => (a || '').localeCompare(b || '', undefined, { sensitivity: 'base' });
-
-  // Calculate open tasks count
-  const openTasksCount = useMemo(() => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    return delegations.filter(delegation => {
-      // Parse the date using the improved helper
-      let dueDateDay = null;
-      if (delegation.due_date) {
-        dueDateDay = parseDateString(delegation.due_date);
-        if (dueDateDay) {
-          dueDateDay = new Date(dueDateDay.getFullYear(), dueDateDay.getMonth(), dueDateDay.getDate());
-        }
-      }
-
-      const status = delegation.status?.toLowerCase() || '';
-
-      // Must have a due date that is today or in the past
-      if (!dueDateDay || dueDateDay > today) {
-        return false;
-      }
-
-      // Must not be completed or hold
-      if (status === 'completed' || status === 'hold') {
-        return false;
-      }
-
-      return true;
-    }).length;
-  }, [delegations]);
 
   // Apply filters
   const filteredDelegations = useMemo(() => {
@@ -1203,34 +1272,6 @@ function DelegationContent() {
       // Priority 1: Deep Link Filter
       if (targetTagId) {
         return delegation.id.toString() === targetTagId;
-      }
-
-      // Default Filters
-      // Open Tasks filter: due today or overdue, and status NOT completed or hold
-      if (showOpenTasks) {
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-
-        // Parse the date using improved helper
-        let dueDateDay = null;
-        if (delegation.due_date) {
-          dueDateDay = parseDateString(delegation.due_date);
-          if (dueDateDay) {
-            dueDateDay = new Date(dueDateDay.getFullYear(), dueDateDay.getMonth(), dueDateDay.getDate());
-          }
-        }
-
-        const status = delegation.status?.toLowerCase() || '';
-
-        // Must have a due date that is today or in the past
-        if (!dueDateDay || dueDateDay > today) {
-          return false;
-        }
-
-        // Must not be completed or hold
-        if (status === 'completed' || status === 'hold') {
-          return false;
-        }
       }
 
       // Task filter
@@ -1329,22 +1370,19 @@ function DelegationContent() {
           case 'Delayed': if (pTime >= now.getTime()) return false; break;
           case 'Today': if (diffDays !== 0) return false; break;
           case 'Tomorrow': if (diffDays !== 1) return false; break;
-          case 'Next 3': if (!(diffDays >= 0 && diffDays <= 3)) return false; break;
-          case 'Next 7': if (!(diffDays >= 0 && diffDays <= 7)) return false; break;
-          case 'Next 15': if (!(diffDays >= 0 && diffDays <= 15)) return false; break;
         }
       }
 
       return true;
     });
-  }, [delegations, filters, showOpenTasks, targetTagId, activeTimeFilter]);
+  }, [delegations, filters, targetTagId, activeTimeFilter]);
 
   const timeStats = useMemo(() => {
     const now = new Date();
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
     const oneDayMs = 24 * 60 * 60 * 1000;
 
-    const stats = { 'Delayed': 0, 'Today': 0, 'Tomorrow': 0, 'Next 3': 0, 'Next 7': 0, 'Next 15': 0 };
+    const stats = { 'Delayed': 0, 'Today': 0, 'Tomorrow': 0 };
 
     delegations.forEach(d => {
       if (d.status?.toLowerCase() === 'completed') return;
@@ -1359,9 +1397,6 @@ function DelegationContent() {
       if (pTime < now.getTime()) stats['Delayed']++;
       if (diffDays === 0) stats['Today']++;
       if (diffDays === 1) stats['Tomorrow']++;
-      if (diffDays >= 0 && diffDays <= 3) stats['Next 3']++;
-      if (diffDays >= 0 && diffDays <= 7) stats['Next 7']++;
-      if (diffDays >= 0 && diffDays <= 15) stats['Next 15']++;
     });
 
     return stats;
@@ -1403,8 +1438,22 @@ function DelegationContent() {
     return arr;
   }, [filteredDelegations, sortDirection, sortField]);
 
-  const pageSize = 10;
-  const totalPages = Math.max(1, Math.ceil(sortedDelegations.length / pageSize));
+  const tileCounts = useMemo(() => {
+    const counts = { approval_waiting: 0, completed: 0, need_revision: 0, hold: 0, overdue: 0, planned: 0 };
+    sortedDelegations.forEach((delegation) => {
+      const tile = delegationTile(delegation) as keyof typeof counts;
+      counts[tile] += 1;
+    });
+    return counts;
+  }, [sortedDelegations]);
+
+  const listedDelegations = useMemo(() => {
+    if (!activeTile) return sortedDelegations;
+    return sortedDelegations.filter((delegation) => delegationTile(delegation) === activeTile);
+  }, [sortedDelegations, activeTile]);
+
+  const pageSize = 15;
+  const totalPages = Math.max(1, Math.ceil(listedDelegations.length / pageSize));
 
   useEffect(() => {
     if (currentPage > totalPages) {
@@ -1414,11 +1463,82 @@ function DelegationContent() {
 
   const paginatedDelegations = useMemo(() => {
     const start = (currentPage - 1) * pageSize;
-    return sortedDelegations.slice(start, start + pageSize);
-  }, [sortedDelegations, currentPage]);
+    return listedDelegations.slice(start, start + pageSize);
+  }, [listedDelegations, currentPage]);
 
-  const startItem = sortedDelegations.length === 0 ? 0 : (currentPage - 1) * pageSize + 1;
-  const endItem = Math.min(currentPage * pageSize, sortedDelegations.length);
+  const selectedForBulk = useMemo(
+    () => listedDelegations.filter((delegation) => selectedIds.has(delegation.id) && (delegation.status || '').toLowerCase() !== 'completed'),
+    [listedDelegations, selectedIds]
+  );
+
+  const toggleTaskSelect = (id: number) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const togglePageSelect = () => {
+    const pageItems = paginatedDelegations.filter((delegation) => (delegation.status || '').toLowerCase() !== 'completed');
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      const allSelected = pageItems.length > 0 && pageItems.every((delegation) => next.has(delegation.id));
+      pageItems.forEach((delegation) => {
+        if (allSelected) next.delete(delegation.id);
+        else next.add(delegation.id);
+      });
+      return next;
+    });
+  };
+
+  const handleBulkComplete = async () => {
+    if (!user || selectedForBulk.length === 0) return;
+    try {
+      loader.showLoader();
+      const results = await Promise.all(selectedForBulk.map(async (item) => {
+        const response = await fetch('/api/delegations/update-status', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            delegationId: item.id,
+            status: 'completed',
+            userId: user.id,
+            username: user.username,
+          }),
+        });
+        return { item, ok: response.ok };
+      }));
+      const done = results.filter((result) => result.ok).map((result) => result.item);
+      if (done.length === 0) {
+        loader.hideLoader();
+        toast.error('Failed to complete selected tasks');
+        return;
+      }
+      const doneIds = new Set(done.map((item) => item.id));
+      const completedAt = new Date().toISOString();
+      setDelegations((prev) => prev.map((delegation) =>
+        doneIds.has(delegation.id) ? { ...delegation, status: 'completed', completed_at: completedAt } : delegation
+      ));
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        doneIds.forEach((id) => next.delete(id));
+        return next;
+      });
+      loader.hideLoader();
+      toast.success(`Completed ${done.length} task${done.length === 1 ? '' : 's'}`);
+    } catch (error) {
+      console.error('Error completing tasks:', error);
+      loader.hideLoader();
+      toast.error('Error completing tasks');
+    }
+  };
+
+  const toggleTile = (tile: string) => {
+    setActiveTile((prev) => (prev === tile ? null : tile));
+    setCurrentPage(1);
+  };
 
   const handleSort = (field: typeof sortField) => {
     if (sortField === field) {
@@ -1580,16 +1700,16 @@ function DelegationContent() {
 
   return (
     <LayoutWrapper>
-      <div className="p-4 space-y-4">
+      <div className="px-5 py-3 space-y-3">
         {/* Header */}
         <motion.div
-          className="flex flex-col lg:flex-row lg:justify-between lg:items-center gap-4"
+          className="flex flex-wrap items-center gap-3"
           initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
         >
-          <div>
-            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white">Delegations</h1>
-            <p className="text-sm sm:text-base text-gray-600 dark:text-gray-400 mt-1">Manage tasks and delegations</p>
+          <div className="mr-auto">
+            <h1 className="text-[26px] leading-none font-black text-slate-800 dark:text-white tracking-tight">Delegations</h1>
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.18em] mt-1">Manage tasks and delegations</p>
           </div>
 
           {targetTagId && (
@@ -1612,131 +1732,64 @@ function DelegationContent() {
             </motion.div>
           )}
 
-          <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-            {/* View Mode Toggle Buttons */}
-            <div className="flex items-center gap-1 sm:gap-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg p-1">
-              <button
-                onClick={() => setViewMode('list')}
-                className={`flex items-center gap-1 sm:gap-2 px-2 sm:px-3 py-1.5 rounded transition text-sm ${viewMode === 'list'
-                  ? 'bg-[var(--theme-primary)] text-gray-900 font-semibold'
-                  : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
-                  }`}
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" />
-                </svg>
-                <span className="hidden sm:inline">List</span>
-              </button>
-              <button
-                onClick={() => setViewMode('tile')}
-                className={`flex items-center gap-1 sm:gap-2 px-2 sm:px-3 py-1.5 rounded transition text-sm ${viewMode === 'tile'
-                  ? 'bg-[var(--theme-primary)] text-gray-900 font-semibold'
-                  : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
-                  }`}
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM14 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM4 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zM14 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
-                </svg>
-                <span className="hidden sm:inline">Tiles</span>
-              </button>
-              <button
-                onClick={() => setViewMode('calendar')}
-                className={`flex items-center gap-1 sm:gap-2 px-2 sm:px-3 py-1.5 rounded transition text-sm ${viewMode === 'calendar'
-                  ? 'bg-[var(--theme-primary)] text-gray-900 font-semibold'
-                  : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
-                  }`}
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                </svg>
-                <span className="hidden sm:inline">Calendar</span>
-              </button>
-            </div>
-
-            {/* Filters Button with Count Badge */}
-            <div className="relative">
-              <button
-                ref={filterBtnRef}
-                onClick={handleFilterClick}
-                className="flex items-center gap-1 sm:gap-2 px-3 sm:px-4 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition shadow-sm text-sm"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
-                </svg>
-                <span className="hidden sm:inline">Filters</span>
-              </button>
-              {activeFilterCount > 0 && (
-                <span className="absolute -top-2 -right-2 bg-[var(--theme-primary)] text-gray-900 text-xs font-bold rounded-full h-5 w-5 flex items-center justify-center">
-                  {activeFilterCount}
-                </span>
-              )}
-            </div>
-
-            <motion.button
-              onClick={() => setShowOpenTasks(!showOpenTasks)}
-              className={`flex items-center gap-1 sm:gap-2 px-3 sm:px-4 py-2 border rounded-lg transition shadow-sm text-sm ${showOpenTasks
-                ? 'bg-[var(--theme-primary)] border-[var(--theme-secondary)] text-gray-900 font-semibold'
-                : 'bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700'
-                }`}
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
+          <div className={`flex items-center rounded-full overflow-hidden ${LIGHT_SURFACE}`}>
+            <button
+              onClick={() => { setViewMode('list'); setCurrentPage(1); }}
+              className={`px-4 py-2 text-xs font-black uppercase tracking-widest ${viewMode === 'list' ? 'bg-[var(--theme-primary)] text-gray-900' : 'text-slate-500'}`}
             >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
-              </svg>
-              <span className="hidden sm:inline">Open Tasks</span>
-            </motion.button>
-            {openTasksCount > 0 && (
-              <span className="absolute -top-2 -right-2 bg-red-500 text-white text-xs font-bold rounded-full h-5 w-5 flex items-center justify-center">
-                {openTasksCount}
-              </span>
-            )}
-
-            <motion.button
-              onClick={handleExportCSV}
-              className="flex items-center gap-1 sm:gap-2 px-3 sm:px-4 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition shadow-sm text-sm"
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
+              List
+            </button>
+            <button
+              onClick={() => { setViewMode('tile'); setCurrentPage(1); }}
+              className={`px-4 py-2 text-xs font-black uppercase tracking-widest border-l border-[var(--theme-primary)]/25 ${viewMode === 'tile' ? 'bg-[var(--theme-primary)] text-gray-900' : 'text-slate-500'}`}
             >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-              </svg>
-              <span className="hidden sm:inline">Export CSV</span>
-            </motion.button>
-
-            {/* Hide Add Button - Hidden for Doers and Users */}
-            {user?.role_name?.toLowerCase() !== 'doer' && user?.role_name?.toLowerCase() !== 'user' && (
-              <motion.button
-                onClick={() => {
-                  setEditingId(null);
-                  setFormData({
-                    assigneeName: user?.role_name?.toLowerCase() === 'tl' ? user.username : '',
-                    doerName: '',
-                    department: '',
-                    priority: 'medium',
-                    taskDescription: '',
-                    dueDateTime: '',
-                    voiceNote: null,
-                    referenceDocs: [],
-                    evidenceRequired: false,
-                  });
-                  // If TL, lock assignee to themselves
-                  if (user?.role_name?.toLowerCase() === 'tl') {
-                    setAssigneeSearch(user.username);
-                  } else {
-                    setAssigneeSearch('');
-                  }
-                  setShowModal(true);
-                }}
-                className="bg-[var(--theme-primary)] hover:bg-[var(--theme-secondary)] text-gray-900 font-semibold py-2 sm:py-3 px-4 sm:px-6 rounded-xl shadow-md transition text-sm sm:text-base"
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
-              >
-                <span className="hidden sm:inline">+ Add New Delegation</span>
-                <span className="sm:hidden">+ New</span>
-              </motion.button>
-            )}
+              Tiles
+            </button>
           </div>
+
+          <div className={`flex items-center rounded-full overflow-hidden ${LIGHT_SURFACE}`}>
+            <button
+              ref={filterBtnRef}
+              onClick={handleFilterClick}
+              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-black uppercase tracking-widest text-slate-600 hover:bg-[var(--theme-primary)]/20"
+            >
+              Filters{activeFilterCount > 0 ? ` (${activeFilterCount})` : ''}
+            </button>
+            <button
+              onClick={handleExportCSV}
+              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-black uppercase tracking-widest text-slate-600 border-l border-[var(--theme-primary)]/25 hover:bg-[var(--theme-primary)]/20"
+            >
+              Export
+            </button>
+          </div>
+
+          {user?.role_name?.toLowerCase() !== 'doer' && user?.role_name?.toLowerCase() !== 'user' && (
+            <button
+              onClick={() => {
+                setEditingId(null);
+                setFormData({
+                  assigneeName: user?.role_name?.toLowerCase() === 'tl' ? user.username : '',
+                  doerName: '',
+                  department: '',
+                  priority: 'medium',
+                  taskDescription: '',
+                  dueDateTime: '',
+                  voiceNote: null,
+                  referenceDocs: [],
+                  evidenceRequired: false,
+                });
+                if (user?.role_name?.toLowerCase() === 'tl') {
+                  setAssigneeSearch(user.username);
+                } else {
+                  setAssigneeSearch('');
+                }
+                setShowModal(true);
+              }}
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full bg-[var(--theme-primary)] text-gray-900 text-xs font-black uppercase tracking-widest shadow-sm"
+            >
+              + Add
+            </button>
+          )}
         </motion.div>
 
         {/* Status Summary Tiles */}
@@ -1746,182 +1799,132 @@ function DelegationContent() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.1 }}
         >
-          <div className="flex gap-3 min-w-max pb-2">
-            {/* Need Clarity */}
-            <div className="bg-gradient-to-br from-yellow-50 to-yellow-100 dark:from-yellow-900/20 dark:to-yellow-800/20 rounded-xl p-3 border border-yellow-200 dark:border-yellow-800 hover:shadow-md transition min-w-[180px]">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-lg bg-yellow-500 flex items-center justify-center flex-shrink-0">
-                  <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs font-semibold text-yellow-600 dark:text-yellow-400 uppercase tracking-wide">Need Clarity</p>
-                  <p className="text-2xl font-bold text-yellow-700 dark:text-yellow-300">
-                    {sortedDelegations.filter(d => d.status === 'need_clarity').length}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* Approval Waiting */}
-            <div className="bg-gradient-to-br from-blue-50 to-blue-100 dark:from-blue-900/20 dark:to-blue-800/20 rounded-xl p-3 border border-blue-200 dark:border-blue-800 hover:shadow-md transition min-w-[180px]">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-lg bg-blue-500 flex items-center justify-center flex-shrink-0">
-                  <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs font-semibold text-blue-600 dark:text-blue-400 uppercase tracking-wide">Approval Waiting</p>
-                  <p className="text-2xl font-bold text-blue-700 dark:text-blue-300">
-                    {sortedDelegations.filter(d => d.status === 'approval_waiting').length}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* Completed */}
-            <div className="bg-gradient-to-br from-green-50 to-green-100 dark:from-green-900/20 dark:to-green-800/20 rounded-xl p-3 border border-green-200 dark:border-green-800 hover:shadow-md transition min-w-[180px]">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-lg bg-green-500 flex items-center justify-center flex-shrink-0">
-                  <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs font-semibold text-green-600 dark:text-green-400 uppercase tracking-wide">Completed</p>
-                  <p className="text-2xl font-bold text-green-700 dark:text-green-300">
-                    {sortedDelegations.filter(d => d.status === 'completed').length}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* Need Revision */}
-            <div className="bg-gradient-to-br from-orange-50 to-orange-100 dark:from-orange-900/20 dark:to-orange-800/20 rounded-xl p-3 border border-orange-200 dark:border-orange-800 hover:shadow-md transition min-w-[180px]">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-lg bg-orange-500 flex items-center justify-center flex-shrink-0">
-                  <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                  </svg>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs font-semibold text-orange-600 dark:text-orange-400 uppercase tracking-wide">Need Revision</p>
-                  <p className="text-2xl font-bold text-orange-700 dark:text-orange-300">
-                    {sortedDelegations.filter(d => d.status === 'need_revision').length}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* Hold */}
-            <div className="bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-700 rounded-xl p-3 border border-gray-200 dark:border-gray-600 hover:shadow-md transition min-w-[180px]">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-lg bg-gray-500 flex items-center justify-center flex-shrink-0">
-                  <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wide">Hold</p>
-                  <p className="text-2xl font-bold text-gray-700 dark:text-gray-300">
-                    {sortedDelegations.filter(d => d.status === 'hold').length}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* Overdue (Based on due date) */}
-            <div className="bg-gradient-to-br from-red-50 to-red-100 dark:from-red-900/20 dark:to-red-800/20 rounded-xl p-3 border border-red-200 dark:border-red-800 hover:shadow-md transition min-w-[180px]">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-lg bg-red-500 flex items-center justify-center flex-shrink-0">
-                  <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs font-semibold text-red-600 dark:text-red-400 uppercase tracking-wide">Overdue</p>
-                  <p className="text-2xl font-bold text-red-700 dark:text-red-300">
-                    {sortedDelegations.filter(d => calculateStatus(d.due_date) === 'overdue').length}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* Pending (Today's due date) */}
-            <div className="bg-gradient-to-br from-indigo-50 to-indigo-100 dark:from-indigo-900/20 dark:to-indigo-800/20 rounded-xl p-3 border border-indigo-200 dark:border-indigo-800 hover:shadow-md transition min-w-[180px]">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-lg bg-indigo-500 flex items-center justify-center flex-shrink-0">
-                  <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                  </svg>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs font-semibold text-indigo-600 dark:text-indigo-400 uppercase tracking-wide">Due Today</p>
-                  <p className="text-2xl font-bold text-indigo-700 dark:text-indigo-300">
-                    {sortedDelegations.filter(d => calculateStatus(d.due_date) === 'pending').length}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* Planned (Future) */}
-            <div className="bg-gradient-to-br from-purple-50 to-purple-100 dark:from-purple-900/20 dark:to-purple-800/20 rounded-xl p-3 border border-purple-200 dark:border-purple-800 hover:shadow-md transition min-w-[180px]">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-lg bg-purple-500 flex items-center justify-center flex-shrink-0">
-                  <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                  </svg>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs font-semibold text-purple-600 dark:text-purple-400 uppercase tracking-wide">Planned</p>
-                  <p className="text-2xl font-bold text-purple-700 dark:text-purple-300">
-                    {sortedDelegations.filter(d => calculateStatus(d.due_date) === 'planned').length}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* Without Plan */}
-            <div className="bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900/20 dark:to-slate-800/20 rounded-xl p-3 border border-slate-200 dark:border-slate-800 hover:shadow-md transition min-w-[180px]">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-lg bg-slate-400 flex items-center justify-center flex-shrink-0">
-                  <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wide">Without Plan</p>
-                  <p className="text-2xl font-bold text-slate-700 dark:text-slate-300">
-                    {sortedDelegations.filter(d => calculateStatus(d.due_date) === 'without_plan').length}
-                  </p>
-                </div>
-              </div>
-            </div>
-
+          <div className="flex gap-2 min-w-max pb-1">
             {/* Total */}
-            <div className="bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-800 dark:to-slate-700 rounded-xl p-3 border border-slate-200 dark:border-slate-600 hover:shadow-md transition min-w-[180px]">
+            <div onClick={() => { setActiveTile(null); setCurrentPage(1); }} className={`bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-800 dark:to-slate-700 rounded-2xl px-2.5 py-1.5 border border-slate-200 dark:border-slate-600 min-w-[128px] cursor-pointer ${!activeTile ? 'ring-2 ring-[var(--theme-primary)]' : ''}`}>
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-lg bg-slate-600 flex items-center justify-center flex-shrink-0">
+                <div className="w-7 h-7 rounded-lg bg-slate-600 flex items-center justify-center flex-shrink-0">
                   <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
                   </svg>
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wide">Total Tasks</p>
-                  <p className="text-2xl font-bold text-slate-700 dark:text-slate-300">
+                  <p className="text-lg font-black leading-none text-slate-700 dark:text-slate-300">
                     {sortedDelegations.length}
                   </p>
                 </div>
               </div>
             </div>
+
+            {/* Approval Waiting */}
+            <div onClick={() => toggleTile('approval_waiting')} className={`bg-gradient-to-br from-blue-50 to-blue-100 dark:from-blue-900/20 dark:to-blue-800/20 rounded-2xl px-2.5 py-1.5 border border-blue-200 dark:border-blue-800 min-w-[128px] cursor-pointer ${activeTile === 'approval_waiting' ? 'ring-2 ring-[var(--theme-primary)]' : ''}`}>
+              <div className="flex items-center gap-3">
+                <div className="w-7 h-7 rounded-lg bg-blue-500 flex items-center justify-center flex-shrink-0">
+                  <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-semibold text-blue-600 dark:text-blue-400 uppercase tracking-wide">Approval Waiting</p>
+                  <p className="text-lg font-black leading-none text-blue-700 dark:text-blue-300">
+                    {tileCounts.approval_waiting}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Completed */}
+            <div onClick={() => toggleTile('completed')} className={`bg-gradient-to-br from-green-50 to-green-100 dark:from-green-900/20 dark:to-green-800/20 rounded-2xl px-2.5 py-1.5 border border-green-200 dark:border-green-800 min-w-[128px] cursor-pointer ${activeTile === 'completed' ? 'ring-2 ring-[var(--theme-primary)]' : ''}`}>
+              <div className="flex items-center gap-3">
+                <div className="w-7 h-7 rounded-lg bg-green-500 flex items-center justify-center flex-shrink-0">
+                  <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-semibold text-green-600 dark:text-green-400 uppercase tracking-wide">Completed</p>
+                  <p className="text-lg font-black leading-none text-green-700 dark:text-green-300">
+                    {tileCounts.completed}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Need Revision */}
+            <div onClick={() => toggleTile('need_revision')} className={`bg-gradient-to-br from-orange-50 to-orange-100 dark:from-orange-900/20 dark:to-orange-800/20 rounded-2xl px-2.5 py-1.5 border border-orange-200 dark:border-orange-800 min-w-[128px] cursor-pointer ${activeTile === 'need_revision' ? 'ring-2 ring-[var(--theme-primary)]' : ''}`}>
+              <div className="flex items-center gap-3">
+                <div className="w-7 h-7 rounded-lg bg-orange-500 flex items-center justify-center flex-shrink-0">
+                  <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-semibold text-orange-600 dark:text-orange-400 uppercase tracking-wide">Need Revision</p>
+                  <p className="text-lg font-black leading-none text-orange-700 dark:text-orange-300">
+                    {tileCounts.need_revision}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Hold */}
+            <div onClick={() => toggleTile('hold')} className={`bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-700 rounded-2xl px-2.5 py-1.5 border border-gray-200 dark:border-gray-600 min-w-[128px] cursor-pointer ${activeTile === 'hold' ? 'ring-2 ring-[var(--theme-primary)]' : ''}`}>
+              <div className="flex items-center gap-3">
+                <div className="w-7 h-7 rounded-lg bg-gray-500 flex items-center justify-center flex-shrink-0">
+                  <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wide">Hold</p>
+                  <p className="text-lg font-black leading-none text-gray-700 dark:text-gray-300">
+                    {tileCounts.hold}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Overdue (Based on due date) */}
+            <div onClick={() => toggleTile('overdue')} className={`bg-gradient-to-br from-red-50 to-red-100 dark:from-red-900/20 dark:to-red-800/20 rounded-2xl px-2.5 py-1.5 border border-red-200 dark:border-red-800 min-w-[128px] cursor-pointer ${activeTile === 'overdue' ? 'ring-2 ring-[var(--theme-primary)]' : ''}`}>
+              <div className="flex items-center gap-3">
+                <div className="w-7 h-7 rounded-lg bg-red-500 flex items-center justify-center flex-shrink-0">
+                  <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-semibold text-red-600 dark:text-red-400 uppercase tracking-wide">Overdue</p>
+                  <p className="text-lg font-black leading-none text-red-700 dark:text-red-300">
+                    {tileCounts.overdue}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Planned (Future) */}
+            <div onClick={() => toggleTile('planned')} className={`bg-gradient-to-br from-purple-50 to-purple-100 dark:from-purple-900/20 dark:to-purple-800/20 rounded-2xl px-2.5 py-1.5 border border-purple-200 dark:border-purple-800 min-w-[128px] cursor-pointer ${activeTile === 'planned' ? 'ring-2 ring-[var(--theme-primary)]' : ''}`}>
+              <div className="flex items-center gap-3">
+                <div className="w-7 h-7 rounded-lg bg-purple-500 flex items-center justify-center flex-shrink-0">
+                  <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                  </svg>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-semibold text-purple-600 dark:text-purple-400 uppercase tracking-wide">Planned</p>
+                  <p className="text-lg font-black leading-none text-purple-700 dark:text-purple-300">
+                    {tileCounts.planned}
+                  </p>
+                </div>
+              </div>
+            </div>
+
           </div>
         </motion.div>
 
         {/* Delegations List */}
         <motion.div
-          className="bg-white dark:bg-gray-800 rounded-2xl shadow-lg overflow-hidden"
+          className={`${LIGHT_SURFACE} rounded-3xl overflow-hidden`}
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
         >
@@ -1943,185 +1946,109 @@ function DelegationContent() {
               {/* List View */}
               {viewMode === 'list' && (
                 <div className="overflow-x-auto">
-                  {/* Pagination */}
-                  <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-6 py-4 border-b border-gray-200 dark:border-gray-700 overflow-x-auto no-scrollbar">
-                    <div className="flex items-center gap-4">
-                      <p className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest whitespace-nowrap">
-                        Showing <span className="text-gray-900 dark:text-white">{startItem}</span>-<span className="text-gray-900 dark:text-white">{endItem}</span> of <span className="text-gray-900 dark:text-white">{sortedDelegations.length}</span>
-                      </p>
-                      <div className="h-4 w-px bg-gray-200 dark:bg-gray-700 hidden sm:block" />
-                      <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
-                        {(['Delayed', 'Today', 'Tomorrow', 'Next 3', 'Next 7', 'Next 15'] as const).map((filter) => (
+                  <CompactToolbar
+                    currentPage={currentPage}
+                    totalPages={totalPages}
+                    itemsPerPage={pageSize}
+                    activeTimeFilter={activeTimeFilter}
+                    timeStats={timeStats}
+                    onTimeFilter={(filter) => { setActiveTimeFilter(activeTimeFilter === filter ? null : filter); setCurrentPage(1); }}
+                    onPage={handlePageChange}
+                    bulkCount={selectedForBulk.length}
+                    onBulkComplete={handleBulkComplete}
+                  />
+                  <table className="w-full">
+                    <thead className="whitespace-nowrap">
+                      <tr className="bg-[var(--theme-primary)] border-b border-gray-200 dark:border-gray-600">
+                        <th className="px-2.5 py-2 text-left text-xs font-black uppercase tracking-widest text-gray-900 whitespace-nowrap">
                           <button
-                            key={filter}
-                            onClick={() => { setActiveTimeFilter(activeTimeFilter === filter ? null : filter); setCurrentPage(1); }}
-                            className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all whitespace-nowrap relative border ${activeTimeFilter === filter
-                              ? 'bg-[var(--theme-primary)] text-white border-[var(--theme-primary)] shadow-sm'
-                              : 'bg-white dark:bg-gray-800 text-gray-500 border-gray-200 dark:border-gray-700 hover:border-[var(--theme-primary)] hover:text-[var(--theme-primary)]'
-                              }`}
+                            type="button"
+                            onClick={togglePageSelect}
+                            title="Select page"
+                            className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${paginatedDelegations.filter((item) => (item.status || '').toLowerCase() !== 'completed').length > 0 && paginatedDelegations.filter((item) => (item.status || '').toLowerCase() !== 'completed').every((item) => selectedIds.has(item.id)) ? 'bg-emerald-500 border-emerald-500 text-white' : 'bg-white border-slate-400'}`}
                           >
-                            {filter}
-                            {timeStats[filter] > 0 && (
-                              <sup className={`ml-1 text-[8px] ${activeTimeFilter === filter ? 'text-white/80' : (filter === 'Delayed' ? 'text-red-500' : 'text-[var(--theme-primary)]')}`}>
-                                {timeStats[filter]}
-                              </sup>
+                            {paginatedDelegations.filter((item) => (item.status || '').toLowerCase() !== 'completed').length > 0 && paginatedDelegations.filter((item) => (item.status || '').toLowerCase() !== 'completed').every((item) => selectedIds.has(item.id)) && (
+                              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>
                             )}
                           </button>
+                        </th>
+                        <th className="px-2.5 py-2 text-left text-xs font-black uppercase tracking-widest text-gray-900 whitespace-nowrap">Actions</th>
+                        {([
+                          ['id', 'Task ID'],
+                          ['delegation_name', 'Task'],
+                          ['assigned_to', 'Assignee'],
+                          ['doer_name', 'Doer'],
+                          ['priority', 'Priority'],
+                          ['due_date', 'Due Date'],
+                          ['completed_at', 'Completed'],
+                          ['status', 'Status'],
+                        ] as const).map(([field, label]) => (
+                          field === 'completed_at' ? (
+                            <th key={field} className="px-2.5 py-2 text-left text-xs font-black uppercase tracking-widest text-gray-900 whitespace-nowrap">{label}</th>
+                          ) : (
+                          <th key={field} className={`px-2.5 py-2 text-left text-xs font-black uppercase tracking-widest text-gray-900 whitespace-nowrap ${field === 'delegation_name' ? 'w-full min-w-[220px]' : ''}`}>
+                            <button onClick={() => handleSort(field)} className="flex items-center gap-1">
+                              <span>{label}</span>
+                              <SortIcon field={field} />
+                            </button>
+                          </th>
+                          )
                         ))}
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => handlePageChange(currentPage - 1)}
-                        disabled={currentPage === 1}
-                        className="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 text-sm font-semibold text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        Previous
-                      </button>
-                      <span className="text-sm font-semibold text-gray-900 dark:text-white">
-                        Page {currentPage} of {totalPages}
-                      </span>
-                      <button
-                        onClick={() => handlePageChange(currentPage + 1)}
-                        disabled={currentPage === totalPages}
-                        className="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 text-sm font-semibold text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        Next
-                      </button>
-                    </div>
-                  </div>
-                  <table className="w-full">
-                    <thead className="bg-[var(--theme-lighter)] dark:bg-gray-700">
-                      <tr>
-                        <th className="px-6 py-4 text-left text-sm font-semibold text-gray-900 dark:text-white">
-                          <button onClick={() => handleSort('id')} className="flex items-center gap-1">
-                            <span>Task ID</span>
-                            <SortIcon field="id" />
-                          </button>
-                        </th>
-
-                        <th className="px-6 py-4 text-left text-sm font-semibold text-gray-900 dark:text-white">
-                          <button onClick={() => handleSort('delegation_name')} className="flex items-center gap-1">
-                            <span>Task</span>
-                            <SortIcon field="delegation_name" />
-                          </button>
-                        </th>
-                        <th className="px-6 py-4 text-left text-sm font-semibold text-gray-900 dark:text-white">
-                          <button onClick={() => handleSort('assigned_to')} className="flex items-center gap-1">
-                            <span>Assignee</span>
-                            <SortIcon field="assigned_to" />
-                          </button>
-                        </th>
-                        <th className="px-6 py-4 text-left text-sm font-semibold text-gray-900 dark:text-white">
-                          <button onClick={() => handleSort('doer_name')} className="flex items-center gap-1">
-                            <span>Doer</span>
-                            <SortIcon field="doer_name" />
-                          </button>
-                        </th>
-
-                        <th className="px-6 py-4 text-left text-sm font-semibold text-gray-900 dark:text-white">
-                          <button onClick={() => handleSort('priority')} className="flex items-center gap-1">
-                            <span>Priority</span>
-                            <SortIcon field="priority" />
-                          </button>
-                        </th>
-                        <th className="px-6 py-4 text-left text-sm font-semibold text-gray-900 dark:text-white">
-                          <button onClick={() => handleSort('due_date')} className="flex items-center gap-1">
-                            <span>Due Date</span>
-                            <SortIcon field="due_date" />
-                          </button>
-                        </th>
-                        <th className="px-6 py-4 text-left text-sm font-semibold text-gray-900 dark:text-white">
-                          <button onClick={() => handleSort('status')} className="flex items-center gap-1">
-                            <span>Status</span>
-                            <SortIcon field="status" />
-                          </button>
-                        </th>
-
-                        <th className="px-6 py-4 text-left text-sm font-semibold text-gray-900 dark:text-white">Actions</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+                    <tbody className="divide-y divide-gray-200 dark:divide-gray-700 whitespace-nowrap">
                       {paginatedDelegations.map((delegation) => {
-                        // Use user-selected status if available, otherwise calculate dynamic status
                         const hasUserStatus = delegation.status && ['need_clarity', 'approval_waiting', 'completed', 'need_revision', 'hold', 're_open'].includes(delegation.status.toLowerCase());
                         const displayStatus = hasUserStatus ? delegation.status : calculateStatus(delegation.due_date);
+                        const person = (name?: string) => name ? (
+                          <div className="flex items-center gap-2">
+                            {getUserImage(name) ? (
+                              <img src={`/api/image-proxy?url=${encodeURIComponent(getUserImage(name)!)}`} alt={name} className="w-5 h-5 rounded-full object-cover border border-[var(--theme-primary)]" />
+                            ) : (
+                              <div className="w-5 h-5 bg-gradient-to-br from-[var(--theme-primary)] to-[var(--theme-secondary)] rounded-full flex items-center justify-center text-[10px] font-bold text-gray-900">
+                                {name[0]?.toUpperCase() || '?'}
+                              </div>
+                            )}
+                            <span className="text-gray-900 dark:text-white">{name}</span>
+                          </div>
+                        ) : <span className="text-gray-500">N/A</span>;
 
+                        const late = isCompletedAfterDue(delegation);
                         return (
                           <motion.tr
                             key={delegation.id}
-                            className="hover:bg-[var(--theme-lighter)]/50 dark:hover:bg-gray-700/50 transition"
+                            className={`transition-colors ${late ? 'bg-red-100 dark:bg-red-900/30' : ''}`}
                             initial={{ opacity: 0 }}
                             animate={{ opacity: 1 }}
+                            whileHover={{ backgroundColor: late ? 'rgba(254, 202, 202, 0.7)' : 'rgba(244, 210, 74, 0.05)' }}
                           >
-                            <td className="px-6 py-4">
-                              <span className="font-mono text-sm font-semibold text-gray-900 dark:text-white">
-                                #{delegation.id}
-                              </span>
+                            <td className="px-2.5 py-1.5 text-sm">
+                              {(() => {
+                                const done = (delegation.status || '').toLowerCase() === 'completed';
+                                const selected = selectedIds.has(delegation.id);
+                                return (
+                                  <button
+                                    type="button"
+                                    disabled={done}
+                                    onClick={() => toggleTaskSelect(delegation.id)}
+                                    title={done ? 'Completed' : selected ? 'Deselect' : 'Select'}
+                                    className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${done || selected ? 'bg-emerald-500 border-emerald-500 text-white' : 'bg-white border-slate-400'} ${done ? 'opacity-60 cursor-default' : ''}`}
+                                  >
+                                    {(done || selected) && (
+                                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>
+                                    )}
+                                  </button>
+                                );
+                              })()}
                             </td>
-
-                            <td className="px-6 py-4">
-                              <p className="font-semibold text-gray-900 dark:text-white">{delegation.delegation_name}</p>
-                            </td>
-                            <td className="px-6 py-4">
-                              <div className="flex items-center gap-2">
-                                {getUserImage(delegation.assigned_to) ? (
-                                  <img src={`/api/image-proxy?url=${encodeURIComponent(getUserImage(delegation.assigned_to)!)}`} alt={delegation.assigned_to} className="w-8 h-8 rounded-full object-cover border-2 border-[var(--theme-primary)]" />
-                                ) : (
-                                  <div className="w-8 h-8 bg-gradient-to-br from-[var(--theme-primary)] to-[var(--theme-secondary)] rounded-full flex items-center justify-center text-sm font-bold text-gray-900 shadow-md">
-                                    {delegation.assigned_to[0]?.toUpperCase() || '?'}
-                                  </div>
-                                )}
-                                <span className="text-gray-900 dark:text-white">{delegation.assigned_to}</span>
-                              </div>
-                            </td>
-                            <td className="px-6 py-4">
-                              {delegation.doer_name ? (
-                                <div className="flex items-center gap-2">
-                                  {getUserImage(delegation.doer_name) ? (
-                                    <img src={`/api/image-proxy?url=${encodeURIComponent(getUserImage(delegation.doer_name)!)}`} alt={delegation.doer_name} className="w-8 h-8 rounded-full object-cover border-2 border-[var(--theme-primary)]" />
-                                  ) : (
-                                    <div className="w-8 h-8 bg-gradient-to-br from-[var(--theme-primary)] to-[var(--theme-secondary)] rounded-full flex items-center justify-center text-sm font-bold text-gray-900 shadow-md">
-                                      {delegation.doer_name[0]?.toUpperCase() || '?'}
-                                    </div>
-                                  )}
-                                  <span className="text-gray-900 dark:text-white">{delegation.doer_name}</span>
-                                </div>
-                              ) : (
-                                <span className="text-gray-900 dark:text-white">N/A</span>
-                              )}
-                            </td>
-
-                            <td className="px-6 py-4">
-                              <span className={`px-3 py-1 rounded-full text-xs font-semibold ${getPriorityColor(delegation.priority)}`}>
-                                {delegation.priority?.toUpperCase()}
-                              </span>
-                            </td>
-                            <td className="px-6 py-4">
-                              <div className="text-sm">
-                                {delegation.due_date ? (
-                                  <p className="text-gray-900 dark:text-white font-medium">
-                                    {formatDateToLocalTimezone(delegation.due_date)}
-                                  </p>
-                                ) : (
-                                  <span className="text-gray-500">No date</span>
-                                )}
-                              </div>
-                            </td>
-                            <td className="px-6 py-4">
-                              <span className={`px-3 py-1 rounded-full text-xs font-bold ${getStatusColor(displayStatus)}`}>
-                                {displayStatus.toUpperCase().replace('_', ' ')}
-                              </span>
-                            </td>
-
-                            <td className="px-6 py-4">
-                              <div className="flex gap-2">
+                            <td className="px-2.5 py-1.5 text-sm">
+                              <div className="flex items-center gap-1">
                                 <button
                                   onClick={() => handleViewDetails(delegation)}
-                                  className="p-2 text-[var(--theme-primary)] hover:text-[var(--theme-secondary)] hover:bg-[var(--theme-lighter)] dark:text-[var(--theme-primary)] dark:hover:text-[var(--theme-secondary)] dark:hover:bg-gray-700 rounded-lg transition"
+                                  className="p-1.5 text-[var(--theme-primary)] hover:bg-[var(--theme-lighter)] dark:hover:bg-gray-700 rounded-lg transition"
                                   title="View Details"
                                 >
-                                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
                                   </svg>
@@ -2130,19 +2057,19 @@ function DelegationContent() {
                                   <>
                                     <button
                                       onClick={() => handleEdit(delegation)}
-                                      className="p-2 text-blue-600 hover:text-blue-800 hover:bg-blue-50 dark:text-blue-400 dark:hover:text-blue-300 dark:hover:bg-blue-900/20 rounded-lg transition"
+                                      className="p-1.5 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition"
                                       title="Edit"
                                     >
-                                      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                                       </svg>
                                     </button>
                                     <button
                                       onClick={() => openDeleteModal(delegation.id)}
-                                      className="p-2 text-red-600 hover:text-red-800 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20 rounded-lg transition"
+                                      className="p-1.5 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition"
                                       title="Delete"
                                     >
-                                      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                                       </svg>
                                     </button>
@@ -2150,185 +2077,40 @@ function DelegationContent() {
                                 )}
                               </div>
                             </td>
+                            <td className="px-2.5 py-1.5 text-sm">
+                              <span className="text-sm font-black text-gray-900 dark:text-white">#{delegation.id}</span>
+                            </td>
+                            <td className="px-2.5 py-1.5 text-sm whitespace-normal">
+                              <p className="text-sm font-bold text-gray-900 dark:text-white leading-snug whitespace-normal break-words">{delegation.delegation_name}</p>
+                            </td>
+                            <td className="px-2.5 py-1.5 text-sm">{person(delegation.assigned_to)}</td>
+                            <td className="px-2.5 py-1.5 text-sm">{person(delegation.doer_name)}</td>
+                            <td className="px-2.5 py-1.5 text-sm">
+                              <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-black uppercase tracking-wide ${getPriorityColor(delegation.priority)}`}>
+                                {delegation.priority}
+                              </span>
+                            </td>
+                            <td className="px-2.5 py-1.5 text-sm whitespace-nowrap">
+                              <p className="text-sm font-bold text-gray-900 dark:text-white">
+                                {delegation.due_date ? formatShortDueDate(delegation.due_date) : 'No date'}
+                              </p>
+                            </td>
+                            <td className="px-2.5 py-1.5 text-sm whitespace-nowrap">
+                              <p className={`text-sm font-bold ${late ? 'text-red-600' : (delegation.status || '').toLowerCase() === 'completed' ? 'text-gray-900 dark:text-white' : 'text-slate-400'}`}>
+                                {(delegation.status || '').toLowerCase() === 'completed' && delegation.completed_at ? formatShortDueDate(delegation.completed_at) : '—'}
+                              </p>
+                            </td>
+                            <td className="px-2.5 py-1.5 text-sm">
+                              <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-black uppercase tracking-wide ${getStatusColor(displayStatus)}`}>
+                                {displayStatus.replace(/_/g, ' ')}
+                              </span>
+                            </td>
                           </motion.tr>
                         )
                       })}
                     </tbody>
                   </table>
 
-                </div>
-              )}
-
-              {/* Calendar View */}
-              {viewMode === 'calendar' && (
-                <div className="p-6">
-                  {/* Calendar Header */}
-                  <div className="flex items-center justify-between mb-6">
-                    <h2 className="text-2xl font-bold text-gray-900 dark:text-white">
-                      {calendarDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
-                    </h2>
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => {
-                          const newDate = new Date(calendarDate);
-                          newDate.setMonth(newDate.getMonth() - 1);
-                          setCalendarDate(newDate);
-                        }}
-                        className="p-2 hover:bg-[var(--theme-lighter)] dark:hover:bg-gray-700 rounded-lg transition"
-                      >
-                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-                        </svg>
-                      </button>
-                      <button
-                        onClick={() => setCalendarDate(new Date())}
-                        className="px-4 py-2 bg-[var(--theme-primary)] hover:bg-[var(--theme-secondary)] text-gray-900 font-semibold rounded-lg transition text-sm"
-                      >
-                        Today
-                      </button>
-                      <button
-                        onClick={() => {
-                          const newDate = new Date(calendarDate);
-                          newDate.setMonth(newDate.getMonth() + 1);
-                          setCalendarDate(newDate);
-                        }}
-                        className="p-2 hover:bg-[var(--theme-lighter)] dark:hover:bg-gray-700 rounded-lg transition"
-                      >
-                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                        </svg>
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Calendar Grid */}
-                  <div className="grid grid-cols-7 gap-2">
-                    {/* Day Headers */}
-                    {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
-                      <div key={day} className="text-center font-semibold text-gray-600 dark:text-gray-400 py-2 text-sm">
-                        {day}
-                      </div>
-                    ))}
-
-                    {/* Calendar Days */}
-                    {(() => {
-                      const { daysInMonth, startingDayOfWeek } = getCalendarDays(
-                        calendarDate.getFullYear(),
-                        calendarDate.getMonth()
-                      );
-                      const days = [];
-
-                      // Empty cells before first day
-                      for (let i = 0; i < startingDayOfWeek; i++) {
-                        days.push(<div key={`empty-${i}`} className="h-44 bg-gray-50 dark:bg-gray-900 rounded-lg" />);
-                      }
-
-                      // Days of the month
-                      for (let day = 1; day <= daysInMonth; day++) {
-                        const date = new Date(calendarDate.getFullYear(), calendarDate.getMonth(), day);
-                        const tasksForDay = getTasksForDate(date);
-                        const isToday =
-                          date.getDate() === new Date().getDate() &&
-                          date.getMonth() === new Date().getMonth() &&
-                          date.getFullYear() === new Date().getFullYear();
-
-                        days.push(
-                          <div
-                            key={day}
-                            className={`h-44 rounded-lg border-2 p-2 overflow-hidden ${isToday
-                              ? 'border-[var(--theme-primary)] bg-[var(--theme-light)] dark:bg-gray-800'
-                              : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800'
-                              }`}
-                          >
-                            <div className="flex items-center justify-between mb-1">
-                              <span className={`text-sm font-semibold ${isToday
-                                ? 'text-[var(--theme-primary)]'
-                                : 'text-gray-900 dark:text-white'
-                                }`}>
-                                {day}
-                              </span>
-                              {tasksForDay.length > 0 && (
-                                <span className="text-xs bg-[var(--theme-primary)] text-gray-900 px-1.5 py-0.5 rounded-full font-bold">
-                                  {tasksForDay.length}
-                                </span>
-                              )}
-                            </div>
-                            <div className="space-y-1 overflow-y-auto max-h-36">
-                              {tasksForDay.map((task: Delegation) => {
-                                const displayStatus = calculateStatus(task.due_date);
-                                return (
-                                  <motion.div
-                                    key={task.id}
-                                    whileHover={{ scale: 1.02 }}
-                                    className="group relative"
-                                  >
-                                    <div
-                                      className={`text-xs p-1.5 rounded cursor-pointer ${getStatusColor(displayStatus)} hover:shadow-md transition`}
-                                      onClick={() => handleViewDetails(task)}
-                                    >
-                                      <div className="font-semibold truncate text-white">
-                                        {task.delegation_name}
-                                      </div>
-                                      <div className="text-[10px] opacity-90 truncate text-white">
-                                        {task.assigned_to}
-                                      </div>
-                                    </div>
-
-                                    {/* Action buttons on hover */}
-                                    <div className="absolute top-0 right-0 hidden group-hover:flex gap-1 bg-white dark:bg-gray-700 rounded shadow-lg p-1 z-10">
-                                      <button
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          handleViewDetails(task);
-                                        }}
-                                        className="p-1 text-[var(--theme-primary)] hover:bg-[var(--theme-lighter)] dark:hover:bg-gray-600 rounded"
-                                        title="View Details"
-                                      >
-                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                                        </svg>
-                                      </button>
-                                      {user?.role_name?.toLowerCase() !== 'user' && (
-                                        <>
-                                          <button
-                                            onClick={(e) => {
-                                              e.stopPropagation();
-                                              handleEdit(task);
-                                            }}
-                                            className="p-1 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded"
-                                            title="Edit"
-                                          >
-                                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                                            </svg>
-                                          </button>
-                                          <button
-                                            onClick={(e) => {
-                                              e.stopPropagation();
-                                              openDeleteModal(task.id);
-                                            }}
-                                            className="p-1 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded"
-                                            title="Delete"
-                                          >
-                                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                                            </svg>
-                                          </button>
-                                        </>
-                                      )}
-                                    </div>
-                                  </motion.div>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        );
-                      }
-
-                      return days;
-                    })()}
-                  </div>
                 </div>
               )}
 
@@ -2471,7 +2253,7 @@ function DelegationContent() {
                                   <p className="text-[10px] text-gray-500 dark:text-gray-400 font-semibold">Due Date</p>
                                   {delegation.due_date ? (
                                     <p className="text-xs font-bold text-gray-900 dark:text-white">
-                                      {formatDateToLocalTimezone(delegation.due_date)}
+                                      {formatShortDueDate(delegation.due_date)}
                                     </p>
                                   ) : (
                                     <p className="text-xs text-gray-500">No date</p>
@@ -2492,30 +2274,18 @@ function DelegationContent() {
                     })}
                   </div>
 
-                  {/* Pagination */}
-                  <div className="flex flex-col sm:flex-row items-center justify-between gap-3 mt-4">
-                    <p className="text-sm text-gray-600 dark:text-gray-300">
-                      Showing {startItem}-{endItem} of {sortedDelegations.length}
-                    </p>
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => handlePageChange(currentPage - 1)}
-                        disabled={currentPage === 1}
-                        className="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 text-sm font-semibold text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        Previous
-                      </button>
-                      <span className="text-sm font-semibold text-gray-900 dark:text-white">
-                        Page {currentPage} of {totalPages}
-                      </span>
-                      <button
-                        onClick={() => handlePageChange(currentPage + 1)}
-                        disabled={currentPage === totalPages}
-                        className="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 text-sm font-semibold text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        Next
-                      </button>
-                    </div>
+                  <div className="mt-3">
+                    <CompactToolbar
+                      currentPage={currentPage}
+                      totalPages={totalPages}
+                      itemsPerPage={pageSize}
+                      activeTimeFilter={activeTimeFilter}
+                      timeStats={timeStats}
+                      onTimeFilter={(filter) => { setActiveTimeFilter(activeTimeFilter === filter ? null : filter); setCurrentPage(1); }}
+                      onPage={handlePageChange}
+                      bulkCount={selectedForBulk.length}
+                      onBulkComplete={handleBulkComplete}
+                    />
                   </div>
                 </div>
               )}
@@ -2544,45 +2314,36 @@ function DelegationContent() {
                 exit={{ opacity: 0, scale: 0.9 }}
               >
                 <div
-                  className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto pointer-events-auto"
+                  className={`${LIGHT_SURFACE} rounded-3xl max-w-2xl w-full max-h-[90vh] overflow-hidden flex flex-col pointer-events-auto`}
                   onClick={(e) => e.stopPropagation()}
                 >
-                  {/* Modal Header */}
-                  <div className="bg-gradient-to-r from-[var(--theme-primary)] to-[var(--theme-secondary)] p-6 sticky top-0 z-10">
-                    <div className="flex justify-between items-center">
-                      <h2 className="text-2xl font-bold text-gray-900">
-                        {editingId ? 'Edit Delegation' : 'Create New Delegation'}
-                      </h2>
-                      <button
-                        onClick={closeModal}
-                        className="p-2 hover:bg-white/20 rounded-lg transition"
-                      >
-                        <svg className="w-6 h-6 text-gray-900" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                        </svg>
-                      </button>
-                    </div>
+                  <div className="px-4 py-2.5 bg-[var(--theme-primary)] text-gray-900 flex items-center justify-between shrink-0">
+                    <h2 className="text-xs font-black uppercase tracking-widest">
+                      {editingId ? 'Edit Task' : 'Add Task'}
+                    </h2>
+                    <button type="button" onClick={closeModal} className="p-1 rounded-full hover:bg-black/10" title="Close">
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" /></svg>
+                    </button>
                   </div>
 
-                  {/* Form */}
-                  <form onSubmit={handleSubmit} className="p-6 space-y-5">
+                  <form onSubmit={handleSubmit} className="p-3 space-y-3 overflow-y-auto">
                     {/* Row 1: Assignee, Doer, Department */}
                     <motion.div
-                      className="grid grid-cols-1 md:grid-cols-3 gap-4"
+                      className="grid grid-cols-1 md:grid-cols-2 gap-3"
                       initial={{ opacity: 0, y: -10 }}
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ delay: 0.1 }}
                     >
                       {/* Assignee Search Selection */}
                       <div>
-                        <label className="block text-gray-700 dark:text-gray-300 text-sm font-bold mb-2">Assignee</label>
+                        <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-1">Assignee</label>
                         <div className="relative">
                           {user?.role_name?.toLowerCase() === 'tl' ? (
                             <input
                               type="text"
                               value={user.username}
                               readOnly
-                              className="w-full px-3 py-2 border rounded-lg bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-white cursor-not-allowed"
+                              className={`w-full px-3 py-1.5 rounded-full ${LIGHT_BG} ${LIGHT_BORDER} text-xs text-gray-700 dark:text-white cursor-not-allowed`}
                             />
                           ) : (
                             <>
@@ -2597,7 +2358,7 @@ function DelegationContent() {
                                   }}
                                   onFocus={() => setShowAssigneeDropdown(true)}
                                   placeholder="Search assignee..."
-                                  className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--theme-primary)] dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                                  className={`w-full px-3 py-1.5 rounded-full ${LIGHT_BG} ${LIGHT_BORDER} text-xs text-gray-900 dark:text-white outline-none`}
                                 />
                                 {formData.assigneeName && (
                                   <button
@@ -2613,7 +2374,7 @@ function DelegationContent() {
                                 )}
                               </div>
                               {showAssigneeDropdown && (
-                                <div className="absolute z-10 w-full mt-1 bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                                <div className={`absolute z-10 w-full mt-1 ${LIGHT_SURFACE} rounded-2xl max-h-36 overflow-y-auto text-xs`}>
                                   {users
                                     .filter(u => u.username.toLowerCase().includes(assigneeSearch.toLowerCase()))
                                     .map(u => (
@@ -2648,7 +2409,7 @@ function DelegationContent() {
 
                       {/* Doer Searchable Dropdown - Multiple Selection */}
                       <div className="relative">
-                        <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                        <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-1">
                           Doer Name (Multiple Selection) <span className="text-red-500">*</span>
                         </label>
 
@@ -2696,7 +2457,7 @@ function DelegationContent() {
                             }}
                             onFocus={() => setShowDoerDropdown(true)}
                             placeholder="Search and select doers..."
-                            className="w-full px-4 py-2.5 bg-[var(--theme-lighter)] dark:bg-gray-700 border-0 rounded-xl text-gray-900 dark:text-white focus:ring-2 focus:ring-[var(--theme-primary)] transition text-sm"
+                            className={`w-full px-3 py-1.5 rounded-full ${LIGHT_BG} ${LIGHT_BORDER} text-xs text-gray-900 dark:text-white outline-none`}
                             required={selectedDoers.length === 0}
                           />
                           <svg className="absolute right-3 top-3 w-5 h-5 text-gray-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -2708,7 +2469,7 @@ function DelegationContent() {
                           <>
                             <div className="fixed inset-0 z-10" onClick={() => setShowDoerDropdown(false)} />
                             <motion.div
-                              className="absolute z-20 w-full mt-1 bg-white dark:bg-gray-800 rounded-xl shadow-2xl border border-gray-200 dark:border-gray-700 max-h-60 overflow-y-auto"
+                              className={`absolute z-20 w-full mt-1 ${LIGHT_SURFACE} rounded-2xl max-h-36 overflow-y-auto text-xs`}
                               initial={{ opacity: 0, y: -10 }}
                               animate={{ opacity: 1, y: 0 }}
                             >
@@ -2752,7 +2513,7 @@ function DelegationContent() {
 
                       {/* Department Searchable Dropdown */}
                       <div className="relative">
-                        <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                        <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-1">
                           Department
                         </label>
                         <div className="flex gap-2">
@@ -2767,7 +2528,7 @@ function DelegationContent() {
                               }}
                               onFocus={() => setShowDepartmentDropdown(true)}
                               placeholder="Search or select department..."
-                              className="w-full px-4 py-2.5 bg-[var(--theme-lighter)] dark:bg-gray-700 border-0 rounded-xl text-gray-900 dark:text-white focus:ring-2 focus:ring-[var(--theme-primary)] transition text-sm"
+                              className={`w-full px-3 py-1.5 rounded-full ${LIGHT_BG} ${LIGHT_BORDER} text-xs text-gray-900 dark:text-white outline-none`}
                             />
                             <svg className="absolute right-3 top-3 w-5 h-5 text-gray-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -2778,7 +2539,7 @@ function DelegationContent() {
                           <button
                             type="button"
                             onClick={() => setShowAddDepartmentModal(true)}
-                            className="px-4 py-2.5 bg-[var(--theme-primary)] hover:bg-[var(--theme-secondary)] text-gray-900 rounded-xl font-semibold transition text-sm flex items-center gap-1"
+                            className="w-8 h-8 shrink-0 bg-[var(--theme-primary)] text-gray-900 rounded-full flex items-center justify-center"
                             title="Add new department"
                           >
                             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -2791,7 +2552,7 @@ function DelegationContent() {
                           <>
                             <div className="fixed inset-0 z-10" onClick={() => setShowDepartmentDropdown(false)} />
                             <motion.div
-                              className="absolute z-20 w-full mt-1 bg-white dark:bg-gray-800 rounded-xl shadow-2xl border border-gray-200 dark:border-gray-700 max-h-60 overflow-y-auto"
+                              className={`absolute z-20 w-full mt-1 ${LIGHT_SURFACE} rounded-2xl max-h-36 overflow-y-auto text-xs`}
                               initial={{ opacity: 0, y: -10 }}
                               animate={{ opacity: 1, y: 0 }}
                             >
@@ -2826,24 +2587,22 @@ function DelegationContent() {
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ delay: 0.2 }}
                     >
-                      <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                        Priority <span className="text-red-500">*</span>
+                      <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-1">
+                        Priority *
                       </label>
-                      <div className="flex gap-3">
+                      <div className="flex flex-wrap gap-1.5">
                         {PRIORITIES.map((priority) => (
-                          <motion.button
+                          <button
                             key={priority.value}
                             type="button"
                             onClick={() => setFormData({ ...formData, priority: priority.value })}
-                            className={`flex-1 py-2.5 px-4 rounded-xl font-semibold transition text-sm ${formData.priority === priority.value
-                              ? priority.color + ' shadow-lg'
-                              : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300'
+                            className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${formData.priority === priority.value
+                              ? 'bg-[var(--theme-primary)] text-gray-900'
+                              : `${LIGHT_BG} ${LIGHT_BORDER} text-slate-600`
                               }`}
-                            whileHover={{ scale: 1.02 }}
-                            whileTap={{ scale: 0.98 }}
                           >
                             {priority.label}
-                          </motion.button>
+                          </button>
                         ))}
                       </div>
                     </motion.div>
@@ -2854,14 +2613,14 @@ function DelegationContent() {
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ delay: 0.3 }}
                     >
-                      <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                      <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-1">
                         Task Description <span className="text-red-500">*</span>
                       </label>
                       <textarea
                         value={formData.taskDescription}
                         onChange={(e) => setFormData({ ...formData, taskDescription: e.target.value })}
-                        rows={3}
-                        className="w-full px-4 py-2.5 bg-[var(--theme-lighter)] dark:bg-gray-700 border-0 rounded-xl text-gray-900 dark:text-white focus:ring-2 focus:ring-[var(--theme-primary)] transition resize-none text-sm"
+                        rows={2}
+                        className={`w-full px-3 py-1.5 rounded-2xl ${LIGHT_BG} ${LIGHT_BORDER} text-xs text-gray-900 dark:text-white outline-none resize-none`}
                         placeholder="Describe the task in detail..."
                         required
                       />
@@ -2875,13 +2634,13 @@ function DelegationContent() {
                       transition={{ delay: 0.35 }}
                     >
                       <div className="relative">
-                        <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                        <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-1">
                           Due Date & Time
                         </label>
                         <button
                           type="button"
                           onClick={() => setShowDatePicker(!showDatePicker)}
-                          className="w-full px-4 py-2.5 bg-[var(--theme-lighter)] dark:bg-gray-700 border-0 rounded-xl text-left text-gray-900 dark:text-white focus:ring-2 focus:ring-[var(--theme-primary)] transition text-sm flex items-center justify-between"
+                          className={`w-full px-3 py-1.5 rounded-full ${LIGHT_BG} ${LIGHT_BORDER} text-xs text-gray-900 dark:text-white text-left flex items-center justify-between`}
                         >
                           <span>{formData.dueDateTime ? formatDateToLocalTimezone(formData.dueDateTime) : 'Select date & time'}</span>
                           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -3083,7 +2842,7 @@ function DelegationContent() {
                       </div>
 
                       <div>
-                        <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                        <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-1">
                           Evidence Required
                         </label>
                         <div className="flex items-center justify-between bg-[var(--theme-lighter)] dark:bg-gray-700 px-4 py-2.5 rounded-xl h-[42px]">
@@ -3112,7 +2871,7 @@ function DelegationContent() {
                     >
                       {/* Voice Note Recorder */}
                       <div>
-                        <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                        <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-1">
                           Voice Note
                         </label>
                         <div className="bg-gradient-to-br from-[var(--theme-lighter)] to-[var(--theme-lighter)] dark:from-gray-700 dark:to-gray-600 p-4 rounded-xl border-2 border-[var(--theme-primary)]/30">
@@ -3226,7 +2985,7 @@ function DelegationContent() {
 
                       {/* Reference Documents */}
                       <div>
-                        <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                        <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-1">
                           Reference Documents
                         </label>
 
@@ -3318,26 +3077,21 @@ function DelegationContent() {
                     </motion.div>
 
                     {/* Submit Buttons */}
-                    <motion.div
-                      className="flex gap-3 pt-2"
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: 0.5 }}
-                    >
+                    <div className="flex gap-2 pt-1">
                       <button
                         type="submit"
-                        className="flex-1 px-6 py-2.5 bg-[var(--theme-primary)] hover:bg-[var(--theme-secondary)] text-gray-900 font-bold rounded-xl shadow-lg transition"
+                        className="flex-1 px-4 py-2 rounded-full bg-[var(--theme-primary)] text-gray-900 text-[10px] font-black uppercase tracking-widest"
                       >
-                        {editingId ? 'Update Delegation' : 'Create Delegation'}
+                        {editingId ? 'Update Task' : 'Create Task'}
                       </button>
                       <button
                         type="button"
                         onClick={closeModal}
-                        className="px-6 py-2.5 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 font-semibold rounded-xl transition"
+                        className={`px-4 py-2 rounded-full text-[10px] font-black uppercase tracking-widest text-slate-600 ${LIGHT_BG} ${LIGHT_BORDER}`}
                       >
                         Cancel
                       </button>
-                    </motion.div>
+                    </div>
                   </form>
                 </div>
               </motion.div>
@@ -4136,61 +3890,50 @@ function DelegationContent() {
 
               <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 pointer-events-none">
                 <motion.div
-                  className="w-full max-w-2xl max-h-[90vh] pointer-events-auto"
+                  className="w-full max-w-[480px] max-h-[90vh] pointer-events-auto"
                   initial={{ opacity: 0, scale: 0.95 }}
                   animate={{ opacity: 1, scale: 1 }}
                   exit={{ opacity: 0, scale: 0.95 }}
                   transition={{ duration: 0.2 }}
                 >
                   <div
-                    className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl border border-gray-200 dark:border-gray-700 max-h-[90vh] overflow-y-auto"
+                    className={`${LIGHT_SURFACE} rounded-3xl overflow-hidden max-h-[90vh] flex flex-col`}
                     onClick={(e) => e.stopPropagation()}
                   >
-                    {/* Header */}
-                    <div className="flex items-center justify-between p-5 border-b border-gray-200 dark:border-gray-700">
-                      <h3 className="text-xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
-                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
-                        </svg>
-                        Filter Delegations
-                      </h3>
-                      <button
-                        onClick={() => setShowFilterModal(false)}
-                        className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition"
-                      >
-                        <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                        </svg>
+                    <div className="px-4 py-2.5 bg-[var(--theme-primary)] text-gray-900 flex items-center justify-between shrink-0">
+                      <h3 className="text-xs font-black uppercase tracking-widest">Filter</h3>
+                      <button type="button" onClick={() => setShowFilterModal(false)} className="p-1 rounded-full hover:bg-black/10" title="Close">
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" /></svg>
                       </button>
                     </div>
 
-                    {/* Filter Content */}
-                    <div className="p-5 space-y-4">
+                    <div className="p-3 space-y-3 overflow-y-auto">
                       {/* Due Date Range - Single unified picker */}
                       <div>
-                        <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1.5">Date Range</label>
+                        <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-1">Date Range</label>
                         <DateRangePicker
                           fromDate={filters.dueDateFrom}
                           toDate={filters.dueDateTo}
                           onRangeChange={(from, to) => setFilters(prev => ({ ...prev, dueDateFrom: from, dueDateTo: to }))}
+                          buttonClassName={`w-full px-3 py-1.5 rounded-full ${LIGHT_BG} ${LIGHT_BORDER} text-xs font-semibold text-gray-900 dark:text-white flex items-center justify-between`}
                         />
                       </div>
 
                       {/* Task & Department - 2 columns */}
                       <div className="grid grid-cols-2 gap-3">
                         <div className="relative filter-dropdown-container">
-                          <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1.5">Task</label>
+                          <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-1">Task</label>
                           <input
                             type="text"
                             placeholder="Search tasks..."
                             value={filterSearches.task}
                             onChange={(e) => setFilterSearches(prev => ({ ...prev, task: e.target.value }))}
                             onFocus={() => setActiveDropdown('task')}
-                            className="w-full px-3 py-2 bg-[var(--theme-lighter)] dark:bg-gray-700 border-0 rounded-lg text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-[var(--theme-primary)] transition"
+                            className={`w-full px-3 py-1.5 rounded-full ${LIGHT_BG} ${LIGHT_BORDER} text-xs text-gray-900 dark:text-white outline-none`}
                           />
                           {activeDropdown === 'task' && (
                             <div
-                              className="absolute top-full left-0 right-0 mt-1 max-h-48 overflow-y-auto space-y-1 bg-white dark:bg-gray-800 rounded-lg p-2 shadow-xl border border-gray-200 dark:border-gray-700 z-50"
+                              className={`absolute top-full left-0 right-0 mt-1 max-h-40 overflow-y-auto ${LIGHT_SURFACE} rounded-2xl p-1.5 z-50`}
                               onMouseDown={(e) => e.preventDefault()}
                             >
                               {uniqueTasks
@@ -4212,18 +3955,18 @@ function DelegationContent() {
 
                         {/* Department */}
                         <div className="relative filter-dropdown-container">
-                          <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1.5">Department</label>
+                          <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-1">Department</label>
                           <input
                             type="text"
                             placeholder="Search departments..."
                             value={filterSearches.department}
                             onChange={(e) => setFilterSearches(prev => ({ ...prev, department: e.target.value }))}
                             onFocus={() => setActiveDropdown('department')}
-                            className="w-full px-3 py-2 bg-[var(--theme-lighter)] dark:bg-gray-700 border-0 rounded-lg text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-[var(--theme-primary)] transition"
+                            className={`w-full px-3 py-1.5 rounded-full ${LIGHT_BG} ${LIGHT_BORDER} text-xs text-gray-900 dark:text-white outline-none`}
                           />
                           {activeDropdown === 'department' && (
                             <div
-                              className="absolute top-full left-0 right-0 mt-1 max-h-48 overflow-y-auto space-y-1 bg-white dark:bg-gray-800 rounded-lg p-2 shadow-xl border border-gray-200 dark:border-gray-700 z-50"
+                              className={`absolute top-full left-0 right-0 mt-1 max-h-40 overflow-y-auto ${LIGHT_SURFACE} rounded-2xl p-1.5 z-50`}
                               onMouseDown={(e) => e.preventDefault()}
                             >
                               {uniqueDepartments
@@ -4248,18 +3991,18 @@ function DelegationContent() {
                       <div className="grid grid-cols-2 gap-3">
                         {/* Assignee */}
                         <div className="relative filter-dropdown-container">
-                          <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1.5">Assignee</label>
+                          <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-1">Assignee</label>
                           <input
                             type="text"
                             placeholder="Search assignees..."
                             value={filterSearches.assignee}
                             onChange={(e) => setFilterSearches(prev => ({ ...prev, assignee: e.target.value }))}
                             onFocus={() => setActiveDropdown('assignee')}
-                            className="w-full px-3 py-2 bg-[var(--theme-lighter)] dark:bg-gray-700 border-0 rounded-lg text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-[var(--theme-primary)] transition"
+                            className={`w-full px-3 py-1.5 rounded-full ${LIGHT_BG} ${LIGHT_BORDER} text-xs text-gray-900 dark:text-white outline-none`}
                           />
                           {activeDropdown === 'assignee' && (
                             <div
-                              className="absolute top-full left-0 right-0 mt-1 max-h-48 overflow-y-auto space-y-1 bg-white dark:bg-gray-800 rounded-lg p-2 shadow-xl border border-gray-200 dark:border-gray-700 z-50"
+                              className={`absolute top-full left-0 right-0 mt-1 max-h-40 overflow-y-auto ${LIGHT_SURFACE} rounded-2xl p-1.5 z-50`}
                               onMouseDown={(e) => e.preventDefault()}
                             >
                               {uniqueAssignees
@@ -4281,18 +4024,18 @@ function DelegationContent() {
 
                         {/* Doer */}
                         <div className="relative filter-dropdown-container">
-                          <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1.5">Doer</label>
+                          <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-1">Doer</label>
                           <input
                             type="text"
                             placeholder="Search doers..."
                             value={filterSearches.doer}
                             onChange={(e) => setFilterSearches(prev => ({ ...prev, doer: e.target.value }))}
                             onFocus={() => setActiveDropdown('doer')}
-                            className="w-full px-3 py-2 bg-[var(--theme-lighter)] dark:bg-gray-700 border-0 rounded-lg text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-[var(--theme-primary)] transition"
+                            className={`w-full px-3 py-1.5 rounded-full ${LIGHT_BG} ${LIGHT_BORDER} text-xs text-gray-900 dark:text-white outline-none`}
                           />
                           {activeDropdown === 'doer' && (
                             <div
-                              className="absolute top-full left-0 right-0 mt-1 max-h-48 overflow-y-auto space-y-1 bg-white dark:bg-gray-800 rounded-lg p-2 shadow-xl border border-gray-200 dark:border-gray-700 z-50"
+                              className={`absolute top-full left-0 right-0 mt-1 max-h-40 overflow-y-auto ${LIGHT_SURFACE} rounded-2xl p-1.5 z-50`}
                               onMouseDown={(e) => e.preventDefault()}
                             >
                               {uniqueDoers
@@ -4317,36 +4060,34 @@ function DelegationContent() {
                       <div className="grid grid-cols-2 gap-3">
                         {/* Priority */}
                         <div>
-                          <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1.5">Priority</label>
-                          <div className="space-y-1.5">
+                          <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-1">Priority</label>
+                          <div className="flex flex-wrap gap-1.5">
                             {['low', 'medium', 'high'].map(priority => (
-                              <label key={priority} className="flex items-center gap-2 cursor-pointer hover:bg-[var(--theme-lighter)] dark:hover:bg-gray-700 p-2 rounded-lg transition">
-                                <input
-                                  type="checkbox"
-                                  checked={filters.priorities.includes(priority)}
-                                  onChange={() => toggleFilterValue('priorities', priority)}
-                                  className="w-3.5 h-3.5 text-[var(--theme-primary)] focus:ring-[var(--theme-primary)] rounded"
-                                />
-                                <span className="text-xs font-medium text-gray-900 dark:text-white capitalize">{priority}</span>
-                              </label>
+                              <button
+                                key={priority}
+                                type="button"
+                                onClick={() => toggleFilterValue('priorities', priority)}
+                                className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${filters.priorities.includes(priority) ? 'bg-[var(--theme-primary)] text-gray-900' : `${LIGHT_BG} ${LIGHT_BORDER} text-slate-600`}`}
+                              >
+                                {priority}
+                              </button>
                             ))}
                           </div>
                         </div>
 
                         {/* Status */}
                         <div>
-                          <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1.5">Status</label>
-                          <div className="max-h-32 overflow-y-auto space-y-1 bg-[var(--theme-lighter)] dark:bg-gray-700 rounded-lg p-2">
+                          <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-1">Status</label>
+                          <div className="flex flex-wrap gap-1.5">
                             {uniqueStatuses.map(status => (
-                              <label key={status} className="flex items-center gap-2 cursor-pointer hover:bg-white dark:hover:bg-gray-600 p-1.5 rounded transition">
-                                <input
-                                  type="checkbox"
-                                  checked={filters.statuses.includes(status)}
-                                  onChange={() => toggleFilterValue('statuses', status)}
-                                  className="w-3.5 h-3.5 text-[var(--theme-primary)] focus:ring-[var(--theme-primary)] rounded"
-                                />
-                                <span className="text-xs text-gray-900 dark:text-white">{status.replace('_', ' ').toUpperCase()}</span>
-                              </label>
+                              <button
+                                key={status}
+                                type="button"
+                                onClick={() => toggleFilterValue('statuses', status)}
+                                className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${filters.statuses.includes(status) ? 'bg-[var(--theme-primary)] text-gray-900' : `${LIGHT_BG} ${LIGHT_BORDER} text-slate-600`}`}
+                              >
+                                {status.replace(/_/g, ' ')}
+                              </button>
                             ))}
                           </div>
                         </div>
@@ -4354,56 +4095,43 @@ function DelegationContent() {
 
                       {/* Evidence - Full width */}
                       <div>
-                        <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1.5">Evidence Required</label>
-                        <div className="flex gap-2">
-                          <label className="flex items-center gap-2 cursor-pointer hover:bg-[var(--theme-lighter)] dark:hover:bg-gray-700 p-2 rounded-lg transition flex-1">
-                            <input
-                              type="radio"
-                              checked={filters.evidenceRequired === null}
-                              onChange={() => setFilters(prev => ({ ...prev, evidenceRequired: null }))}
-                              className="w-3.5 h-3.5 text-[var(--theme-primary)] focus:ring-[var(--theme-primary)]"
-                            />
-                            <span className="text-xs font-medium text-gray-900 dark:text-white">All</span>
-                          </label>
-                          <label className="flex items-center gap-2 cursor-pointer hover:bg-[var(--theme-lighter)] dark:hover:bg-gray-700 p-2 rounded-lg transition flex-1">
-                            <input
-                              type="radio"
-                              checked={filters.evidenceRequired === true}
-                              onChange={() => setFilters(prev => ({ ...prev, evidenceRequired: true }))}
-                              className="w-3.5 h-3.5 text-[var(--theme-primary)] focus:ring-[var(--theme-primary)]"
-                            />
-                            <span className="text-xs font-medium text-gray-900 dark:text-white">Required</span>
-                          </label>
-                          <label className="flex items-center gap-2 cursor-pointer hover:bg-[var(--theme-lighter)] dark:hover:bg-gray-700 p-2 rounded-lg transition flex-1">
-                            <input
-                              type="radio"
-                              checked={filters.evidenceRequired === false}
-                              onChange={() => setFilters(prev => ({ ...prev, evidenceRequired: false }))}
-                              className="w-3.5 h-3.5 text-[var(--theme-primary)] focus:ring-[var(--theme-primary)]"
-                            />
-                            <span className="text-xs font-medium text-gray-900 dark:text-white">Not Required</span>
-                          </label>
+                        <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-1">Evidence Required</label>
+                        <div className="flex flex-wrap gap-1.5">
+                          {([
+                            ['all', null, 'All'],
+                            ['required', true, 'Required'],
+                            ['optional', false, 'Not Required'],
+                          ] as const).map(([key, value, label]) => (
+                            <button
+                              key={key}
+                              type="button"
+                              onClick={() => setFilters(prev => ({ ...prev, evidenceRequired: value }))}
+                              className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${filters.evidenceRequired === value ? 'bg-[var(--theme-primary)] text-gray-900' : `${LIGHT_BG} ${LIGHT_BORDER} text-slate-600`}`}
+                            >
+                              {label}
+                            </button>
+                          ))}
                         </div>
                       </div>
 
                       {/* Actions */}
-                      <div className="flex gap-3 pt-3 border-t border-gray-200 dark:border-gray-700">
-                        <button
-                          onClick={clearAllFilters}
-                          className="flex-1 px-4 py-2.5 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-900 dark:text-white font-semibold rounded-xl transition"
-                        >
-                          Clear All
-                        </button>
-                        <button
-                          onClick={() => {
-                            setShowFilterModal(false);
-                            setCurrentPage(1);
-                          }}
-                          className="flex-1 px-4 py-2.5 bg-[var(--theme-primary)] hover:bg-[var(--theme-secondary)] text-gray-900 font-bold rounded-xl transition shadow-md"
-                        >
-                          Apply Filters
-                        </button>
-                      </div>
+                    </div>
+                    <div className="px-3 py-2.5 flex gap-2 border-t border-[var(--theme-primary)]/20 shrink-0">
+                      <button
+                        onClick={clearAllFilters}
+                        className={`flex-1 px-4 py-2 rounded-full text-[10px] font-black uppercase tracking-widest text-slate-600 ${LIGHT_BG} ${LIGHT_BORDER}`}
+                      >
+                        Clear All
+                      </button>
+                      <button
+                        onClick={() => {
+                          setShowFilterModal(false);
+                          setCurrentPage(1);
+                        }}
+                        className="flex-1 px-4 py-2 rounded-full bg-[var(--theme-primary)] text-gray-900 text-[10px] font-black uppercase tracking-widest"
+                      >
+                        Apply
+                      </button>
                     </div>
                   </div>
                 </motion.div>

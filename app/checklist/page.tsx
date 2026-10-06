@@ -10,7 +10,7 @@ import { useLoader } from '@/components/LoaderProvider';
 import DateRangePicker from '@/components/DateRangePicker';
 import { formatDateToLocalTimezone } from '@/utils/timezone';
 import { parseDateString } from '@/lib/dateUtils';
-import { normalizeFrequency } from '@/lib/checklistOccurrences';
+import { normalizeFrequency, toDateKey } from '@/lib/checklistOccurrences';
 
 interface Checklist {
   id: number;
@@ -24,6 +24,7 @@ interface Checklist {
   occurrence_id?: string;
   occurrence_date?: string;
   master_due_date?: string;
+  completed_at?: string;
   status: string;
   group_id: string;
   created_at: string;
@@ -84,6 +85,24 @@ function filterHistoryForOccurrence(history: any[], occurrenceDate?: string) {
   });
 }
 
+const SHORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+function formatShortDueDate(value: any): string {
+  const parsed = parseDateString(value);
+  if (!parsed) return '';
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Kolkata',
+    day: 'numeric',
+    month: 'short',
+    year: '2-digit',
+  }).formatToParts(parsed);
+  const day = parts.find((part) => part.type === 'day')?.value;
+  const month = parts.find((part) => part.type === 'month')?.value || SHORT_MONTHS[parsed.getMonth()];
+  const year = parts.find((part) => part.type === 'year')?.value;
+  if (!day || !year) return '';
+  return `${day} ${month} ${year}`;
+}
+
 function startOfLocalDay(date: Date) {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
 }
@@ -96,6 +115,90 @@ function isDueToday(value: any) {
   const parsed = parseDateString(value);
   if (!parsed) return false;
   return startOfLocalDay(parsed) === startOfLocalDay(new Date());
+}
+
+const DASH_SHADOW = 'shadow-[0_2px_4px_rgba(15,23,42,0.12),0_8px_16px_-2px_rgba(15,23,42,0.22)]';
+const LIGHT_BG = 'bg-[var(--theme-light)] dark:bg-[var(--theme-primary)]/15';
+const LIGHT_BORDER = 'border border-[var(--theme-primary)]/25';
+const LIGHT_SURFACE = `${LIGHT_BG} ${LIGHT_BORDER} ${DASH_SHADOW}`;
+const TIME_FILTERS = ['Delayed', 'Today'] as const;
+
+function isCompletedAfterDue(checklist: { status?: string; completed_at?: string; occurrence_date?: string; due_date?: string }) {
+  if ((checklist.status || '').toLowerCase() !== 'completed' || !checklist.completed_at) return false;
+  const dueKey = checklist.occurrence_date || toDateKey(checklist.due_date);
+  const doneKey = toDateKey(checklist.completed_at);
+  if (!dueKey || !doneKey) return false;
+  return doneKey > dueKey;
+}
+
+function CompactToolbar({
+  currentPage,
+  totalPages,
+  itemsPerPage,
+  activeTimeFilter,
+  timeStats,
+  onTimeFilter,
+  onPage,
+  bulkCount = 0,
+  onBulkComplete,
+}: {
+  currentPage: number;
+  totalPages: number;
+  itemsPerPage: number;
+  activeTimeFilter: string | null;
+  timeStats: Record<string, number>;
+  onTimeFilter: (filter: string) => void;
+  onPage: (page: number) => void;
+  bulkCount?: number;
+  onBulkComplete?: () => void;
+}) {
+  const pages = Math.max(1, totalPages || 1);
+  const pageBtn = 'px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border border-[var(--theme-primary)]/25 bg-[var(--theme-light)] text-slate-600 hover:bg-[var(--theme-primary)]/20 disabled:opacity-30 disabled:pointer-events-none';
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      {TIME_FILTERS.map((label) => (
+        <button
+          key={label}
+          onClick={() => onTimeFilter(label)}
+          className={`px-3 py-1.5 rounded-full text-xs font-black uppercase tracking-widest ${DASH_SHADOW} ${activeTimeFilter === label ? 'bg-[var(--theme-primary)] text-gray-900' : `${LIGHT_BG} ${LIGHT_BORDER} text-slate-600 hover:bg-[var(--theme-primary)]/20`}`}
+        >
+          {label} <span className="ml-1">{timeStats[label] || 0}</span>
+        </button>
+      ))}
+      {bulkCount > 0 && (
+        <button
+          onClick={onBulkComplete}
+          className="px-3 py-1.5 rounded-full text-xs font-black uppercase tracking-widest bg-emerald-500 text-white shadow-sm"
+        >
+          Complete ({bulkCount})
+        </button>
+      )}
+      <div className="ml-auto flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-slate-500">
+        <span className="mr-1">Page {currentPage} of {pages}</span>
+        <button onClick={() => onPage(1)} disabled={currentPage <= 1} className={pageBtn}>First</button>
+        <button onClick={() => onPage(Math.max(1, currentPage - 1))} disabled={currentPage <= 1} className={pageBtn}>Prev</button>
+        <button onClick={() => onPage(Math.min(pages, currentPage + 1))} disabled={currentPage >= pages} className={pageBtn}>Next</button>
+        <button onClick={() => onPage(pages)} disabled={currentPage >= pages} className={pageBtn}>Last</button>
+        <span className="pl-2">Show {itemsPerPage}</span>
+      </div>
+    </div>
+  );
+}
+
+function checklistRowKey(checklist: { occurrence_id?: string; id: number; due_date: string }) {
+  return checklist.occurrence_id || `${checklist.id}|${checklist.due_date}`;
+}
+
+function getFrequencyBadgeClass(frequency: string) {
+  switch ((frequency || '').toLowerCase()) {
+    case 'daily': return 'bg-sky-100 text-sky-800 dark:bg-sky-900/30 dark:text-sky-300';
+    case 'weekly': return 'bg-violet-100 text-violet-800 dark:bg-violet-900/30 dark:text-violet-300';
+    case 'monthly': return 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300';
+    case 'quarterly': return 'bg-teal-100 text-teal-800 dark:bg-teal-900/30 dark:text-teal-300';
+    case 'yearly': return 'bg-rose-100 text-rose-800 dark:bg-rose-900/30 dark:text-rose-300';
+    case 'once': return 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300';
+    default: return 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300';
+  }
 }
 
 function compareByTodayThenLatest(a: Checklist, b: Checklist, direction: 'asc' | 'desc' = 'desc') {
@@ -122,7 +225,6 @@ function ChecklistContent() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deleteId, setDeleteId] = useState<number | null>(null);
-  const [deleteMode, setDeleteMode] = useState<'single' | 'group' | null>(null);
   const [editingChecklist, setEditingChecklist] = useState<Checklist | null>(null);
 
   // Sorting and pagination states
@@ -130,7 +232,8 @@ function ChecklistContent() {
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
   const [currentPage, setCurrentPage] = useState(1);
   const [activeTimeFilter, setActiveTimeFilter] = useState<string | null>(null);
-  const [itemsPerPage] = useState(10);
+  const [itemsPerPage] = useState(15);
+  const [selectedTaskKeys, setSelectedTaskKeys] = useState<Set<string>>(new Set());
 
   // Dropdown search states
   const [assigneeSearch, setAssigneeSearch] = useState('');
@@ -194,7 +297,6 @@ function ChecklistContent() {
     dueDateFrom: '',
     dueDateTo: '',
   });
-  const [showOpenTasks, setShowOpenTasks] = useState(false);
   const [filterSearches, setFilterSearches] = useState({
     question: '',
     assignee: '',
@@ -625,85 +727,46 @@ function ChecklistContent() {
   };
 
   const handleDeleteChecklist = async () => {
-    if (!deleteId || !deleteMode) return;
+    if (!deleteId) return;
 
     try {
       loader.showLoader();
       const checklist = checklists.find(c => c.id === deleteId);
+      const response = await fetch(`/api/checklists?id=${deleteId}`, {
+        method: 'DELETE'
+      });
 
-      if (deleteMode === 'single') {
-        // Delete only the specific task
-        const response = await fetch(`/api/checklists?id=${deleteId}`, {
-          method: 'DELETE'
-        });
-
-        if (response.ok) {
-          loader.hideLoader();
-          toast.success('Checklist task deleted successfully!');
-
-          // Send notifications to assignee and doer
-          if (checklist) {
-            if (checklist.assignee && checklist.assignee !== user?.username) {
-              await createNotificationForUser(
-                checklist.assignee,
-                'checklist_deleted',
-                'Checklist Deleted',
-                `${user?.username || 'Someone'} deleted checklist: "${checklist.question}"`,
-                checklist.id
-              );
-            }
-            if (checklist.doer_name && checklist.doer_name !== user?.username && checklist.doer_name !== checklist.assignee) {
-              await createNotificationForUser(
-                checklist.doer_name,
-                'checklist_deleted',
-                'Checklist Deleted',
-                `${user?.username || 'Someone'} deleted checklist: "${checklist.question}"`,
-                checklist.id
-              );
-            }
-          }
-
-          fetchChecklists(false);
-          setShowDeleteModal(false);
-          setDeleteId(null);
-          setDeleteMode(null);
-        } else {
-          loader.hideLoader();
-          toast.error('Failed to delete checklist task');
-        }
-      } else if (deleteMode === 'group' && checklist) {
-        const groupId = checklist.group_id;
-        const tasksToDelete = groupId
-          ? checklists.filter(c => c.group_id === groupId)
-          : [checklist];
-
-        // Delete all tasks in the group
-        const deletePromises = tasksToDelete.map(task =>
-          fetch(`/api/checklists?id=${task.id}`, {
-            method: 'DELETE'
-          })
-        );
-
-        await Promise.all(deletePromises);
-
+      if (response.ok) {
         loader.hideLoader();
-        toast.success(`${tasksToDelete.length} checklist task(s) deleted successfully!`);
+        toast.success('Checklist deleted successfully!');
 
-        // Send notification
-        if (checklist.assignee && checklist.assignee !== user?.username) {
-          await createNotificationForUser(
-            checklist.assignee,
-            'checklist_deleted',
-            'Group Checklist Deleted',
-            `${user?.username || 'Someone'} deleted ${tasksToDelete.length} tasks from group: "${checklist.question}"`,
-            checklist.id
-          );
+        if (checklist) {
+          if (checklist.assignee && checklist.assignee !== user?.username) {
+            await createNotificationForUser(
+              checklist.assignee,
+              'checklist_deleted',
+              'Checklist Deleted',
+              `${user?.username || 'Someone'} deleted checklist: "${checklist.question}"`,
+              checklist.id
+            );
+          }
+          if (checklist.doer_name && checklist.doer_name !== user?.username && checklist.doer_name !== checklist.assignee) {
+            await createNotificationForUser(
+              checklist.doer_name,
+              'checklist_deleted',
+              'Checklist Deleted',
+              `${user?.username || 'Someone'} deleted checklist: "${checklist.question}"`,
+              checklist.id
+            );
+          }
         }
 
         fetchChecklists(false);
         setShowDeleteModal(false);
         setDeleteId(null);
-        setDeleteMode(null);
+      } else {
+        loader.hideLoader();
+        toast.error('Failed to delete checklist');
       }
     } catch (error) {
       console.error('Error deleting checklist:', error);
@@ -767,7 +830,7 @@ function ChecklistContent() {
       // Update checklist in the list
       const updatedChecklists = checklists.map(c =>
         (c.occurrence_id || String(c.id)) === (selectedChecklist.occurrence_id || String(selectedChecklist.id))
-          ? { ...c, status }
+          ? { ...c, status, completed_at: new Date().toISOString() }
           : c
       );
       setChecklists(updatedChecklists);
@@ -1001,8 +1064,10 @@ function ChecklistContent() {
         'Created Date'
       ];
 
+      const exportRows = viewMode === 'group' ? groupedChecklists : filteredChecklists;
+
       // Convert data to CSV rows
-      const rows = filteredChecklists.map((checklist: Checklist) => {
+      const rows = exportRows.map((checklist: Checklist) => {
         return [
           checklist.id || '',
           checklist.question || '',
@@ -1029,13 +1094,14 @@ function ChecklistContent() {
       const link = document.createElement('a');
       const url = URL.createObjectURL(blob);
       link.setAttribute('href', url);
-      link.setAttribute('download', `checklists_${new Date().toISOString().split('T')[0]}.csv`);
+      const exportName = viewMode === 'group' ? 'master' : 'list';
+      link.setAttribute('download', `checklists_${exportName}_${new Date().toISOString().split('T')[0]}.csv`);
       link.style.visibility = 'hidden';
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
 
-      toast.success(`Exported ${filteredChecklists.length} checklists to CSV`);
+      toast.success(`Exported ${exportRows.length} checklists to CSV`);
     } catch (error) {
       console.error('Error exporting CSV:', error);
       toast.error('Failed to export CSV. Please try again.');
@@ -1067,22 +1133,6 @@ function ChecklistContent() {
     if (filters.dueDateFrom || filters.dueDateTo) count++;
     return count;
   }, [filters]);
-
-  // Calculate open tasks count
-  const openTasksCount = useMemo(() => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    return checklists.filter(checklist => {
-      const dueDate = parseDateString(checklist.due_date);
-      const status = checklist.status?.toLowerCase() || '';
-      if (!dueDate) return false;
-      const dueDay = new Date(dueDate.getFullYear(), dueDate.getMonth(), dueDate.getDate());
-      if (dueDay > today) return false;
-      if (status === 'completed') return false;
-      return true;
-    }).length;
-  }, [checklists]);
 
   // Calculate status counts for status tiles
   const statusCounts = useMemo(() => {
@@ -1119,27 +1169,12 @@ function ChecklistContent() {
   }, [checklists]);
 
   const timeStats = useMemo(() => {
-    const now = new Date();
-    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-    const oneDayMs = 24 * 60 * 60 * 1000;
+    const stats = { Delayed: 0, Today: 0 };
 
-    const stats = { 'Delayed': 0, 'Today': 0, 'Tomorrow': 0, 'Next 3': 0, 'Next 7': 0, 'Next 15': 0 };
-
-    checklists.forEach(c => {
-      if (!c.due_date) return;
-
-      const pDate = parseDateString(c.due_date);
-      if (!pDate) return;
-      const pTime = pDate.getTime();
-      const pDayStart = new Date(pDate.getFullYear(), pDate.getMonth(), pDate.getDate()).getTime();
-      const diffDays = Math.round((pDayStart - todayStart) / oneDayMs);
-
-      if (pTime < now.getTime()) stats['Delayed']++;
-      if (diffDays === 0) stats['Today']++;
-      if (diffDays === 1) stats['Tomorrow']++;
-      if (diffDays >= 0 && diffDays <= 3) stats['Next 3']++;
-      if (diffDays >= 0 && diffDays <= 7) stats['Next 7']++;
-      if (diffDays >= 0 && diffDays <= 15) stats['Next 15']++;
+    checklists.forEach((checklist) => {
+      const status = (checklist.status || '').toLowerCase();
+      if (status === 'overdue') stats.Delayed++;
+      if (status === 'pending') stats.Today++;
     });
 
     return stats;
@@ -1153,18 +1188,6 @@ function ChecklistContent() {
     }
 
     let filtered = checklists.filter(checklist => {
-      // Open Tasks filter: due today or overdue, and status NOT completed
-      if (showOpenTasks) {
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        const dueDate = parseDateString(checklist.due_date);
-        const status = checklist.status?.toLowerCase() || '';
-        if (!dueDate) return false;
-        const dueDay = new Date(dueDate.getFullYear(), dueDate.getMonth(), dueDate.getDate());
-        if (dueDay > today) return false;
-        if (status === 'completed') return false;
-      }
-
       // Search term filter
       const matchesSearch = searchTerm === '' ||
         (checklist.question?.toLowerCase().includes(searchTerm.toLowerCase())) ||
@@ -1228,28 +1251,9 @@ function ChecklistContent() {
         }
       }
 
-      // Time-Based Filter (Quick Filters)
-      if (activeTimeFilter) {
-        if (!checklist.due_date) return false;
-        const now = new Date();
-        const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-        const oneDayMs = 24 * 60 * 60 * 1000;
-
-        const pDate = parseDateString(checklist.due_date);
-        if (!pDate) return false;
-        const pTime = pDate.getTime();
-        const pDayStart = new Date(pDate.getFullYear(), pDate.getMonth(), pDate.getDate()).getTime();
-        const diffDays = Math.round((pDayStart - todayStart) / oneDayMs);
-
-        switch (activeTimeFilter) {
-          case 'Delayed': if (pTime >= now.getTime()) return false; break;
-          case 'Today': if (diffDays !== 0) return false; break;
-          case 'Tomorrow': if (diffDays !== 1) return false; break;
-          case 'Next 3': if (!(diffDays >= 0 && diffDays <= 3)) return false; break;
-          case 'Next 7': if (!(diffDays >= 0 && diffDays <= 7)) return false; break;
-          case 'Next 15': if (!(diffDays >= 0 && diffDays <= 15)) return false; break;
-        }
-      }
+      const status = (checklist.status || '').toLowerCase();
+      if (activeTimeFilter === 'Delayed' && status !== 'overdue') return false;
+      if (activeTimeFilter === 'Today' && status !== 'pending') return false;
 
       return true;
     });
@@ -1285,7 +1289,7 @@ function ChecklistContent() {
     });
 
     return filtered;
-  }, [checklists, searchTerm, sortColumn, sortDirection, showOpenTasks, filters, targetId, activeTimeFilter]);
+  }, [checklists, searchTerm, sortColumn, sortDirection, filters, targetId, activeTimeFilter]);
 
   // Master view - all sheet rows, latest created first
   const groupedChecklists = useMemo(() => {
@@ -1339,6 +1343,83 @@ function ChecklistContent() {
     return masters;
   }, [masterChecklists, checklists, searchTerm, filters]);
 
+  const selectedForBulk = useMemo(
+    () => filteredChecklists.filter((checklist) =>
+      selectedTaskKeys.has(checklistRowKey(checklist)) && (checklist.status || '').toLowerCase() !== 'completed'
+    ),
+    [filteredChecklists, selectedTaskKeys]
+  );
+
+  const toggleTaskSelect = (checklist: Checklist) => {
+    if ((checklist.status || '').toLowerCase() === 'completed') return;
+    const key = checklistRowKey(checklist);
+    setSelectedTaskKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const togglePageSelect = () => {
+    const pageItems = paginatedChecklists.filter((checklist) => (checklist.status || '').toLowerCase() !== 'completed');
+    const allSelected = pageItems.length > 0 && pageItems.every((checklist) => selectedTaskKeys.has(checklistRowKey(checklist)));
+    setSelectedTaskKeys((prev) => {
+      const next = new Set(prev);
+      pageItems.forEach((checklist) => {
+        const key = checklistRowKey(checklist);
+        if (allSelected) next.delete(key);
+        else next.add(key);
+      });
+      return next;
+    });
+  };
+
+  const handleBulkComplete = async () => {
+    if (selectedForBulk.length === 0) return;
+    try {
+      loader.showLoader();
+      const results = await Promise.all(selectedForBulk.map(async (item) => {
+        const response = await fetch('/api/checklists/update-status', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            checklistId: item.id,
+            dueDate: item.occurrence_date || item.due_date,
+            status: 'completed',
+            userId: user?.id,
+            username: user?.username
+          })
+        });
+        return { item, ok: response.ok };
+      }));
+
+      const done = results.filter((result) => result.ok).map((result) => result.item);
+      if (done.length === 0) {
+        loader.hideLoader();
+        toast.error('Failed to complete selected tasks');
+        return;
+      }
+
+      const doneKeys = new Set(done.map(checklistRowKey));
+      setChecklists((prev) => prev.map((checklist) =>
+        doneKeys.has(checklistRowKey(checklist)) ? { ...checklist, status: 'completed', completed_at: new Date().toISOString() } : checklist
+      ));
+      setSelectedTaskKeys((prev) => {
+        const next = new Set(prev);
+        doneKeys.forEach((key) => next.delete(key));
+        return next;
+      });
+
+      loader.hideLoader();
+      toast.success(`Completed ${done.length} task${done.length === 1 ? '' : 's'}`);
+    } catch (error) {
+      console.error('Error completing tasks:', error);
+      loader.hideLoader();
+      toast.error('Error completing tasks');
+    }
+  };
+
   // Pagination logic
   const totalPages = Math.ceil((viewMode === 'group' ? groupedChecklists.length : filteredChecklists.length) / itemsPerPage);
   const paginatedChecklists = useMemo(() => {
@@ -1347,6 +1428,9 @@ function ChecklistContent() {
     const sourceList = viewMode === 'group' ? groupedChecklists : filteredChecklists;
     return sourceList.slice(startIndex, endIndex);
   }, [filteredChecklists, groupedChecklists, currentPage, itemsPerPage, viewMode]);
+
+  const pageSelectable = paginatedChecklists.filter((checklist) => (checklist.status || '').toLowerCase() !== 'completed');
+  const pageAllSelected = pageSelectable.length > 0 && pageSelectable.every((checklist) => selectedTaskKeys.has(checklistRowKey(checklist)));
 
   const getPageNumbers = () => {
     const pages = [];
@@ -1389,16 +1473,16 @@ function ChecklistContent() {
 
   return (
     <LayoutWrapper>
-      <div className="p-4 space-y-4">
+      <div className="px-5 py-3 space-y-3">
         {/* Header */}
         <motion.div
-          className="flex flex-col md:flex-row md:justify-between md:items-center gap-4"
+          className="flex flex-wrap items-center gap-3"
           initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
         >
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Checklists</h1>
-            <p className="text-gray-600 dark:text-gray-400 mt-1">Manage recurring tasks with automated scheduling</p>
+          <div className="mr-auto">
+            <h1 className="text-[26px] leading-none font-black text-slate-800 dark:text-white tracking-tight">Checklists</h1>
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.18em] mt-1">Manage recurring tasks with automated scheduling</p>
           </div>
 
           {targetId && (
@@ -1421,188 +1505,94 @@ function ChecklistContent() {
             </motion.div>
           )}
 
-          <div className="flex items-center gap-3 overflow-x-auto pb-2 -mx-4 px-4 md:mx-0 md:px-0 md:pb-0 md:overflow-x-visible" style={{ scrollbarWidth: 'thin', scrollbarColor: '#cbd5e1 transparent' }}>
-            {/* Filters Button with Count Badge - Moved to front on mobile */}
-            <div className="relative flex-shrink-0 md:order-2">
-              <button
-                ref={filterBtnRef}
-                onClick={handleFilterClick}
-                className="flex items-center gap-2 px-4 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition shadow-sm"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
-                </svg>
-                <span className="hidden sm:inline">Filters</span>
-              </button>
-              {activeFilterCount > 0 && (
-                <span className="absolute -top-2 -right-2 bg-[var(--theme-primary)] text-gray-900 text-xs font-bold rounded-full h-5 w-5 flex items-center justify-center">
-                  {activeFilterCount}
-                </span>
-              )}
-            </div>
-
-            {/* Add Button - Moved to front on mobile */}
-            <motion.button
-              onClick={() => {
-                setEditingChecklist(null);
-                resetForm();
-                setShowAddModal(true);
-              }}
-              className="flex items-center gap-2 bg-[var(--theme-primary)] hover:bg-[var(--theme-secondary)] text-gray-900 font-semibold py-2 px-4 rounded-lg shadow-sm transition flex-shrink-0 md:order-last"
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
+          <div className={`flex items-center rounded-full overflow-hidden ${LIGHT_SURFACE}`}>
+            <button
+              onClick={() => { setViewMode('list'); setCurrentPage(1); }}
+              className={`px-4 py-2 text-xs font-black uppercase tracking-widest ${viewMode === 'list' ? 'bg-[var(--theme-primary)] text-gray-900' : 'text-slate-500'}`}
             >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-              </svg>
-              <span className="hidden sm:inline">Add New Checklist</span>
-            </motion.button>
-
-            {/* View Mode Toggle Buttons */}
-            <div className="flex items-center gap-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg p-1 flex-shrink-0 md:order-1">
-              <button
-                onClick={() => { setViewMode('list'); setCurrentPage(1); }}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded transition ${viewMode === 'list'
-                  ? 'bg-[var(--theme-primary)] text-gray-900 font-semibold'
-                  : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
-                  }`}
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" />
-                </svg>
-                <span className="hidden sm:inline">List</span>
-              </button>
-              <button
-                onClick={() => { setViewMode('tile'); setCurrentPage(1); }}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded transition ${viewMode === 'tile'
-                  ? 'bg-[var(--theme-primary)] text-gray-900 font-semibold'
-                  : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
-                  }`}
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM14 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM4 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zM14 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
-                </svg>
-                <span className="hidden sm:inline">Tiles</span>
-              </button>
-              <button
-                onClick={() => { setViewMode('group'); setCurrentPage(1); }}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded transition ${viewMode === 'group'
-                  ? 'bg-[var(--theme-primary)] text-gray-900 font-semibold'
-                  : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
-                  }`}
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-                </svg>
-                <span className="hidden sm:inline">Master</span>
-              </button>
-            </div>
-
-
-            {/* Export CSV Button */}
-            <motion.button
-              onClick={handleExportCSV}
-              className="flex items-center gap-2 px-4 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition shadow-sm flex-shrink-0 md:order-3"
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
+              List
+            </button>
+            <button
+              onClick={() => { setViewMode('tile'); setCurrentPage(1); }}
+              className={`px-4 py-2 text-xs font-black uppercase tracking-widest border-l border-[var(--theme-primary)]/25 ${viewMode === 'tile' ? 'bg-[var(--theme-primary)] text-gray-900' : 'text-slate-500'}`}
             >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-              </svg>
-              <span className="hidden sm:inline">Export CSV</span>
-            </motion.button>
-
-            {/* Open Tasks Button */}
-            <div className="relative flex-shrink-0 md:order-4">
-              <motion.button
-                onClick={() => setShowOpenTasks(!showOpenTasks)}
-                className={`flex items-center gap-2 px-4 py-2 border rounded-lg transition shadow-sm ${showOpenTasks
-                  ? 'bg-[var(--theme-primary)] border-[var(--theme-secondary)] text-gray-900 font-semibold'
-                  : 'bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700'
-                  }`}
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
-                </svg>
-                <span className="hidden sm:inline">Open Tasks</span>
-              </motion.button>
-              {openTasksCount > 0 && (
-                <span className="absolute -top-2 -right-2 bg-red-500 text-white text-xs font-bold rounded-full h-5 w-5 flex items-center justify-center">
-                  {openTasksCount}
-                </span>
-              )}
-            </div>
-
+              Tiles
+            </button>
+            <button
+              onClick={() => { setViewMode('group'); setCurrentPage(1); }}
+              className={`px-4 py-2 text-xs font-black uppercase tracking-widest border-l border-[var(--theme-primary)]/25 ${viewMode === 'group' ? 'bg-[var(--theme-primary)] text-gray-900' : 'text-slate-500'}`}
+            >
+              Master
+            </button>
           </div>
+
+          <div className={`flex items-center rounded-full overflow-hidden ${LIGHT_SURFACE}`}>
+            <button
+              ref={filterBtnRef}
+              onClick={handleFilterClick}
+              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-black uppercase tracking-widest text-slate-600 hover:bg-[var(--theme-primary)]/20"
+            >
+              Filters{activeFilterCount > 0 ? ` (${activeFilterCount})` : ''}
+            </button>
+            <button
+              onClick={handleExportCSV}
+              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-black uppercase tracking-widest text-slate-600 border-l border-[var(--theme-primary)]/25 hover:bg-[var(--theme-primary)]/20"
+            >
+              Export
+            </button>
+          </div>
+
+          <button
+            onClick={() => {
+              setEditingChecklist(null);
+              resetForm();
+              setShowAddModal(true);
+            }}
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full bg-[var(--theme-primary)] text-gray-900 text-xs font-black uppercase tracking-widest shadow-sm"
+          >
+            + Add
+          </button>
         </motion.div>
+
+        <CompactToolbar
+          currentPage={currentPage}
+          totalPages={totalPages}
+          itemsPerPage={itemsPerPage}
+          activeTimeFilter={activeTimeFilter}
+          timeStats={timeStats}
+          onTimeFilter={(filter) => { setActiveTimeFilter(activeTimeFilter === filter ? null : filter); setCurrentPage(1); }}
+          onPage={setCurrentPage}
+          bulkCount={viewMode === 'list' ? selectedForBulk.length : 0}
+          onBulkComplete={handleBulkComplete}
+        />
 
         {/* Table */}
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ delay: 0.2 }}
-          className="bg-white dark:bg-gray-800 rounded-xl shadow-lg border border-gray-300 dark:border-gray-700 overflow-hidden"
+          className={`${LIGHT_SURFACE} rounded-3xl overflow-hidden`}
         >
           {/* List View */}
           {viewMode === 'list' && (
             <>
-              {/* Pagination Row Above Table */}
-              <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-6 py-4 border-b border-gray-200 dark:border-gray-700 overflow-x-auto no-scrollbar">
-                <div className="flex items-center gap-4">
-                  <p className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest whitespace-nowrap">
-                    Showing <span className="text-gray-900 dark:text-white">{((currentPage - 1) * itemsPerPage) + 1}</span>-<span className="text-gray-900 dark:text-white">{Math.min(currentPage * itemsPerPage, filteredChecklists.length)}</span> of <span className="text-gray-900 dark:text-white">{filteredChecklists.length}</span>
-                  </p>
-                  <div className="h-4 w-px bg-gray-200 dark:bg-gray-700 hidden sm:block" />
-                  <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
-                    {(['Delayed', 'Today', 'Tomorrow', 'Next 3', 'Next 7', 'Next 15'] as const).map((filter) => (
-                      <button
-                        key={filter}
-                        onClick={() => { setActiveTimeFilter(activeTimeFilter === filter ? null : filter); setCurrentPage(1); }}
-                        className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all whitespace-nowrap relative border ${activeTimeFilter === filter
-                          ? 'bg-[var(--theme-primary)] text-white border-[var(--theme-primary)] shadow-sm'
-                          : 'bg-white dark:bg-gray-800 text-gray-500 border-gray-200 dark:border-gray-700 hover:border-[var(--theme-primary)] hover:text-[var(--theme-primary)]'
-                          }`}
-                      >
-                        {filter}
-                        {timeStats[filter] > 0 && (
-                          <sup className={`ml-1 text-[8px] ${activeTimeFilter === filter ? 'text-white/80' : (filter === 'Delayed' ? 'text-red-500' : 'text-[var(--theme-primary)]')}`}>
-                            {timeStats[filter]}
-                          </sup>
-                        )}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
-                    disabled={currentPage === 1}
-                    className="p-1 px-3 rounded-lg border border-gray-300 dark:border-gray-600 text-xs font-bold text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all active:scale-95"
-                  >
-                    PREV
-                  </button>
-                  <div className="h-4 w-px bg-gray-200 dark:bg-gray-700" />
-                  <span className="text-[10px] font-black text-gray-900 dark:text-white uppercase tracking-tighter">
-                    PAGE {currentPage} / {totalPages}
-                  </span>
-                  <div className="h-4 w-px bg-gray-200 dark:bg-gray-700" />
-                  <button
-                    onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
-                    disabled={currentPage === totalPages}
-                    className="p-1 px-3 rounded-lg border border-gray-300 dark:border-gray-600 text-xs font-bold text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all active:scale-95"
-                  >
-                    NEXT
-                  </button>
-                </div>
-              </div>
-
               <div className="overflow-x-auto">
                 <table className="w-full">
                   <thead className="whitespace-nowrap">
                     <tr className="bg-[var(--theme-primary)] border-b border-gray-200 dark:border-gray-600">
-                      <th onClick={() => handleSort('id')} className="px-6 py-4 text-left text-sm font-semibold text-gray-900 cursor-pointer hover:bg-[var(--theme-secondary)] transition-colors">
+                      <th className="px-2.5 py-2 text-left text-xs font-black uppercase tracking-widest text-gray-900 whitespace-nowrap">
+                        <button
+                          type="button"
+                          onClick={togglePageSelect}
+                          title={pageAllSelected ? 'Clear page' : 'Select page'}
+                          className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${pageAllSelected ? 'bg-emerald-500 border-emerald-500 text-white' : 'bg-white border-slate-400'}`}
+                        >
+                          {pageAllSelected && (
+                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>
+                          )}
+                        </button>
+                      </th>
+                      <th onClick={() => handleSort('id')} className="px-2.5 py-2 text-left text-xs font-black uppercase tracking-widest text-gray-900 cursor-pointer hover:bg-[var(--theme-secondary)] transition-colors whitespace-nowrap">
                         <div className="flex items-center gap-2">
                           ID
                           {sortColumn === 'id' && (
@@ -1610,7 +1600,7 @@ function ChecklistContent() {
                           )}
                         </div>
                       </th>
-                      <th onClick={() => handleSort('question')} className="px-6 py-4 text-left text-sm font-semibold text-gray-900 cursor-pointer hover:bg-[var(--theme-secondary)] transition-colors w-full min-w-[400px]">
+                      <th onClick={() => handleSort('question')} className="px-2.5 py-2 text-left text-xs font-black uppercase tracking-widest text-gray-900 cursor-pointer hover:bg-[var(--theme-secondary)] transition-colors whitespace-nowrap w-full min-w-[220px]">
                         <div className="flex items-center gap-2">
                           Question/Task
                           {sortColumn === 'question' && (
@@ -1618,7 +1608,7 @@ function ChecklistContent() {
                           )}
                         </div>
                       </th>
-                      <th onClick={() => handleSort('assignee')} className="px-6 py-4 text-left text-sm font-semibold text-gray-900 cursor-pointer hover:bg-[var(--theme-secondary)] transition-colors">
+                      <th onClick={() => handleSort('assignee')} className="px-2.5 py-2 text-left text-xs font-black uppercase tracking-widest text-gray-900 cursor-pointer hover:bg-[var(--theme-secondary)] transition-colors whitespace-nowrap">
                         <div className="flex items-center gap-2">
                           Assignee
                           {sortColumn === 'assignee' && (
@@ -1626,7 +1616,7 @@ function ChecklistContent() {
                           )}
                         </div>
                       </th>
-                      <th onClick={() => handleSort('doer_name')} className="px-6 py-4 text-left text-sm font-semibold text-gray-900 cursor-pointer hover:bg-[var(--theme-secondary)] transition-colors">
+                      <th onClick={() => handleSort('doer_name')} className="px-2.5 py-2 text-left text-xs font-black uppercase tracking-widest text-gray-900 cursor-pointer hover:bg-[var(--theme-secondary)] transition-colors whitespace-nowrap">
                         <div className="flex items-center gap-2">
                           Doer
                           {sortColumn === 'doer_name' && (
@@ -1634,7 +1624,7 @@ function ChecklistContent() {
                           )}
                         </div>
                       </th>
-                      <th onClick={() => handleSort('priority')} className="px-6 py-4 text-left text-sm font-semibold text-gray-900 cursor-pointer hover:bg-[var(--theme-secondary)] transition-colors">
+                      <th onClick={() => handleSort('priority')} className="px-2.5 py-2 text-left text-xs font-black uppercase tracking-widest text-gray-900 cursor-pointer hover:bg-[var(--theme-secondary)] transition-colors whitespace-nowrap">
                         <div className="flex items-center gap-2">
                           Priority
                           {sortColumn === 'priority' && (
@@ -1642,7 +1632,7 @@ function ChecklistContent() {
                           )}
                         </div>
                       </th>
-                      <th onClick={() => handleSort('department')} className="px-6 py-4 text-left text-sm font-semibold text-gray-900 cursor-pointer hover:bg-[var(--theme-secondary)] transition-colors">
+                      <th onClick={() => handleSort('department')} className="px-2.5 py-2 text-left text-xs font-black uppercase tracking-widest text-gray-900 cursor-pointer hover:bg-[var(--theme-secondary)] transition-colors whitespace-nowrap">
                         <div className="flex items-center gap-2">
                           Department
                           {sortColumn === 'department' && (
@@ -1650,7 +1640,7 @@ function ChecklistContent() {
                           )}
                         </div>
                       </th>
-                      <th onClick={() => handleSort('frequency')} className="px-6 py-4 text-left text-sm font-semibold text-gray-900 cursor-pointer hover:bg-[var(--theme-secondary)] transition-colors">
+                      <th onClick={() => handleSort('frequency')} className="px-2.5 py-2 text-left text-xs font-black uppercase tracking-widest text-gray-900 cursor-pointer hover:bg-[var(--theme-secondary)] transition-colors whitespace-nowrap">
                         <div className="flex items-center gap-2">
                           Frequency
                           {sortColumn === 'frequency' && (
@@ -1658,7 +1648,7 @@ function ChecklistContent() {
                           )}
                         </div>
                       </th>
-                      <th onClick={() => handleSort('due_date')} className="px-6 py-4 text-left text-sm font-semibold text-gray-900 cursor-pointer hover:bg-[var(--theme-secondary)] transition-colors">
+                      <th onClick={() => handleSort('due_date')} className="px-2.5 py-2 text-left text-xs font-black uppercase tracking-widest text-gray-900 cursor-pointer hover:bg-[var(--theme-secondary)] transition-colors whitespace-nowrap">
                         <div className="flex items-center gap-2">
                           Due Date
                           {sortColumn === 'due_date' && (
@@ -1666,7 +1656,8 @@ function ChecklistContent() {
                           )}
                         </div>
                       </th>
-                      <th onClick={() => handleSort('status')} className="px-6 py-4 text-left text-sm font-semibold text-gray-900 cursor-pointer hover:bg-[var(--theme-secondary)] transition-colors">
+                      <th className="px-2.5 py-2 text-left text-xs font-black uppercase tracking-widest text-gray-900 whitespace-nowrap">Completed</th>
+                      <th onClick={() => handleSort('status')} className="px-2.5 py-2 text-left text-xs font-black uppercase tracking-widest text-gray-900 cursor-pointer hover:bg-[var(--theme-secondary)] transition-colors whitespace-nowrap">
                         <div className="flex items-center gap-2">
                           Status
                           {sortColumn === 'status' && (
@@ -1674,13 +1665,12 @@ function ChecklistContent() {
                           )}
                         </div>
                       </th>
-                      <th className="px-6 py-4 text-left text-sm font-semibold text-gray-900">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-200 dark:divide-gray-700 whitespace-nowrap">
                     {paginatedChecklists.length === 0 ? (
                       <tr>
-                        <td colSpan={10} className="px-6 py-12 text-center">
+                        <td colSpan={11} className="px-6 py-12 text-center">
                           <div className="flex flex-col items-center justify-center">
                             <div className="w-16 h-16 bg-gradient-to-br from-[var(--theme-primary)] to-[var(--theme-secondary)] rounded-full flex items-center justify-center mb-4 text-3xl">
                               📋
@@ -1696,26 +1686,45 @@ function ChecklistContent() {
                           key={checklist.occurrence_id || checklist.id}
                           initial={{ opacity: 0 }}
                           animate={{ opacity: 1 }}
-                          whileHover={{ backgroundColor: 'rgba(244, 210, 74, 0.05)' }}
-                          className="transition-colors"
+                          whileHover={{ backgroundColor: isCompletedAfterDue(checklist) ? 'rgba(254, 202, 202, 0.7)' : 'rgba(244, 210, 74, 0.05)' }}
+                          className={`transition-colors ${isCompletedAfterDue(checklist) ? 'bg-red-100 dark:bg-red-900/30' : ''}`}
                         >
-                          <td className="px-6 py-4">
-                            <span className="font-mono text-sm font-semibold text-gray-900 dark:text-white">
+                          <td className="px-2.5 py-1.5 text-sm">
+                            {(() => {
+                              const done = (checklist.status || '').toLowerCase() === 'completed';
+                              const selected = selectedTaskKeys.has(checklistRowKey(checklist));
+                              return (
+                                <button
+                                  type="button"
+                                  disabled={done}
+                                  onClick={() => toggleTaskSelect(checklist)}
+                                  title={done ? 'Completed' : selected ? 'Deselect' : 'Select'}
+                                  className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${done || selected ? 'bg-emerald-500 border-emerald-500 text-white' : 'bg-white border-slate-400'} ${done ? 'opacity-60 cursor-default' : ''}`}
+                                >
+                                  {(done || selected) && (
+                                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>
+                                  )}
+                                </button>
+                              );
+                            })()}
+                          </td>
+                          <td className="px-2.5 py-1.5 text-sm">
+                            <span className="text-sm font-black text-gray-900 dark:text-white">
                               #{checklist.id}
                             </span>
                           </td>
-                          <td className="px-6 py-4">
-                            <p className="font-semibold text-gray-900 dark:text-white whitespace-normal break-words">
+                          <td className="px-2.5 py-1.5 text-sm whitespace-normal">
+                            <p className="text-sm font-bold text-gray-900 dark:text-white leading-snug whitespace-normal break-words">
                               {checklist.question}
                             </p>
                           </td>
-                          <td className="px-6 py-4">
+                          <td className="px-2.5 py-1.5 text-sm">
                             {checklist.assignee ? (
                               <div className="flex items-center gap-2">
                                 {getUserImage(checklist.assignee) ? (
-                                  <img src={`/api/image-proxy?url=${encodeURIComponent(getUserImage(checklist.assignee)!)}`} alt={checklist.assignee} className="w-8 h-8 rounded-full object-cover border-2 border-[var(--theme-primary)]" />
+                                  <img src={`/api/image-proxy?url=${encodeURIComponent(getUserImage(checklist.assignee)!)}`} alt={checklist.assignee} className="w-5 h-5 rounded-full object-cover border border-[var(--theme-primary)]" />
                                 ) : (
-                                  <div className="w-8 h-8 bg-gradient-to-br from-[var(--theme-primary)] to-[var(--theme-secondary)] rounded-full flex items-center justify-center text-sm font-bold text-gray-900 shadow-md">
+                                  <div className="w-5 h-5 bg-gradient-to-br from-[var(--theme-primary)] to-[var(--theme-secondary)] rounded-full flex items-center justify-center text-[10px] font-bold text-gray-900">
                                     {checklist.assignee[0]?.toUpperCase() || '?'}
                                   </div>
                                 )}
@@ -1725,13 +1734,13 @@ function ChecklistContent() {
                               <span className="text-gray-500 dark:text-gray-400">N/A</span>
                             )}
                           </td>
-                          <td className="px-6 py-4">
+                          <td className="px-2.5 py-1.5 text-sm">
                             {checklist.doer_name ? (
                               <div className="flex items-center gap-2">
                                 {getUserImage(checklist.doer_name) ? (
-                                  <img src={`/api/image-proxy?url=${encodeURIComponent(getUserImage(checklist.doer_name)!)}`} alt={checklist.doer_name} className="w-8 h-8 rounded-full object-cover border-2 border-[var(--theme-primary)]" />
+                                  <img src={`/api/image-proxy?url=${encodeURIComponent(getUserImage(checklist.doer_name)!)}`} alt={checklist.doer_name} className="w-5 h-5 rounded-full object-cover border border-[var(--theme-primary)]" />
                                 ) : (
-                                  <div className="w-8 h-8 bg-gradient-to-br from-[var(--theme-primary)] to-[var(--theme-secondary)] rounded-full flex items-center justify-center text-sm font-bold text-gray-900 shadow-md">
+                                  <div className="w-5 h-5 bg-gradient-to-br from-[var(--theme-primary)] to-[var(--theme-secondary)] rounded-full flex items-center justify-center text-[10px] font-bold text-gray-900">
                                     {checklist.doer_name[0]?.toUpperCase() || '?'}
                                   </div>
                                 )}
@@ -1741,46 +1750,35 @@ function ChecklistContent() {
                               <span className="text-gray-500 dark:text-gray-400">N/A</span>
                             )}
                           </td>
-                          <td className="px-6 py-4">
-                            <span className={`px-3 py-1 rounded-full text-xs font-semibold ${getPriorityColor(checklist.priority)}`}>
+                          <td className="px-2.5 py-1.5 text-sm">
+                            <span className={`px-2 py-0.5 rounded-full text-xs font-black uppercase tracking-wide ${getPriorityColor(checklist.priority)}`}>
                               {checklist.priority?.toUpperCase()}
                             </span>
                           </td>
-                          <td className="px-6 py-4 text-gray-900 dark:text-white">
+                          <td className="px-2.5 py-1.5 text-sm text-gray-900 dark:text-white">
                             {checklist.department || 'N/A'}
                           </td>
-                          <td className="px-6 py-4">
-                            <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300">
+                          <td className="px-2.5 py-1.5 text-sm">
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-black uppercase tracking-wide ${getFrequencyBadgeClass(checklist.frequency)}`}>
                               {checklist.frequency}
                             </span>
                           </td>
-                          <td className="px-6 py-4">
-                            <div className="text-sm">
-                              <p className="text-gray-900 dark:text-white font-medium">
-                                {formatDateToLocalTimezone(checklist.due_date)}
+                          <td className="px-2.5 py-1.5 text-sm">
+                            <div className="text-sm whitespace-nowrap">
+                              <p className="text-gray-900 dark:text-white font-bold">
+                                {formatShortDueDate(checklist.due_date)}
                               </p>
                             </div>
                           </td>
-                          <td className="px-6 py-4">
-                            <span className={`px-3 py-1 rounded-full text-xs font-semibold ${getStatusColor(checklist.status)}`}>
+                          <td className="px-2.5 py-1.5 text-sm">
+                            <p className={`text-sm font-bold whitespace-nowrap ${isCompletedAfterDue(checklist) ? 'text-red-600' : 'text-gray-900 dark:text-white'}`}>
+                              {checklist.completed_at ? formatShortDueDate(checklist.completed_at) : '—'}
+                            </p>
+                          </td>
+                          <td className="px-2.5 py-1.5 text-sm">
+                            <span className={`px-2 py-0.5 rounded-full text-xs font-black uppercase tracking-wide ${getStatusColor(checklist.status)}`}>
                               {checklist.status?.toUpperCase()}
                             </span>
-                          </td>
-                          <td className="px-6 py-4">
-                            <div className="flex items-center gap-2">
-                              <motion.button
-                                whileHover={{ scale: 1.1 }}
-                                whileTap={{ scale: 0.95 }}
-                                onClick={() => handleViewDetails(checklist)}
-                                className="p-2 text-[var(--theme-primary)] hover:bg-[var(--theme-lighter)] dark:hover:bg-gray-700 rounded-lg transition"
-                                title="View Details"
-                              >
-                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                                </svg>
-                              </motion.button>
-                            </div>
                           </td>
                         </motion.tr>
                       ))
@@ -1795,56 +1793,7 @@ function ChecklistContent() {
 
           {/* Tile View */}
           {viewMode === 'tile' && (
-            <div className="p-4">
-              {/* Pagination Row Above Tiles */}
-              <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-2 py-4 border-b border-gray-200 dark:border-gray-700 overflow-x-auto no-scrollbar mb-4">
-                <div className="flex items-center gap-4">
-                  <p className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest whitespace-nowrap">
-                    Showing <span className="text-gray-900 dark:text-white">{((currentPage - 1) * itemsPerPage) + 1}</span>-<span className="text-gray-900 dark:text-white">{Math.min(currentPage * itemsPerPage, filteredChecklists.length)}</span> of <span className="text-gray-900 dark:text-white">{filteredChecklists.length}</span>
-                  </p>
-                  <div className="h-4 w-px bg-gray-200 dark:bg-gray-700 hidden sm:block" />
-                  <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
-                    {(['Delayed', 'Today', 'Tomorrow', 'Next 3', 'Next 7', 'Next 15'] as const).map((filter) => (
-                      <button
-                        key={filter}
-                        onClick={() => { setActiveTimeFilter(activeTimeFilter === filter ? null : filter); setCurrentPage(1); }}
-                        className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all whitespace-nowrap relative border ${activeTimeFilter === filter
-                          ? 'bg-[var(--theme-primary)] text-white border-[var(--theme-primary)] shadow-sm'
-                          : 'bg-white dark:bg-gray-800 text-gray-500 border-gray-200 dark:border-gray-700 hover:border-[var(--theme-primary)] hover:text-[var(--theme-primary)]'
-                          }`}
-                      >
-                        {filter}
-                        {timeStats[filter] > 0 && (
-                          <sup className={`ml-1 text-[8px] ${activeTimeFilter === filter ? 'text-white/80' : (filter === 'Delayed' ? 'text-red-500' : 'text-[var(--theme-primary)]')}`}>
-                            {timeStats[filter]}
-                          </sup>
-                        )}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
-                    disabled={currentPage === 1}
-                    className="p-1 px-3 rounded-lg border border-gray-300 dark:border-gray-600 text-xs font-bold text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all active:scale-95"
-                  >
-                    PREV
-                  </button>
-                  <div className="h-4 w-px bg-gray-200 dark:bg-gray-700" />
-                  <span className="text-[10px] font-black text-gray-900 dark:text-white uppercase tracking-tighter">
-                    PAGE {currentPage} / {totalPages}
-                  </span>
-                  <div className="h-4 w-px bg-gray-200 dark:bg-gray-700" />
-                  <button
-                    onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
-                    disabled={currentPage === totalPages}
-                    className="p-1 px-3 rounded-lg border border-gray-300 dark:border-gray-600 text-xs font-bold text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all active:scale-95"
-                  >
-                    NEXT
-                  </button>
-                </div>
-              </div>
+            <div className="p-3">
 
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {paginatedChecklists.map((checklist, index) => (
@@ -2011,94 +1960,42 @@ function ChecklistContent() {
           {/* Master View */}
           {viewMode === 'group' && (
             <>
-              {/* Pagination Row Above Table (Group View) */}
-              <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-6 py-4 border-b border-gray-200 dark:border-gray-700 overflow-x-auto no-scrollbar">
-                <div className="flex items-center gap-4">
-                  <p className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest whitespace-nowrap">
-                    Showing <span className="text-gray-900 dark:text-white">{((currentPage - 1) * itemsPerPage) + 1}</span>-<span className="text-gray-900 dark:text-white">{Math.min(currentPage * itemsPerPage, groupedChecklists.length)}</span> of <span className="text-gray-900 dark:text-white">{groupedChecklists.length}</span>
-                  </p>
-                  <div className="h-4 w-px bg-gray-200 dark:bg-gray-700 hidden sm:block" />
-                  <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
-                    {(['Delayed', 'Today', 'Tomorrow', 'Next 3', 'Next 7', 'Next 15'] as const).map((filter) => (
-                      <button
-                        key={filter}
-                        onClick={() => { setActiveTimeFilter(activeTimeFilter === filter ? null : filter); setCurrentPage(1); }}
-                        className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all whitespace-nowrap relative border ${activeTimeFilter === filter
-                          ? 'bg-[var(--theme-primary)] text-white border-[var(--theme-primary)] shadow-sm'
-                          : 'bg-white dark:bg-gray-800 text-gray-500 border-gray-200 dark:border-gray-700 hover:border-[var(--theme-primary)] hover:text-[var(--theme-primary)]'
-                          }`}
-                      >
-                        {filter}
-                        {timeStats[filter] > 0 && (
-                          <sup className={`ml-1 text-[8px] ${activeTimeFilter === filter ? 'text-white/80' : (filter === 'Delayed' ? 'text-red-500' : 'text-[var(--theme-primary)]')}`}>
-                            {timeStats[filter]}
-                          </sup>
-                        )}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
-                    disabled={currentPage === 1}
-                    className="p-1 px-3 rounded-lg border border-gray-300 dark:border-gray-600 text-xs font-bold text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all active:scale-95"
-                  >
-                    PREV
-                  </button>
-                  <div className="h-4 w-px bg-gray-200 dark:bg-gray-700" />
-                  <span className="text-[10px] font-black text-gray-900 dark:text-white uppercase tracking-tighter">
-                    PAGE {currentPage} / {totalPages}
-                  </span>
-                  <div className="h-4 w-px bg-gray-200 dark:bg-gray-700" />
-                  <button
-                    onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
-                    disabled={currentPage === totalPages}
-                    className="p-1 px-3 rounded-lg border border-gray-300 dark:border-gray-600 text-xs font-bold text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all active:scale-95"
-                  >
-                    NEXT
-                  </button>
-                </div>
-              </div>
 
               <div className="overflow-x-auto">
                 <table className="w-full">
                   <thead className="whitespace-nowrap">
                     <tr className="bg-[var(--theme-primary)] border-b border-gray-200 dark:border-gray-600">
-                      <th className="px-6 py-4 text-left text-sm font-semibold text-gray-900">
+                      <th className="px-2.5 py-2 text-left text-xs font-black uppercase tracking-widest text-gray-900 whitespace-nowrap">Actions</th>
+                      <th className="px-2.5 py-2 text-left text-xs font-black uppercase tracking-widest text-gray-900 whitespace-nowrap">
                         ID
                       </th>
-                      <th className="px-6 py-4 text-left text-sm font-semibold text-gray-900 w-full min-w-[400px]">
+                      <th className="px-2.5 py-2 text-left text-xs font-black uppercase tracking-widest text-gray-900 whitespace-nowrap w-full min-w-[220px]">
                         Question/Task
                       </th>
-                      <th className="px-6 py-4 text-left text-sm font-semibold text-gray-900">
+                      <th className="px-2.5 py-2 text-left text-xs font-black uppercase tracking-widest text-gray-900 whitespace-nowrap">
                         Assignee
                       </th>
-                      <th className="px-6 py-4 text-left text-sm font-semibold text-gray-900">
+                      <th className="px-2.5 py-2 text-left text-xs font-black uppercase tracking-widest text-gray-900 whitespace-nowrap">
                         Doer
                       </th>
-                      <th className="px-6 py-4 text-left text-sm font-semibold text-gray-900">
+                      <th className="px-2.5 py-2 text-left text-xs font-black uppercase tracking-widest text-gray-900 whitespace-nowrap">
                         Priority
                       </th>
-                      <th className="px-6 py-4 text-left text-sm font-semibold text-gray-900">
+                      <th className="px-2.5 py-2 text-left text-xs font-black uppercase tracking-widest text-gray-900 whitespace-nowrap">
                         Department
                       </th>
-                      <th className="px-6 py-4 text-left text-sm font-semibold text-gray-900">
+                      <th className="px-2.5 py-2 text-left text-xs font-black uppercase tracking-widest text-gray-900 whitespace-nowrap">
                         Frequency
                       </th>
-                      <th className="px-6 py-4 text-left text-sm font-semibold text-gray-900">
+                      <th className="px-2.5 py-2 text-left text-xs font-black uppercase tracking-widest text-gray-900 whitespace-nowrap">
                         Due Date
                       </th>
-                      <th className="px-6 py-4 text-left text-sm font-semibold text-gray-900">
-                        Status
-                      </th>
-                      <th className="px-6 py-4 text-left text-sm font-semibold text-gray-900">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-200 dark:divide-gray-700 whitespace-nowrap">
                     {paginatedChecklists.length === 0 ? (
                       <tr>
-                        <td colSpan={10} className="px-6 py-12 text-center">
+                        <td colSpan={9} className="px-6 py-12 text-center">
                           <div className="flex flex-col items-center justify-center">
                             <div className="w-16 h-16 bg-gradient-to-br from-[var(--theme-primary)] to-[var(--theme-secondary)] rounded-full flex items-center justify-center mb-4 text-3xl">
                               📋
@@ -2117,23 +2014,55 @@ function ChecklistContent() {
                           whileHover={{ backgroundColor: 'rgba(244, 210, 74, 0.05)' }}
                           className="transition-colors"
                         >
-                          <td className="px-6 py-4">
-                            <span className="font-mono text-sm font-semibold text-gray-900 dark:text-white">
+                          <td className="px-2.5 py-1.5 text-sm">
+                            <div className="flex items-center gap-1">
+                              <button
+                                onClick={() => handleViewDetails(checklist)}
+                                className="p-1.5 text-[var(--theme-primary)] hover:bg-[var(--theme-lighter)] dark:hover:bg-gray-700 rounded-lg transition"
+                                title="View Details"
+                              >
+                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                                </svg>
+                              </button>
+                              <button
+                                onClick={() => openEditModal(checklist)}
+                                className="p-1.5 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition"
+                                title="Edit"
+                              >
+                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                                </svg>
+                              </button>
+                              <button
+                                onClick={() => openDeleteModal(checklist.id)}
+                                className="p-1.5 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition"
+                                title="Delete"
+                              >
+                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                </svg>
+                              </button>
+                            </div>
+                          </td>
+                          <td className="px-2.5 py-1.5 text-sm">
+                            <span className="text-sm font-black text-gray-900 dark:text-white">
                               {checklist.id}
                             </span>
                           </td>
-                          <td className="px-6 py-4">
-                            <p className="font-semibold text-gray-900 dark:text-white whitespace-normal break-words">
+                          <td className="px-2.5 py-1.5 text-sm whitespace-normal">
+                            <p className="text-sm font-bold text-gray-900 dark:text-white leading-snug whitespace-normal break-words">
                               {checklist.question}
                             </p>
                           </td>
-                          <td className="px-6 py-4">
+                          <td className="px-2.5 py-1.5 text-sm">
                             {checklist.assignee ? (
                               <div className="flex items-center gap-2">
                                 {getUserImage(checklist.assignee) ? (
-                                  <img src={`/api/image-proxy?url=${encodeURIComponent(getUserImage(checklist.assignee)!)}`} alt={checklist.assignee} className="w-8 h-8 rounded-full object-cover border-2 border-[var(--theme-primary)]" />
+                                  <img src={`/api/image-proxy?url=${encodeURIComponent(getUserImage(checklist.assignee)!)}`} alt={checklist.assignee} className="w-5 h-5 rounded-full object-cover border border-[var(--theme-primary)]" />
                                 ) : (
-                                  <div className="w-8 h-8 bg-gradient-to-br from-[var(--theme-primary)] to-[var(--theme-secondary)] rounded-full flex items-center justify-center text-sm font-bold text-gray-900 shadow-md">
+                                  <div className="w-5 h-5 bg-gradient-to-br from-[var(--theme-primary)] to-[var(--theme-secondary)] rounded-full flex items-center justify-center text-[10px] font-bold text-gray-900">
                                     {checklist.assignee[0]?.toUpperCase() || '?'}
                                   </div>
                                 )}
@@ -2143,13 +2072,13 @@ function ChecklistContent() {
                               <span className="text-gray-500 dark:text-gray-400">N/A</span>
                             )}
                           </td>
-                          <td className="px-6 py-4">
+                          <td className="px-2.5 py-1.5 text-sm">
                             {checklist.doer_name ? (
                               <div className="flex items-center gap-2">
                                 {getUserImage(checklist.doer_name) ? (
-                                  <img src={`/api/image-proxy?url=${encodeURIComponent(getUserImage(checklist.doer_name)!)}`} alt={checklist.doer_name} className="w-8 h-8 rounded-full object-cover border-2 border-[var(--theme-primary)]" />
+                                  <img src={`/api/image-proxy?url=${encodeURIComponent(getUserImage(checklist.doer_name)!)}`} alt={checklist.doer_name} className="w-5 h-5 rounded-full object-cover border border-[var(--theme-primary)]" />
                                 ) : (
-                                  <div className="w-8 h-8 bg-gradient-to-br from-[var(--theme-primary)] to-[var(--theme-secondary)] rounded-full flex items-center justify-center text-sm font-bold text-gray-900 shadow-md">
+                                  <div className="w-5 h-5 bg-gradient-to-br from-[var(--theme-primary)] to-[var(--theme-secondary)] rounded-full flex items-center justify-center text-[10px] font-bold text-gray-900">
                                     {checklist.doer_name[0]?.toUpperCase() || '?'}
                                   </div>
                                 )}
@@ -2159,67 +2088,24 @@ function ChecklistContent() {
                               <span className="text-gray-500 dark:text-gray-400">N/A</span>
                             )}
                           </td>
-                          <td className="px-6 py-4">
-                            <span className={`px-3 py-1 rounded-full text-xs font-semibold ${getPriorityColor(checklist.priority)}`}>
+                          <td className="px-2.5 py-1.5 text-sm">
+                            <span className={`px-2 py-0.5 rounded-full text-xs font-black uppercase tracking-wide ${getPriorityColor(checklist.priority)}`}>
                               {checklist.priority?.toUpperCase()}
                             </span>
                           </td>
-                          <td className="px-6 py-4 text-gray-900 dark:text-white">
+                          <td className="px-2.5 py-1.5 text-sm text-gray-900 dark:text-white">
                             {checklist.department || 'N/A'}
                           </td>
-                          <td className="px-6 py-4">
-                            <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300">
+                          <td className="px-2.5 py-1.5 text-sm">
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-black uppercase tracking-wide ${getFrequencyBadgeClass(checklist.frequency)}`}>
                               {checklist.frequency}
                             </span>
                           </td>
-                          <td className="px-6 py-4">
-                            <div className="text-sm">
-                              <p className="text-gray-900 dark:text-white font-medium">
-                                {formatDateToLocalTimezone(checklist.due_date)}
+                          <td className="px-2.5 py-1.5 text-sm">
+                            <div className="text-sm whitespace-nowrap">
+                              <p className="text-gray-900 dark:text-white font-bold">
+                                {formatShortDueDate(checklist.due_date)}
                               </p>
-                            </div>
-                          </td>
-                          <td className="px-6 py-4">
-                            <span className={`px-3 py-1 rounded-full text-xs font-semibold ${getStatusColor(checklist.status)}`}>
-                              {checklist.status?.toUpperCase()}
-                            </span>
-                          </td>
-                          <td className="px-6 py-4">
-                            <div className="flex items-center gap-2">
-                              <motion.button
-                                whileHover={{ scale: 1.1 }}
-                                whileTap={{ scale: 0.95 }}
-                                onClick={() => handleViewDetails(checklist)}
-                                className="p-2 text-[var(--theme-primary)] hover:bg-[var(--theme-lighter)] dark:hover:bg-gray-700 rounded-lg transition"
-                                title="View Details"
-                              >
-                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                                </svg>
-                              </motion.button>
-                              <motion.button
-                                whileHover={{ scale: 1.1 }}
-                                whileTap={{ scale: 0.95 }}
-                                onClick={() => openEditModal(checklist)}
-                                className="p-2 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition"
-                                title="Edit"
-                              >
-                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                                </svg>
-                              </motion.button>
-                              <motion.button
-                                whileHover={{ scale: 1.1 }}
-                                whileTap={{ scale: 0.95 }}
-                                onClick={() => openDeleteModal(checklist.id)}
-                                className="p-2 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition"
-                                title="Delete"
-                              >
-                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                                </svg>
-                              </motion.button>
                             </div>
                           </td>
                         </motion.tr>
@@ -2253,40 +2139,52 @@ function ChecklistContent() {
                 animate={{ scale: 1, opacity: 1 }}
                 exit={{ scale: 0.95, opacity: 0 }}
                 onClick={(e) => e.stopPropagation()}
-                className="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl max-w-5xl w-full max-h-[90vh] overflow-y-auto"
+                className={`${LIGHT_SURFACE} rounded-3xl max-w-2xl w-full max-h-[90vh] overflow-hidden flex flex-col`}
               >
-                <div className="sticky top-0 bg-gradient-to-r from-[var(--theme-primary)] to-[var(--theme-secondary)] px-6 py-4 rounded-t-2xl">
-                  <h2 className="text-2xl font-bold text-gray-900">{editingChecklist ? '✏️ Edit Checklist' : '✅ Add New Checklist'}</h2>
-                  <p className="text-gray-700 text-sm mt-1">{editingChecklist ? 'Update this master task' : 'Tasks will be automatically generated based on frequency'}</p>
+                <div className="px-4 py-2.5 bg-[var(--theme-primary)] text-gray-900 flex items-center justify-between shrink-0">
+                  <div>
+                    <h2 className="text-xs font-black uppercase tracking-widest">{editingChecklist ? 'Edit Checklist' : 'Add Checklist'}</h2>
+                    <p className="text-[10px] text-gray-800/80">{editingChecklist ? 'Update this task' : 'Tasks generate from the frequency'}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowAddModal(false);
+                      setEditingChecklist(null);
+                      resetForm();
+                    }}
+                    className="p-1 rounded-full hover:bg-black/10"
+                    title="Close"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" /></svg>
+                  </button>
                 </div>
 
-                <form onSubmit={editingChecklist ? handleEditChecklist : handleAddChecklist} className="p-4 md:p-6">
-                  {/* Two Column Layout */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
-                    {/* Left Column */}
-                    <div className="space-y-4 md:col-span-2">
+                <form onSubmit={editingChecklist ? handleEditChecklist : handleAddChecklist} className="p-3 overflow-y-auto">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div className="space-y-2.5 md:col-span-2">
                       {/* Question */}
                       <div>
-                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                        <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-1">
                           Question/Task *
                         </label>
                         <textarea
                           required
                           value={formData.question}
                           onChange={(e) => setFormData({ ...formData, question: e.target.value })}
-                          className="w-full px-4 py-2.5 bg-white dark:bg-slate-700 border border-[var(--theme-primary)]/30 dark:border-slate-600 rounded-xl focus:ring-2 focus:ring-[var(--theme-primary)] outline-none text-gray-900 dark:text-white resize-none"
-                          rows={4}
+                          className={`w-full px-3 py-1.5 rounded-2xl ${LIGHT_BG} ${LIGHT_BORDER} text-xs text-gray-900 dark:text-white outline-none resize-none`}
+                          rows={2}
                           placeholder="Enter the task or question..."
                         />
                       </div>
                     </div>
 
                     {/* Left Column - Other fields */}
-                    <div className="space-y-4">
+                    <div className="space-y-2.5">
 
                       {/* Assignee */}
                       <div className="relative" ref={assigneeRef}>
-                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                        <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-1">
                           Assignee *
                         </label>
                         <div className="relative">
@@ -2301,10 +2199,10 @@ function ChecklistContent() {
                             }}
                             onFocus={() => setShowAssigneeDropdown(true)}
                             placeholder="Search assignee..."
-                            className="w-full px-4 py-2.5 bg-white dark:bg-slate-700 border border-[var(--theme-primary)]/30 dark:border-slate-600 rounded-xl focus:ring-2 focus:ring-[var(--theme-primary)] outline-none text-gray-900 dark:text-white"
+                            className={`w-full px-3 py-1.5 rounded-full ${LIGHT_BG} ${LIGHT_BORDER} text-xs text-gray-900 dark:text-white outline-none`}
                           />
                           {showAssigneeDropdown && (
-                            <div className="absolute z-10 w-full mt-1 bg-white dark:bg-slate-700 border border-[var(--theme-primary)]/30 rounded-xl shadow-lg max-h-48 overflow-y-auto">
+                            <div className={`absolute z-10 w-full mt-1 ${LIGHT_SURFACE} rounded-2xl max-h-36 overflow-y-auto text-xs`}>
                               {users.filter(u => u.username.toLowerCase().includes(assigneeSearch.toLowerCase())).map(u => (
                                 <div
                                   key={u.id}
@@ -2325,7 +2223,7 @@ function ChecklistContent() {
 
                       {/* Doer - Multiple Selection */}
                       <div className="relative" ref={doerRef}>
-                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                        <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-1">
                           Doer (Multiple Selection)
                         </label>
 
@@ -2362,10 +2260,10 @@ function ChecklistContent() {
                             }}
                             onFocus={() => setShowDoerDropdown(true)}
                             placeholder="Search and select doers..."
-                            className="w-full px-4 py-2.5 bg-white dark:bg-slate-700 border border-[var(--theme-primary)]/30 dark:border-slate-600 rounded-xl focus:ring-2 focus:ring-[var(--theme-primary)] outline-none text-gray-900 dark:text-white"
+                            className={`w-full px-3 py-1.5 rounded-full ${LIGHT_BG} ${LIGHT_BORDER} text-xs text-gray-900 dark:text-white outline-none`}
                           />
                           {showDoerDropdown && (
-                            <div className="absolute z-10 w-full mt-1 bg-white dark:bg-slate-700 border border-[var(--theme-primary)]/30 rounded-xl shadow-lg max-h-48 overflow-y-auto">
+                            <div className={`absolute z-10 w-full mt-1 ${LIGHT_SURFACE} rounded-2xl max-h-36 overflow-y-auto text-xs`}>
                               {users.filter(u =>
                                 u.username.toLowerCase().includes(doerSearch.toLowerCase()) &&
                                 !selectedDoers.includes(u.username)
@@ -2396,7 +2294,7 @@ function ChecklistContent() {
 
                       {/* Department */}
                       <div className="relative" ref={departmentRef}>
-                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                        <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-1">
                           Department
                         </label>
                         <div className="flex gap-2">
@@ -2411,10 +2309,10 @@ function ChecklistContent() {
                               }}
                               onFocus={() => setShowDepartmentDropdown(true)}
                               placeholder="Search department..."
-                              className="w-full px-4 py-2.5 bg-white dark:bg-slate-700 border border-[var(--theme-primary)]/30 dark:border-slate-600 rounded-xl focus:ring-2 focus:ring-[var(--theme-primary)] outline-none text-gray-900 dark:text-white"
+                              className={`w-full px-3 py-1.5 rounded-full ${LIGHT_BG} ${LIGHT_BORDER} text-xs text-gray-900 dark:text-white outline-none`}
                             />
                             {showDepartmentDropdown && (
-                              <div className="absolute z-10 w-full mt-1 bg-white dark:bg-slate-700 border border-[var(--theme-primary)]/30 rounded-xl shadow-lg max-h-48 overflow-y-auto">
+                              <div className={`absolute z-10 w-full mt-1 ${LIGHT_SURFACE} rounded-2xl max-h-36 overflow-y-auto text-xs`}>
                                 {allDepartments.filter(d => d.toLowerCase().includes(departmentSearch.toLowerCase())).map(d => (
                                   <div
                                     key={d}
@@ -2436,11 +2334,11 @@ function ChecklistContent() {
                           <button
                             type="button"
                             onClick={() => setShowAddDepartmentModal(true)}
-                            className="px-3 py-2.5 bg-[var(--theme-primary)] hover:bg-[var(--theme-secondary)] text-gray-900 rounded-xl font-semibold transition text-sm flex items-center gap-1"
+                            className="w-8 h-8 shrink-0 bg-[var(--theme-primary)] text-gray-900 rounded-full flex items-center justify-center"
                             title="Add new department"
                           >
-                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 4v16m8-8H4" />
                             </svg>
                           </button>
                         </div>
@@ -2448,67 +2346,47 @@ function ChecklistContent() {
 
                       {/* Priority */}
                       <div>
-                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                        <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-1">
                           Priority *
                         </label>
-                        <div className="flex gap-2">
-                          {PRIORITIES.map(p => {
-                            let selectedColor = '';
-                            let unselectedColor = '';
-
-                            if (p.value === 'high') {
-                              selectedColor = 'bg-gradient-to-r from-red-500 to-red-600 text-white shadow-md';
-                              unselectedColor = 'hover:border-red-500';
-                            } else if (p.value === 'medium') {
-                              selectedColor = 'bg-gradient-to-r from-yellow-500 to-yellow-600 text-white shadow-md';
-                              unselectedColor = 'hover:border-yellow-500';
-                            } else {
-                              selectedColor = 'bg-gradient-to-r from-green-500 to-green-600 text-white shadow-md';
-                              unselectedColor = 'hover:border-green-500';
-                            }
-
-                            return (
-                              <motion.button
-                                key={p.value}
-                                type="button"
-                                whileHover={{ scale: 1.05 }}
-                                whileTap={{ scale: 0.95 }}
-                                onClick={() => setFormData({ ...formData, priority: p.value })}
-                                className={`flex-1 px-4 py-2.5 rounded-xl font-medium transition ${formData.priority === p.value
-                                  ? selectedColor
-                                  : `bg-white dark:bg-slate-700 text-gray-700 dark:text-gray-300 border border-gray-300 dark:border-slate-600 ${unselectedColor}`
-                                  }`}
-                              >
-                                {p.label}
-                              </motion.button>
-                            );
-                          })}
+                        <div className="flex flex-wrap gap-1.5">
+                          {PRIORITIES.map(p => (
+                            <button
+                              key={p.value}
+                              type="button"
+                              onClick={() => setFormData({ ...formData, priority: p.value })}
+                              className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${formData.priority === p.value
+                                ? 'bg-[var(--theme-primary)] text-gray-900'
+                                : `${LIGHT_BG} ${LIGHT_BORDER} text-slate-600`
+                                }`}
+                            >
+                              {p.label}
+                            </button>
+                          ))}
                         </div>
                       </div>
                     </div>
 
                     {/* Right Column */}
-                    <div className="space-y-4">
+                    <div className="space-y-2.5">
                       {/* Frequency */}
                       <div>
-                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                        <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-1">
                           Frequency *
                         </label>
-                        <div className="grid grid-cols-3 gap-2">
+                        <div className="flex flex-wrap gap-1.5">
                           {FREQUENCIES.map(f => (
-                            <motion.button
+                            <button
                               key={f.value}
                               type="button"
-                              whileHover={{ scale: 1.05 }}
-                              whileTap={{ scale: 0.95 }}
                               onClick={() => setFormData({ ...formData, frequency: f.value })}
-                              className={`px-3 py-2.5 rounded-xl font-medium text-sm transition ${formData.frequency === f.value
-                                ? 'bg-gradient-to-r from-[var(--theme-primary)] to-[var(--theme-secondary)] text-gray-900 shadow-md'
-                                : 'bg-white dark:bg-slate-700 text-gray-700 dark:text-gray-300 border border-gray-300 dark:border-slate-600 hover:border-[var(--theme-primary)]'
+                              className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${formData.frequency === f.value
+                                ? 'bg-[var(--theme-primary)] text-gray-900'
+                                : `${LIGHT_BG} ${LIGHT_BORDER} text-slate-600`
                                 }`}
                             >
                               {f.label}
-                            </motion.button>
+                            </button>
                           ))}
                         </div>
 
@@ -2609,33 +2487,33 @@ function ChecklistContent() {
 
                       {/* Select Due Date */}
                       <div className="relative">
-                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                        <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-1">
                           Start Date & Time *
                           {formData.frequency === 'weekly' && (
-                            <span className="block text-xs text-gray-500 mt-1">When to start the weekly tasks</span>
+                            <span className="block normal-case tracking-normal font-medium text-[10px] text-slate-500 mt-0.5">When to start the weekly tasks</span>
                           )}
                           {formData.frequency === 'daily' && (
-                            <span className="block text-xs text-gray-500 mt-1">Tasks will be created daily (Sundays skipped)</span>
+                            <span className="block normal-case tracking-normal font-medium text-[10px] text-slate-500 mt-0.5">Tasks will be created daily (Sundays skipped)</span>
                           )}
                           {formData.frequency === 'monthly' && (
-                            <span className="block text-xs text-gray-500 mt-1">Repeats this day each month. If it falls on Sunday, the task is shown on Saturday</span>
+                            <span className="block normal-case tracking-normal font-medium text-[10px] text-slate-500 mt-0.5">Repeats this day each month. If it falls on Sunday, the task is shown on Saturday</span>
                           )}
                           {formData.frequency === 'quarterly' && (
-                            <span className="block text-xs text-gray-500 mt-1">Repeats every 3 months. If it falls on Sunday, the task is shown on Saturday</span>
+                            <span className="block normal-case tracking-normal font-medium text-[10px] text-slate-500 mt-0.5">Repeats every 3 months. If it falls on Sunday, the task is shown on Saturday</span>
                           )}
                           {formData.frequency === 'yearly' && (
-                            <span className="block text-xs text-gray-500 mt-1">Repeats this date each year. If it falls on Sunday, the task is shown on Saturday</span>
+                            <span className="block normal-case tracking-normal font-medium text-[10px] text-slate-500 mt-0.5">Repeats this date each year. If it falls on Sunday, the task is shown on Saturday</span>
                           )}
                         </label>
                         <button
                           type="button"
                           onClick={() => setShowDatePicker(!showDatePicker)}
-                          className="w-full px-4 py-2.5 bg-gradient-to-r from-[var(--theme-light)] to-[var(--theme-lighter)] dark:bg-slate-700 border-2 border-[var(--theme-primary)]/50 dark:border-slate-600 rounded-xl focus:ring-2 focus:ring-[var(--theme-primary)] outline-none text-gray-900 dark:text-white font-medium shadow-sm text-left flex items-center justify-between"
+                          className={`w-full px-3 py-1.5 rounded-full ${LIGHT_BG} ${LIGHT_BORDER} text-xs font-semibold text-gray-900 dark:text-white text-left flex items-center justify-between`}
                         >
                           <span>
                             {formData.dueDate ? formatDateForInput(formData.dueDate) : 'Select date & time'}
                           </span>
-                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <svg className="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
                           </svg>
                         </button>
@@ -2860,28 +2738,24 @@ function ChecklistContent() {
                     )}
                   </AnimatePresence>
 
-                  <div className="flex gap-3 pt-4">
-                    <motion.button
-                      whileHover={{ scale: 1.02 }}
-                      whileTap={{ scale: 0.98 }}
+                  <div className="flex gap-2 pt-3">
+                    <button
                       type="submit"
-                      className="flex-1 bg-gradient-to-r from-[var(--theme-primary)] to-[var(--theme-secondary)] text-gray-900 px-6 py-3 rounded-xl font-semibold hover:shadow-lg transition"
+                      className="flex-1 px-4 py-2 rounded-full bg-[var(--theme-primary)] text-gray-900 text-[10px] font-black uppercase tracking-widest"
                     >
                       {editingChecklist ? 'Update Checklist' : 'Create Checklist'}
-                    </motion.button>
-                    <motion.button
-                      whileHover={{ scale: 1.02 }}
-                      whileTap={{ scale: 0.98 }}
+                    </button>
+                    <button
                       type="button"
                       onClick={() => {
                         setShowAddModal(false);
                         setEditingChecklist(null);
                         resetForm();
                       }}
-                      className="px-6 py-3 bg-gray-200 dark:bg-slate-700 text-gray-700 dark:text-gray-300 rounded-xl font-semibold hover:bg-gray-300 dark:hover:bg-slate-600 transition"
+                      className={`px-4 py-2 rounded-full text-[10px] font-black uppercase tracking-widest text-slate-600 ${LIGHT_BG} ${LIGHT_BORDER}`}
                     >
                       Cancel
-                    </motion.button>
+                    </button>
                   </div>
                 </form>
               </motion.div>
@@ -2900,7 +2774,6 @@ function ChecklistContent() {
               onClick={() => {
                 setShowDeleteModal(false);
                 setDeleteId(null);
-                setDeleteMode(null);
               }}
             >
               <motion.div
@@ -2908,89 +2781,35 @@ function ChecklistContent() {
                 animate={{ scale: 1, opacity: 1 }}
                 exit={{ scale: 0.95, opacity: 0 }}
                 onClick={(e) => e.stopPropagation()}
-                className="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl max-w-md w-full p-6"
+                className={`${LIGHT_SURFACE} rounded-3xl max-w-sm w-full overflow-hidden`}
               >
-                <div className="flex items-center justify-center w-16 h-16 bg-red-100 dark:bg-red-900/30 rounded-full mx-auto mb-4">
-                  <svg className="w-8 h-8 text-red-600 dark:text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                  </svg>
+                <div className="px-4 py-2.5 bg-[var(--theme-primary)] text-gray-900">
+                  <h3 className="text-xs font-black uppercase tracking-widest">Delete Checklist</h3>
                 </div>
-                <h3 className="text-xl font-bold text-center text-gray-900 dark:text-white mb-2">
-                  Delete Checklist
-                </h3>
-
-                {!deleteMode ? (
-                  <>
-                    <p className="text-center text-gray-600 dark:text-gray-400 mb-6">
-                      Would you like to delete only this task or all tasks in this group?
-                    </p>
-                    <div className="space-y-3">
-                      <motion.button
-                        whileHover={{ scale: 1.02 }}
-                        whileTap={{ scale: 0.98 }}
-                        onClick={() => setDeleteMode('single')}
-                        className="w-full bg-gradient-to-r from-orange-600 to-orange-500 text-white px-6 py-3 rounded-xl font-semibold hover:shadow-lg transition flex items-center justify-center gap-2"
-                      >
-                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                        </svg>
-                        Delete This Task Only
-                      </motion.button>
-                      {checklists.find(ch => ch.id === deleteId)?.group_id && (
-                      <motion.button
-                        whileHover={{ scale: 1.02 }}
-                        whileTap={{ scale: 0.98 }}
-                        onClick={() => setDeleteMode('group')}
-                        className="w-full bg-gradient-to-r from-red-600 to-red-500 text-white px-6 py-3 rounded-xl font-semibold hover:shadow-lg transition flex items-center justify-center gap-2"
-                      >
-                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-                        </svg>
-                        Delete All Group Tasks ({checklists.filter(c => c.group_id && c.group_id === checklists.find(ch => ch.id === deleteId)?.group_id).length})
-                      </motion.button>
-                      )}
-                      <motion.button
-                        whileHover={{ scale: 1.02 }}
-                        whileTap={{ scale: 0.98 }}
-                        onClick={() => {
-                          setShowDeleteModal(false);
-                          setDeleteId(null);
-                          setDeleteMode(null);
-                        }}
-                        className="w-full px-6 py-3 bg-gray-200 dark:bg-slate-700 text-gray-700 dark:text-gray-300 rounded-xl font-semibold hover:bg-gray-300 dark:hover:bg-slate-600 transition"
-                      >
-                        Cancel
-                      </motion.button>
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <p className="text-center text-gray-600 dark:text-gray-400 mb-6">
-                      {deleteMode === 'single'
-                        ? 'Are you sure you want to delete this checklist? This action cannot be undone.'
-                        : `Are you sure you want to delete all ${checklists.filter(c => c.group_id && c.group_id === checklists.find(ch => ch.id === deleteId)?.group_id).length} tasks in this group? This action cannot be undone.`
-                      }
-                    </p>
-                    <div className="flex gap-3">
-                      <motion.button
-                        whileHover={{ scale: 1.02 }}
-                        whileTap={{ scale: 0.98 }}
-                        onClick={handleDeleteChecklist}
-                        className="flex-1 bg-gradient-to-r from-red-600 to-red-500 text-white px-6 py-3 rounded-xl font-semibold hover:shadow-lg transition"
-                      >
-                        {deleteMode === 'single' ? 'Delete Task' : 'Delete Group'}
-                      </motion.button>
-                      <motion.button
-                        whileHover={{ scale: 1.02 }}
-                        whileTap={{ scale: 0.98 }}
-                        onClick={() => setDeleteMode(null)}
-                        className="flex-1 px-6 py-3 bg-gray-200 dark:bg-slate-700 text-gray-700 dark:text-gray-300 rounded-xl font-semibold hover:bg-gray-300 dark:hover:bg-slate-600 transition"
-                      >
-                        Back
-                      </motion.button>
-                    </div>
-                  </>
-                )}
+                <div className="p-4">
+                  <p className="text-xs text-slate-600 dark:text-slate-300 mb-4">
+                    Delete this task? This cannot be undone.
+                  </p>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowDeleteModal(false);
+                        setDeleteId(null);
+                      }}
+                      className={`flex-1 px-4 py-2 rounded-full text-[10px] font-black uppercase tracking-widest text-slate-600 ${LIGHT_BG} ${LIGHT_BORDER}`}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleDeleteChecklist}
+                      className="flex-1 px-4 py-2 rounded-full bg-red-600 text-white text-[10px] font-black uppercase tracking-widest"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
               </motion.div>
             </motion.div>
           )}
@@ -3089,7 +2908,7 @@ function ChecklistContent() {
               />
 
               <motion.div
-                className="fixed z-[70] w-[calc(100%-2rem)] max-w-[600px] md:w-[600px]"
+                className="fixed z-[70] w-[calc(100%-2rem)] max-w-[480px] md:w-[480px]"
                 style={{
                   ...(isMobile ? {
                     top: '50%',
@@ -3110,39 +2929,43 @@ function ChecklistContent() {
                 transition={{ duration: 0.2 }}
               >
                 <div
-                  className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl border border-gray-200 dark:border-gray-700 max-h-[calc(100vh-100px)] overflow-y-auto"
+                  className={`${LIGHT_SURFACE} rounded-3xl overflow-hidden max-h-[calc(100vh-100px)] flex flex-col`}
                   onClick={(e) => e.stopPropagation()}
                 >
-                  {/* Arrow pointing to filter button - hidden on mobile */}
-                  <div className="hidden md:block absolute -top-2 right-8 w-4 h-4 bg-white dark:bg-gray-800 border-l border-t border-gray-200 dark:border-gray-700 transform rotate-45"></div>
+                  <div className="px-4 py-2.5 bg-[var(--theme-primary)] text-gray-900 flex items-center justify-between shrink-0">
+                    <h2 className="text-xs font-black uppercase tracking-widest">Filter</h2>
+                    <button type="button" onClick={() => setShowFilterModal(false)} className="p-1 rounded-full hover:bg-black/10" title="Close">
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" /></svg>
+                    </button>
+                  </div>
 
-                  {/* Filter Content */}
-                  <div className="p-5 space-y-4">
+                  <div className="p-3 space-y-3 overflow-y-auto">
                     {/* Due Date Range - Single unified picker */}
                     <div>
-                      <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1.5">Date Range</label>
+                      <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-1">Date Range</label>
                       <DateRangePicker
                         fromDate={filters.dueDateFrom}
                         toDate={filters.dueDateTo}
                         onRangeChange={(from, to) => setFilters(prev => ({ ...prev, dueDateFrom: from, dueDateTo: to }))}
+                        buttonClassName={`w-full px-3 py-1.5 rounded-full ${LIGHT_BG} ${LIGHT_BORDER} text-xs font-semibold text-gray-900 dark:text-white flex items-center justify-between`}
                       />
                     </div>
 
                     {/* Question & Department - 2 columns */}
                     <div className="grid grid-cols-2 gap-3">
                       <div className="relative filter-dropdown-container">
-                        <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1.5">Question/Task</label>
+                        <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-1">Question/Task</label>
                         <input
                           type="text"
                           placeholder="Search questions..."
                           value={filterSearches.question}
                           onChange={(e) => setFilterSearches(prev => ({ ...prev, question: e.target.value }))}
                           onFocus={() => setActiveDropdown('question')}
-                          className="w-full px-3 py-2 bg-[var(--theme-lighter)] dark:bg-gray-700 border-0 rounded-lg text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-[var(--theme-primary)] transition"
+                          className={`w-full px-3 py-1.5 rounded-full ${LIGHT_BG} ${LIGHT_BORDER} text-xs text-gray-900 dark:text-white outline-none`}
                         />
                         {activeDropdown === 'question' && (
                           <div
-                            className="absolute top-full left-0 right-0 mt-1 max-h-48 overflow-y-auto space-y-1 bg-white dark:bg-gray-800 rounded-lg p-2 shadow-xl border border-gray-200 dark:border-gray-700 z-50"
+                            className={`absolute top-full left-0 right-0 mt-1 max-h-40 overflow-y-auto ${LIGHT_SURFACE} rounded-2xl p-1.5 z-50`}
                             onMouseDown={(e) => e.preventDefault()}
                           >
                             {uniqueQuestions
@@ -3164,18 +2987,18 @@ function ChecklistContent() {
 
                       {/* Department */}
                       <div className="relative filter-dropdown-container">
-                        <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1.5">Department</label>
+                        <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-1">Department</label>
                         <input
                           type="text"
                           placeholder="Search departments..."
                           value={filterSearches.department}
                           onChange={(e) => setFilterSearches(prev => ({ ...prev, department: e.target.value }))}
                           onFocus={() => setActiveDropdown('department')}
-                          className="w-full px-3 py-2 bg-[var(--theme-lighter)] dark:bg-gray-700 border-0 rounded-lg text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-[var(--theme-primary)] transition"
+                          className={`w-full px-3 py-1.5 rounded-full ${LIGHT_BG} ${LIGHT_BORDER} text-xs text-gray-900 dark:text-white outline-none`}
                         />
                         {activeDropdown === 'department' && (
                           <div
-                            className="absolute top-full left-0 right-0 mt-1 max-h-48 overflow-y-auto space-y-1 bg-white dark:bg-gray-800 rounded-lg p-2 shadow-xl border border-gray-200 dark:border-gray-700 z-50"
+                            className={`absolute top-full left-0 right-0 mt-1 max-h-40 overflow-y-auto ${LIGHT_SURFACE} rounded-2xl p-1.5 z-50`}
                             onMouseDown={(e) => e.preventDefault()}
                           >
                             {uniqueDepartments
@@ -3200,18 +3023,18 @@ function ChecklistContent() {
                     <div className="grid grid-cols-2 gap-3">
                       {/* Assignee */}
                       <div className="relative filter-dropdown-container">
-                        <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1.5">Assignee</label>
+                        <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-1">Assignee</label>
                         <input
                           type="text"
                           placeholder="Search assignees..."
                           value={filterSearches.assignee}
                           onChange={(e) => setFilterSearches(prev => ({ ...prev, assignee: e.target.value }))}
                           onFocus={() => setActiveDropdown('assignee')}
-                          className="w-full px-3 py-2 bg-[var(--theme-lighter)] dark:bg-gray-700 border-0 rounded-lg text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-[var(--theme-primary)] transition"
+                          className={`w-full px-3 py-1.5 rounded-full ${LIGHT_BG} ${LIGHT_BORDER} text-xs text-gray-900 dark:text-white outline-none`}
                         />
                         {activeDropdown === 'assignee' && (
                           <div
-                            className="absolute top-full left-0 right-0 mt-1 max-h-48 overflow-y-auto space-y-1 bg-white dark:bg-gray-800 rounded-lg p-2 shadow-xl border border-gray-200 dark:border-gray-700 z-50"
+                            className={`absolute top-full left-0 right-0 mt-1 max-h-40 overflow-y-auto ${LIGHT_SURFACE} rounded-2xl p-1.5 z-50`}
                             onMouseDown={(e) => e.preventDefault()}
                           >
                             {uniqueAssignees
@@ -3233,18 +3056,18 @@ function ChecklistContent() {
 
                       {/* Doer */}
                       <div className="relative filter-dropdown-container">
-                        <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1.5">Doer</label>
+                        <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-1">Doer</label>
                         <input
                           type="text"
                           placeholder="Search doers..."
                           value={filterSearches.doer}
                           onChange={(e) => setFilterSearches(prev => ({ ...prev, doer: e.target.value }))}
                           onFocus={() => setActiveDropdown('doer')}
-                          className="w-full px-3 py-2 bg-[var(--theme-lighter)] dark:bg-gray-700 border-0 rounded-lg text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-[var(--theme-primary)] transition"
+                          className={`w-full px-3 py-1.5 rounded-full ${LIGHT_BG} ${LIGHT_BORDER} text-xs text-gray-900 dark:text-white outline-none`}
                         />
                         {activeDropdown === 'doer' && (
                           <div
-                            className="absolute top-full left-0 right-0 mt-1 max-h-48 overflow-y-auto space-y-1 bg-white dark:bg-gray-800 rounded-lg p-2 shadow-xl border border-gray-200 dark:border-gray-700 z-50"
+                            className={`absolute top-full left-0 right-0 mt-1 max-h-40 overflow-y-auto ${LIGHT_SURFACE} rounded-2xl p-1.5 z-50`}
                             onMouseDown={(e) => e.preventDefault()}
                           >
                             {uniqueDoers
@@ -3265,81 +3088,71 @@ function ChecklistContent() {
                       </div>
                     </div>
 
-                    {/* Priority & Status - 2 columns */}
                     <div className="grid grid-cols-2 gap-3">
-                      {/* Priority */}
                       <div>
-                        <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1.5">Priority</label>
-                        <div className="space-y-1.5">
+                        <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-1">Priority</label>
+                        <div className="flex flex-wrap gap-1.5">
                           {['low', 'medium', 'high'].map(priority => (
-                            <label key={priority} className="flex items-center gap-2 cursor-pointer hover:bg-[var(--theme-lighter)] dark:hover:bg-gray-700 p-2 rounded-lg transition">
-                              <input
-                                type="checkbox"
-                                checked={filters.priorities.includes(priority)}
-                                onChange={() => toggleFilterValue('priorities', priority)}
-                                className="w-3.5 h-3.5 text-[var(--theme-primary)] focus:ring-[var(--theme-primary)] rounded"
-                              />
-                              <span className="text-xs font-medium text-gray-900 dark:text-white capitalize">{priority}</span>
-                            </label>
+                            <button
+                              key={priority}
+                              type="button"
+                              onClick={() => toggleFilterValue('priorities', priority)}
+                              className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${filters.priorities.includes(priority) ? 'bg-[var(--theme-primary)] text-gray-900' : `${LIGHT_BG} ${LIGHT_BORDER} text-slate-600`}`}
+                            >
+                              {priority}
+                            </button>
                           ))}
                         </div>
                       </div>
-
-                      {/* Status */}
                       <div>
-                        <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1.5">Status</label>
-                        <div className="max-h-32 overflow-y-auto space-y-1 bg-[var(--theme-lighter)] dark:bg-gray-700 rounded-lg p-2">
+                        <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-1">Status</label>
+                        <div className="flex flex-wrap gap-1.5">
                           {uniqueStatuses.map(status => (
-                            <label key={status} className="flex items-center gap-2 cursor-pointer hover:bg-white dark:hover:bg-gray-600 p-1.5 rounded transition">
-                              <input
-                                type="checkbox"
-                                checked={filters.statuses.includes(status)}
-                                onChange={() => toggleFilterValue('statuses', status)}
-                                className="w-3.5 h-3.5 text-[var(--theme-primary)] focus:ring-[var(--theme-primary)] rounded"
-                              />
-                              <span className="text-xs text-gray-900 dark:text-white capitalize">{status}</span>
-                            </label>
+                            <button
+                              key={status}
+                              type="button"
+                              onClick={() => toggleFilterValue('statuses', status)}
+                              className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${filters.statuses.includes(status) ? 'bg-[var(--theme-primary)] text-gray-900' : `${LIGHT_BG} ${LIGHT_BORDER} text-slate-600`}`}
+                            >
+                              {status}
+                            </button>
                           ))}
                         </div>
                       </div>
                     </div>
 
-                    {/* Frequency - Full width */}
                     <div>
-                      <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1.5">Frequency</label>
-                      <div className="grid grid-cols-3 gap-2">
+                      <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-1">Frequency</label>
+                      <div className="flex flex-wrap gap-1.5">
                         {uniqueFrequencies.map(frequency => (
-                          <label key={frequency} className="flex items-center gap-2 cursor-pointer hover:bg-[var(--theme-lighter)] dark:hover:bg-gray-700 p-2 rounded-lg transition">
-                            <input
-                              type="checkbox"
-                              checked={filters.frequencies.includes(frequency)}
-                              onChange={() => toggleFilterValue('frequencies', frequency)}
-                              className="w-3.5 h-3.5 text-[var(--theme-primary)] focus:ring-[var(--theme-primary)] rounded"
-                            />
-                            <span className="text-xs font-medium text-gray-900 dark:text-white capitalize">{frequency}</span>
-                          </label>
+                          <button
+                            key={frequency}
+                            type="button"
+                            onClick={() => toggleFilterValue('frequencies', frequency)}
+                            className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${filters.frequencies.includes(frequency) ? 'bg-[var(--theme-primary)] text-gray-900' : `${LIGHT_BG} ${LIGHT_BORDER} text-slate-600`}`}
+                          >
+                            {frequency}
+                          </button>
                         ))}
                       </div>
                     </div>
-
-                    {/* Actions */}
-                    <div className="flex gap-2 pt-3 border-t border-gray-200 dark:border-gray-700">
-                      <button
-                        onClick={clearAllFilters}
-                        className="flex-1 px-4 py-2 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-900 dark:text-white text-sm font-semibold rounded-lg transition"
-                      >
-                        Clear All
-                      </button>
-                      <button
-                        onClick={() => {
-                          setShowFilterModal(false);
-                          setCurrentPage(1);
-                        }}
-                        className="flex-1 px-4 py-2 bg-[var(--theme-primary)] hover:bg-[var(--theme-secondary)] text-gray-900 text-sm font-bold rounded-lg transition shadow-md"
-                      >
-                        Apply
-                      </button>
-                    </div>
+                  </div>
+                  <div className="px-3 py-2.5 flex gap-2 border-t border-[var(--theme-primary)]/20 shrink-0">
+                    <button
+                      onClick={clearAllFilters}
+                      className={`flex-1 px-4 py-2 rounded-full text-[10px] font-black uppercase tracking-widest text-slate-600 ${LIGHT_BG} ${LIGHT_BORDER}`}
+                    >
+                      Clear All
+                    </button>
+                    <button
+                      onClick={() => {
+                        setShowFilterModal(false);
+                        setCurrentPage(1);
+                      }}
+                      className="flex-1 px-4 py-2 rounded-full bg-[var(--theme-primary)] text-gray-900 text-[10px] font-black uppercase tracking-widest"
+                    >
+                      Apply
+                    </button>
                   </div>
                 </div>
               </motion.div>
@@ -3439,7 +3252,7 @@ function ChecklistContent() {
                           </div>
                           <div className="flex-1 min-w-0">
                             <p className="text-xs text-gray-600 dark:text-gray-400 mb-1">Priority</p>
-                            <span className={`inline-block px-3 py-1 rounded-full text-xs font-semibold ${getPriorityColor(selectedChecklist.priority)}`}>
+                            <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-black uppercase tracking-wide ${getPriorityColor(selectedChecklist.priority)}`}>
                               {selectedChecklist.priority?.toUpperCase()}
                             </span>
                           </div>

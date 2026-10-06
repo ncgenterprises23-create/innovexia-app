@@ -150,7 +150,11 @@ export function expandOccurrenceDates(startValue: any, frequencyRaw: any): strin
   return dates;
 }
 
-export function expandMasterChecklist(master: any, historyByOccurrence: Map<string, string>) {
+export function expandMasterChecklist(
+  master: any,
+  historyByOccurrence: Map<string, string>,
+  completedAtByOccurrence: Map<string, string> = new Map()
+) {
   const startValue = toDateKey(master.due_date)
     ? master.due_date
     : (toDateKey(master.group_id) ? master.group_id : master.created_at);
@@ -158,17 +162,19 @@ export function expandMasterChecklist(master: any, historyByOccurrence: Map<stri
   if (dates.length === 0) return [];
   return dates.map((dateKey) => {
     const groupKey = master.group_id || master.id;
-    const historyStatus =
-      historyByOccurrence.get(occurrenceKey(groupKey, dateKey)) ||
-      historyByOccurrence.get(occurrenceKey(master.id, dateKey));
+    const keys = [occurrenceKey(groupKey, dateKey), occurrenceKey(master.id, dateKey)];
+    const historyStatus = keys.map((key) => historyByOccurrence.get(key)).find(Boolean);
+    const completedAt = keys.map((key) => completedAtByOccurrence.get(key)).find(Boolean) || '';
     const ymd = parseYmd(dateKey);
+    const status = calculateOccurrenceStatus(dateKey, historyStatus);
     return {
       ...master,
       master_due_date: master.due_date,
       occurrence_id: `${master.id}_${dateKey}`,
       occurrence_date: dateKey,
       due_date: ymdToIso(ymd),
-      status: calculateOccurrenceStatus(dateKey, historyStatus),
+      status,
+      completed_at: status === 'completed' ? completedAt : '',
     };
   });
 }

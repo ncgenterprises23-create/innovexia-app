@@ -373,7 +373,7 @@ export default function O2DPage() {
     };
 
     const statusStats = useMemo(() => {
-        const allItems = orders.flatMap(o => o.items || []);
+        const allItems = orders.flatMap(o => o.items || []).filter(item => item.Cancelled !== 'Cancelled');
 
         return {
             Total: allItems.length,
@@ -889,7 +889,11 @@ export default function O2DPage() {
             const hasActiveItems = (order.items || []).some(item => item.Cancelled !== 'Cancelled');
             const matchesCancellation = viewMode === 'cancelled' ? hasCancelledItems : hasActiveItems;
 
-            const matchesStep = !activeStepFilter || (order.items || []).some(item => matchesStepFilter(item as any, activeStepFilter));
+            const matchesStep = !activeStepFilter || (order.items || []).some(item => {
+                const isItemCancelled = item.Cancelled === 'Cancelled';
+                if (viewMode === 'cancelled' ? !isItemCancelled : isItemCancelled) return false;
+                return matchesStepFilter(item as any, activeStepFilter);
+            });
             const matchesTime = !activeTimeFilter || (order.items || []).some(item => matchesTimeFilter(item as any, activeTimeFilter));
 
             let matchesDelayed = true;
@@ -927,7 +931,7 @@ export default function O2DPage() {
                 return aVal < bVal ? 1 : -1;
             }
         });
-    }, [orders, searchQuery, filters, sortField, sortDirection, activeStepFilter, activeTimeFilter]);
+    }, [orders, searchQuery, filters, sortField, sortDirection, activeStepFilter, activeTimeFilter, viewMode, showDelayedOnly]);
 
     const paginatedOrders = useMemo(() => {
         const startIndex = (currentPage - 1) * itemsPerPage;

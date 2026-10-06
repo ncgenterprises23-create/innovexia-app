@@ -242,7 +242,7 @@ export async function GET(request: NextRequest) {
     ]);
 
     const updatedChecklists = checklists.flatMap((checklist: any) => (
-      expandMasterChecklist(checklist, historyLookup.latestStatus)
+      expandMasterChecklist(checklist, historyLookup.latestStatus, historyLookup.completedAt)
     ));
 
     return NextResponse.json({ checklists: updatedChecklists, masters: checklists });
