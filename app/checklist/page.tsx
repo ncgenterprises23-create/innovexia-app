@@ -131,6 +131,13 @@ function isCompletedAfterDue(checklist: { status?: string; completed_at?: string
   return doneKey > dueKey;
 }
 
+function matchesTableSearch(term: string, values: Array<string | number | null | undefined>) {
+  const query = term.trim().toLowerCase();
+  if (!query) return true;
+  const haystack = values.map((value) => String(value ?? '')).join(' ').toLowerCase();
+  return haystack.includes(query) || haystack.replace(/_/g, ' ').includes(query);
+}
+
 function CompactToolbar({
   currentPage,
   totalPages,
@@ -139,6 +146,8 @@ function CompactToolbar({
   timeStats,
   onTimeFilter,
   onPage,
+  searchTerm,
+  onSearch,
   bulkCount = 0,
   onBulkComplete,
 }: {
@@ -149,6 +158,8 @@ function CompactToolbar({
   timeStats: Record<string, number>;
   onTimeFilter: (filter: string) => void;
   onPage: (page: number) => void;
+  searchTerm: string;
+  onSearch: (value: string) => void;
   bulkCount?: number;
   onBulkComplete?: () => void;
 }) {
@@ -156,6 +167,18 @@ function CompactToolbar({
   const pageBtn = 'px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border border-[var(--theme-primary)]/25 bg-[var(--theme-light)] text-slate-600 hover:bg-[var(--theme-primary)]/20 disabled:opacity-30 disabled:pointer-events-none';
   return (
     <div className="flex flex-wrap items-center gap-2">
+      <label className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full ${LIGHT_BG} ${LIGHT_BORDER} ${DASH_SHADOW}`}>
+        <svg className="w-3.5 h-3.5 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-4.35-4.35M11 18a7 7 0 100-14 7 7 0 000 14z" />
+        </svg>
+        <input
+          type="search"
+          value={searchTerm}
+          onChange={(event) => onSearch(event.target.value)}
+          placeholder="Search"
+          className="w-36 bg-transparent text-xs font-semibold text-slate-700 dark:text-slate-200 placeholder:text-slate-400 outline-none"
+        />
+      </label>
       {TIME_FILTERS.map((label) => (
         <button
           key={label}
@@ -1189,11 +1212,20 @@ function ChecklistContent() {
 
     let filtered = checklists.filter(checklist => {
       // Search term filter
-      const matchesSearch = searchTerm === '' ||
-        (checklist.question?.toLowerCase().includes(searchTerm.toLowerCase())) ||
-        (checklist.assignee?.toLowerCase().includes(searchTerm.toLowerCase())) ||
-        (checklist.doer_name?.toLowerCase().includes(searchTerm.toLowerCase())) ||
-        (checklist.department?.toLowerCase().includes(searchTerm.toLowerCase()));
+      const matchesSearch = matchesTableSearch(searchTerm, [
+        checklist.id,
+        checklist.question,
+        checklist.assignee,
+        checklist.doer_name,
+        checklist.department,
+        checklist.priority,
+        checklist.frequency,
+        checklist.status,
+        checklist.due_date,
+        formatShortDueDate(checklist.due_date),
+        checklist.completed_at,
+        formatShortDueDate(checklist.completed_at),
+      ]);
 
       if (!matchesSearch) return false;
 
@@ -1304,11 +1336,20 @@ function ChecklistContent() {
     });
 
     const masters = masterChecklists.filter((checklist) => {
-      const matchesSearch = searchTerm === '' ||
-        (checklist.question?.toLowerCase().includes(searchTerm.toLowerCase())) ||
-        (checklist.assignee?.toLowerCase().includes(searchTerm.toLowerCase())) ||
-        (checklist.doer_name?.toLowerCase().includes(searchTerm.toLowerCase())) ||
-        (checklist.department?.toLowerCase().includes(searchTerm.toLowerCase()));
+      const matchesSearch = matchesTableSearch(searchTerm, [
+        checklist.id,
+        checklist.question,
+        checklist.assignee,
+        checklist.doer_name,
+        checklist.department,
+        checklist.priority,
+        checklist.frequency,
+        checklist.status,
+        checklist.due_date,
+        formatShortDueDate(checklist.due_date),
+        checklist.completed_at,
+        formatShortDueDate(checklist.completed_at),
+      ]);
       if (!matchesSearch) return false;
       if (filters.questions.length > 0 && !filters.questions.includes(checklist.question)) return false;
       if (filters.assignees.length > 0 && !filters.assignees.includes(checklist.assignee)) return false;
@@ -1562,6 +1603,8 @@ function ChecklistContent() {
           timeStats={timeStats}
           onTimeFilter={(filter) => { setActiveTimeFilter(activeTimeFilter === filter ? null : filter); setCurrentPage(1); }}
           onPage={setCurrentPage}
+          searchTerm={searchTerm}
+          onSearch={(value) => { setSearchTerm(value); setCurrentPage(1); }}
           bulkCount={viewMode === 'list' ? selectedForBulk.length : 0}
           onBulkComplete={handleBulkComplete}
         />
