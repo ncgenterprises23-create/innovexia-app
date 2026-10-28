@@ -11,6 +11,14 @@ export interface FmsPendingQuery {
   limit?: number;
 }
 
+export type FmsPendingItem = {
+  id: unknown;
+  currentStep: number;
+  currentStepName: string;
+  plannedDate: unknown;
+  overdue: boolean;
+} & Record<string, unknown>;
+
 export async function queryFmsPending(user: SessionUser, query: FmsPendingQuery) {
   const mod = FMS_MODULES[query.module];
   if (!mod) {
@@ -48,10 +56,12 @@ export async function queryFmsPending(user: SessionUser, query: FmsPendingQuery)
   const stepName = (step: number) =>
     config.find((c) => c.step === step)?.stepName || `Step ${step}`;
 
-  const items = matched.map((item) => {
+  const items: FmsPendingItem[] = matched.map((item) => {
     const currentStep = getCurrentStep(item, maxStep, mod.stepStrategy);
+    const summary = mod.summarizeItem(item);
     return {
-      ...mod.summarizeItem(item),
+      ...summary,
+      id: summary.id ?? item.id,
       currentStep,
       currentStepName: stepName(currentStep),
       plannedDate: item[`Planned_${currentStep}`] ?? null,

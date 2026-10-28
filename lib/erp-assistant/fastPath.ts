@@ -37,10 +37,10 @@ function formatTodosReply(result: Awaited<ReturnType<typeof queryTodos>>) {
 
 function formatFmsReply(result: Awaited<ReturnType<typeof queryFmsPending>>) {
   if ('error' in result) return result.error as string;
-  const lines = result.items.map(
-    (i) =>
-      `• #${i.id} — step ${i.currentStep} (${i.currentStepName})${i.overdue ? ' — overdue' : ''}`
-  );
+  const lines = result.items.map((i) => {
+    const id = i.id != null && String(i.id).trim() !== '' ? String(i.id) : '—';
+    return `• #${id} — step ${i.currentStep} (${i.currentStepName})${i.overdue ? ' — overdue' : ''}`;
+  });
   const stepNote = result.stepFilter != null ? ` at step **${result.stepFilter}**` : '';
   const header = `**${result.module}**: **${result.total}** active item(s)${stepNote} (showing ${result.returned}).`;
   return lines.length ? `${header}\n\n${lines.join('\n')}` : `${header}\n\nNo matching records.`;

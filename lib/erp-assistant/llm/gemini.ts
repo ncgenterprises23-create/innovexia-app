@@ -207,11 +207,12 @@ async function runWithModel(
 
     const functionResponseParts: Part[] = toolResults.map(({ fc, out }) => {
       if (out.sources) sources.push(...out.sources);
+      const callId = (fc as { id?: string }).id;
       return {
         functionResponse: {
           name: fc.name,
           response: { result: out.result },
-          ...(fc.id ? { id: fc.id } : {}),
+          ...(callId ? { id: callId } : {}),
         },
       };
     });
