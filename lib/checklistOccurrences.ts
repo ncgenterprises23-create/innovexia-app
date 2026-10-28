@@ -29,6 +29,18 @@ export function toDateKey(value: any): string | null {
   return null;
 }
 
+/** Resolve occurrence date for checklist completion (prefer YYYY-MM-DD occurrence column). */
+export function resolveOccurrenceDue(...candidates: unknown[]): string | null {
+  for (const value of candidates) {
+    if (value === null || value === undefined || value === '') continue;
+    const key = toDateKey(value);
+    if (key) return key;
+    const raw = String(value).trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  }
+  return null;
+}
+
 export function occurrenceKey(checklistId: number | string, dateKey: string) {
   return `${checklistId}|${dateKey}`;
 }
@@ -161,10 +173,9 @@ export function expandMasterChecklist(
   const dates = expandOccurrenceDates(startValue, master.frequency);
   if (dates.length === 0) return [];
   return dates.map((dateKey) => {
-    const groupKey = master.group_id || master.id;
-    const keys = [occurrenceKey(groupKey, dateKey), occurrenceKey(master.id, dateKey)];
-    const historyStatus = keys.map((key) => historyByOccurrence.get(key)).find(Boolean);
-    const completedAt = keys.map((key) => completedAtByOccurrence.get(key)).find(Boolean) || '';
+    const idKey = occurrenceKey(master.id, dateKey);
+    const historyStatus = historyByOccurrence.get(idKey);
+    const completedAt = completedAtByOccurrence.get(idKey) || '';
     const ymd = parseYmd(dateKey);
     const status = calculateOccurrenceStatus(dateKey, historyStatus);
     return {

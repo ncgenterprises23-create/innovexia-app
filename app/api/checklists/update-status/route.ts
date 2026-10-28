@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getChecklistById, updateChecklist, createChecklistHistory } from '@/lib/sheets';
-import { toDateKey } from '@/lib/checklistOccurrences';
+import { toDateKey, resolveOccurrenceDue } from '@/lib/checklistOccurrences';
 
 // Helper to format date to dd/mm/yyyy HH:mm:ss
 function formatDateTime(date: Date): string {
@@ -37,7 +37,15 @@ export async function POST(request: NextRequest) {
     }
 
     const oldStatus = currentChecklist.status || 'pending';
-    const occurrenceDue = toDateKey(dueDate) || toDateKey(currentChecklist.due_date) || dueDate || currentChecklist.due_date || '';
+    const occurrenceDue = resolveOccurrenceDue(dueDate);
+
+    if (!occurrenceDue) {
+      return NextResponse.json(
+        { error: 'Valid occurrence dueDate is required (each checklist row needs its own date).' },
+        { status: 400 }
+      );
+    }
+
     const now = new Date().toISOString();
 
     await updateChecklist(parsedChecklistId, {

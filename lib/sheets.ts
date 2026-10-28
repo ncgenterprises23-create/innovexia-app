@@ -182,6 +182,81 @@ function masterGroupId(id: number | string, existing?: string | null): string {
   return `chk_${id}`;
 }
 
+function columnA1FromIndex(columnCount: number): string {
+  let result = '';
+  let n = Math.max(1, columnCount);
+  while (n > 0) {
+    const rem = (n - 1) % 26;
+    result = String.fromCharCode(65 + rem) + result;
+    n = Math.floor((n - 1) / 26);
+  }
+  return result;
+}
+
+/** Write rows at the next free row (avoids append/table races that overwrite rows). */
+async function appendSpreadsheetRowsAtEnd(
+  spreadsheetId: string,
+  sheetName: string,
+  headers: string[],
+  rowsData: any[][]
+): Promise<{ startRow: number; count: number }> {
+  if (rowsData.length === 0) return { startRow: 0, count: 0 };
+
+  const sheets = await getGoogleSheetsClient();
+  const spreadsheet = await sheets.spreadsheets.get({ spreadsheetId });
+  const sheet = spreadsheet.data.sheets?.find((s: any) => s.properties?.title === sheetName);
+  const sheetId = sheet?.properties?.sheetId;
+  const gridRowCount = sheet?.properties?.gridProperties?.rowCount ?? 1000;
+
+  const existing = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${sheetName}!A:AZ`,
+  });
+  const allRows = existing.data.values ?? [];
+  const startRow = allRows.length + 1;
+  const endRow = startRow + rowsData.length - 1;
+
+  if (sheetId != null && endRow > gridRowCount) {
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        requests: [{
+          appendDimension: {
+            sheetId,
+            dimension: 'ROWS',
+            length: endRow - gridRowCount + 50,
+          },
+        }],
+      },
+    });
+  }
+
+  const endCol = columnA1FromIndex(headers.length);
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `${sheetName}!A${startRow}:${endCol}${endRow}`,
+    valueInputOption: 'RAW',
+    requestBody: { values: rowsData },
+  });
+
+  return { startRow, count: rowsData.length };
+}
+
+/** Write checklist history rows at the next free row (avoids append/table races that overwrite rows). */
+async function appendChecklistHistoryRowsAtEnd(
+  sheets: any,
+  headers: string[],
+  rowsData: any[][]
+): Promise<{ startRow: number; count: number }> {
+  if (rowsData.length === 0) return { startRow: 0, count: 0 };
+  return appendSpreadsheetRowsAtEnd(
+    SPREADSHEET_IDS.CHECKLISTS,
+    'checklist_revision_history',
+    headers,
+    rowsData
+  );
+}
+
 async function ensureNamedColumn(
   sheets: any,
   spreadsheetId: string,
@@ -732,6 +807,54 @@ export async function createDelegationRemark(remarkData: any) {
 
 // DELEGATION REVISION HISTORY OPERATIONS
 
+async function ensureDelegationHistoryHeaders(sheets: any): Promise<string[]> {
+  const sheetName = SHEETS.DELEGATION_HISTORY;
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId: DELEGATION_SPREADSHEET_ID,
+    range: `${sheetName}!A1:Z1`,
+    valueRenderOption: 'UNFORMATTED_VALUE',
+  });
+
+  let headers = (response.data.values?.[0] || []).map((h: any) => String(h || '').trim()).filter(Boolean);
+
+  if (headers.length === 0) {
+    const defaultHeaders = [
+      'id', 'delegation_id', 'old_status', 'new_status',
+      'old_due_date', 'new_due_date', 'reason', 'evidence_urls', 'created_at',
+    ];
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: DELEGATION_SPREADSHEET_ID,
+      range: `${sheetName}!A1`,
+      valueInputOption: 'RAW',
+      requestBody: { values: [defaultHeaders] },
+    });
+    return defaultHeaders;
+  }
+
+  return headers;
+}
+
+async function nextDelegationHistoryIds(sheets: any, count: number): Promise<number[]> {
+  const sheetName = SHEETS.DELEGATION_HISTORY;
+  const allDataResponse = await sheets.spreadsheets.values.get({
+    spreadsheetId: DELEGATION_SPREADSHEET_ID,
+    range: `${sheetName}!A:A`,
+    valueRenderOption: 'UNFORMATTED_VALUE',
+  });
+  const allRows = allDataResponse.data.values || [];
+  let startId = 1;
+  if (allRows.length > 1) {
+    const ids = allRows
+      .slice(1)
+      .map((row: any[]) => parseSafeInt(row[0]))
+      .filter((id: number | null) => id !== null) as number[];
+    if (ids.length > 0) {
+      startId = Math.max(...ids) + 1;
+    }
+  }
+  return Array.from({ length: count }, (_, index) => startId + index);
+}
+
 export async function getDelegationHistory(delegationId: number) {
   try {
     const sheets = await getGoogleSheetsClient();
@@ -766,76 +889,56 @@ export async function getDelegationHistory(delegationId: number) {
 export async function createDelegationHistory(historyData: any) {
   try {
     const sheets = await getGoogleSheetsClient();
-    const sheetName = SHEETS.DELEGATION_HISTORY;
-
-    // Read headers
-    const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: DELEGATION_SPREADSHEET_ID,
-      range: `${sheetName}!A1:Z1`,
-      valueRenderOption: 'UNFORMATTED_VALUE',
-    });
-
-    const headers = response.data.values?.[0] || [];
-
-    // If no headers, initialize the sheet
-    if (headers.length === 0) {
-      const defaultHeaders = [
-        'id', 'delegation_id', 'old_status', 'new_status',
-        'old_due_date', 'new_due_date', 'reason', 'evidence_urls', 'created_at'
-      ];
-
-      await sheets.spreadsheets.values.update({
-        spreadsheetId: DELEGATION_SPREADSHEET_ID,
-        range: `${sheetName}!A1:H1`,
-        valueInputOption: 'RAW',
-        requestBody: {
-          values: [defaultHeaders],
-        },
-      });
-
-      headers.push(...defaultHeaders);
-    }
-
-    // Generate ID
-    const allDataResponse = await sheets.spreadsheets.values.get({
-      spreadsheetId: DELEGATION_SPREADSHEET_ID,
-      range: `${sheetName}!A:A`,
-      valueRenderOption: 'UNFORMATTED_VALUE',
-    });
-    const allRows = allDataResponse.data.values || [];
-
-    let newId = 1;
-    if (allRows.length > 1) {
-      const ids = allRows.slice(1)
-        .map(row => parseSafeInt(row[0]))
-        .filter(id => id !== null) as number[];
-      if (ids.length > 0) {
-        newId = Math.max(...ids) + 1;
-      }
-    }
+    const headers = await ensureDelegationHistoryHeaders(sheets);
+    const [newId] = await nextDelegationHistoryIds(sheets, 1);
 
     const history = {
       id: newId,
       ...historyData,
-      created_at: formatToSheetDate(new Date())
+      created_at: formatToSheetDate(new Date()),
     };
 
     const rowData = objectToRow(headers, history);
-
-    await sheets.spreadsheets.values.append({
-      spreadsheetId: DELEGATION_SPREADSHEET_ID,
-      range: `${sheetName}!A:AZ`,
-      valueInputOption: 'RAW',
-      requestBody: {
-        values: [rowData],
-      },
-    });
+    await appendSpreadsheetRowsAtEnd(
+      DELEGATION_SPREADSHEET_ID,
+      SHEETS.DELEGATION_HISTORY,
+      headers,
+      [rowData]
+    );
 
     return history;
   } catch (error) {
     console.error('Error creating history in Google Sheets:', error);
     throw error;
   }
+}
+
+/** Append many delegation history rows in one write (safe for bulk complete). */
+export async function createDelegationHistoryBatch(historyEntries: any[]) {
+  if (historyEntries.length === 0) return { count: 0, startRow: 0 };
+
+  const sheets = await getGoogleSheetsClient();
+  const headers = await ensureDelegationHistoryHeaders(sheets);
+  const ids = await nextDelegationHistoryIds(sheets, historyEntries.length);
+  const createdAt = formatToSheetDate(new Date());
+
+  const rowsData = historyEntries.map((entry, index) => {
+    const history = {
+      id: ids[index],
+      ...entry,
+      created_at: entry.created_at || createdAt,
+    };
+    return objectToRow(headers, history);
+  });
+
+  const { startRow, count } = await appendSpreadsheetRowsAtEnd(
+    DELEGATION_SPREADSHEET_ID,
+    SHEETS.DELEGATION_HISTORY,
+    headers,
+    rowsData
+  );
+
+  return { count, startRow };
 }
 
 // Helper function to get delegation by ID
@@ -2010,33 +2113,122 @@ export async function createChecklistHistory(historyData: any) {
     const hasChecklistId = headers.includes('checklist_id');
     const hasGroupId = headers.includes('group_id');
     const groupId = masterGroupId(historyData.checklist_id || historyData.id, historyData.group_id);
-    const newId = Date.now();
+    const newId = `${Date.now()}${Math.floor(Math.random() * 10000)}`;
 
-    const history = {
+    const history: any = {
       ...historyData,
       id: (hasGroupId || hasChecklistId) ? newId : (historyData.checklist_id ?? newId),
       group_id: groupId,
-      checklist_id: historyData.checklist_id,
       due_date: historyData.due_date || '',
       timestamp: historyData.timestamp || new Date().toISOString(),
     };
+    if (hasChecklistId) {
+      history.checklist_id = historyData.checklist_id;
+    }
 
     const rowData = objectToRow(headers, history);
 
-    await sheets.spreadsheets.values.append({
-      spreadsheetId: SPREADSHEET_IDS.CHECKLISTS,
-      range: `${sheetName}!A:AZ`,
-      valueInputOption: 'RAW',
-      requestBody: {
-        values: [rowData],
-      },
-    });
+    await appendChecklistHistoryRowsAtEnd(sheets, headers, [rowData]);
 
     return history;
   } catch (error) {
     console.error('Error creating checklist history in Google Sheets:', error);
     throw error;
   }
+}
+
+async function ensureChecklistHistorySheetHeaders(sheets: any): Promise<string[]> {
+  const sheetName = 'checklist_revision_history';
+
+  const spreadsheet = await sheets.spreadsheets.get({
+    spreadsheetId: SPREADSHEET_IDS.CHECKLISTS,
+  });
+
+  const sheet = spreadsheet.data.sheets?.find((s: any) => s.properties?.title === sheetName);
+
+  if (!sheet) {
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId: SPREADSHEET_IDS.CHECKLISTS,
+      requestBody: {
+        requests: [{
+          addSheet: {
+            properties: { title: sheetName },
+          },
+        }],
+      },
+    });
+  }
+
+  let response;
+  try {
+    response = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_IDS.CHECKLISTS,
+      range: `${sheetName}!A1:Z1`,
+    });
+  } catch {
+    response = { data: { values: [] } };
+  }
+
+  let headers = (response.data.values?.[0] || []).map((h: any) => String(h || '').trim()).filter(Boolean);
+
+  if (headers.length === 0) {
+    const defaultHeaders = [
+      'id', 'old_status', 'new_status', 'due_date', 'timestamp', 'group_id',
+    ];
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SPREADSHEET_IDS.CHECKLISTS,
+      range: `${sheetName}!A1`,
+      valueInputOption: 'RAW',
+      requestBody: { values: [defaultHeaders] },
+    });
+    return defaultHeaders;
+  }
+
+  const missing = ['due_date', 'group_id'].filter((col) => !headers.includes(col));
+  if (missing.length > 0) {
+    headers = [...headers, ...missing];
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SPREADSHEET_IDS.CHECKLISTS,
+      range: `${sheetName}!A1`,
+      valueInputOption: 'RAW',
+      requestBody: { values: [headers] },
+    });
+  }
+
+  return headers;
+}
+
+function buildChecklistHistoryRow(headers: string[], historyData: any, rowId: string) {
+  const groupId = masterGroupId(historyData.checklist_id || historyData.id, historyData.group_id);
+  const history: Record<string, unknown> = {
+    ...historyData,
+    id: rowId,
+    group_id: groupId,
+    due_date: historyData.due_date || '',
+    timestamp: historyData.timestamp || new Date().toISOString(),
+  };
+  if (headers.includes('checklist_id')) {
+    history.checklist_id = historyData.checklist_id;
+  }
+  return objectToRow(headers, history);
+}
+
+/** Append many history rows in one Sheets request (safe for bulk complete). */
+export async function createChecklistHistoryBatch(historyEntries: any[]) {
+  if (historyEntries.length === 0) return { count: 0 };
+
+  const sheets = await getGoogleSheetsClient();
+  const sheetName = 'checklist_revision_history';
+  const headers = await ensureChecklistHistorySheetHeaders(sheets);
+
+  const base = Date.now();
+  const rowsData = historyEntries.map((entry, index) =>
+    buildChecklistHistoryRow(headers, entry, `${base}${String(index).padStart(4, '0')}`)
+  );
+
+  const { startRow, count } = await appendChecklistHistoryRowsAtEnd(sheets, headers, rowsData);
+
+  return { count, startRow };
 }
 
 export async function getChecklistIdsWithHistory(): Promise<{ ids: Set<number>; latestStatus: Map<string, string>; completedAt: Map<string, string> }> {
@@ -2059,7 +2251,6 @@ export async function getChecklistIdsWithHistory(): Promise<{ ids: Set<number>; 
       const headers = rows[0].map((h: any) => String(h || '').trim());
       const checklistIdIdx = headers.indexOf('checklist_id');
       const groupIdx = headers.indexOf('group_id');
-      const idIdx = headers.indexOf('id');
       const statusIdx = headers.indexOf('new_status');
       const dueIdx = headers.indexOf('due_date');
       const timestampIdx = headers.findIndex((header: string) => header.toLowerCase() === 'timestamp');
@@ -2068,13 +2259,17 @@ export async function getChecklistIdsWithHistory(): Promise<{ ids: Set<number>; 
       const ids = new Set<number>();
       const latestStatus = new Map<string, string>();
       const completedAt = new Map<string, string>();
+      const latestStampMs = new Map<string, number>();
       for (let i = 1; i < rows.length; i++) {
         const groupId = groupIdx !== -1 ? String(rows[i][groupIdx] || '').trim() : '';
-        const checklistId = checklistIdIdx !== -1 ? String(rows[i][checklistIdIdx] || '').trim() : '';
-        const rawId = idIdx !== -1 ? String(rows[i][idIdx] || '').trim() : '';
-        const numericFromGroup = parseInt(String(groupId).replace(/^chk_/, ''));
-        const numericId = parseInt(checklistId || rawId);
-        if (!isNaN(numericId)) ids.add(numericId);
+        const checklistIdCol =
+          checklistIdIdx !== -1 ? String(rows[i][checklistIdIdx] || '').trim() : '';
+        const numericFromGroup = parseInt(String(groupId).replace(/^chk_/, ''), 10);
+
+        if (checklistIdCol) {
+          const n = parseInt(checklistIdCol, 10);
+          if (!isNaN(n)) ids.add(n);
+        }
         if (!isNaN(numericFromGroup)) ids.add(numericFromGroup);
 
         const status = statusIdx !== -1 ? String(rows[i][statusIdx] || '').trim().toLowerCase() : '';
@@ -2082,18 +2277,25 @@ export async function getChecklistIdsWithHistory(): Promise<{ ids: Set<number>; 
         const stamp = timestampIdx !== -1 ? String(rows[i][timestampIdx] || '').trim() : '';
         if (!status || !dateKey) continue;
 
-        const keys = [
-          groupId ? occurrenceKey(groupId, dateKey) : '',
-          checklistId ? occurrenceKey(checklistId, dateKey) : '',
-          !isNaN(numericId) ? occurrenceKey(numericId, dateKey) : '',
-          !isNaN(numericFromGroup) ? occurrenceKey(numericFromGroup, dateKey) : '',
-        ].filter(Boolean);
+        let occurrenceLookupKey = '';
+        if (checklistIdCol) {
+          occurrenceLookupKey = occurrenceKey(checklistIdCol, dateKey);
+        } else if (!isNaN(numericFromGroup)) {
+          occurrenceLookupKey = occurrenceKey(numericFromGroup, dateKey);
+        } else if (groupId) {
+          occurrenceLookupKey = occurrenceKey(groupId, dateKey);
+        }
 
-        keys.forEach((key) => {
-          latestStatus.set(key, status);
-          if (status === 'completed' && stamp) completedAt.set(key, stamp);
-          else completedAt.delete(key);
-        });
+        if (!occurrenceLookupKey) continue;
+
+        const stampMs = stamp ? Date.parse(stamp) : i;
+        const prevMs = latestStampMs.get(occurrenceLookupKey) ?? -1;
+        if (stampMs < prevMs) continue;
+
+        latestStampMs.set(occurrenceLookupKey, stampMs);
+        latestStatus.set(occurrenceLookupKey, status);
+        if (status === 'completed' && stamp) completedAt.set(occurrenceLookupKey, stamp);
+        else completedAt.delete(occurrenceLookupKey);
       }
       return { ids, latestStatus, completedAt };
     } catch {

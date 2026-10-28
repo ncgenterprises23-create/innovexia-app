@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Sidebar from './Sidebar';
 import Header from './Header';
+import ErpAssistant from './ErpAssistant';
 import { ensureSessionId } from '@/utils/session';
 
 export default function LayoutWrapper({ children, disableNotifications = false }: { children: React.ReactNode; disableNotifications?: boolean }) {
@@ -106,6 +107,8 @@ export default function LayoutWrapper({ children, disableNotifications = false }
           </footer>
         </main>
       </div>
+
+      <ErpAssistant />
     </div>
   );
 }

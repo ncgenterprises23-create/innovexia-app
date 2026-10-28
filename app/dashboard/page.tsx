@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import LayoutWrapper from '@/components/LayoutWrapper';
+import { openErpAssistant } from '@/components/ErpAssistant';
 import { ensureSessionId } from '@/utils/session';
 import { motion, AnimatePresence } from 'framer-motion';
 import { parseDateString, parseSheetDate } from '@/lib/dateUtils';
@@ -394,9 +395,13 @@ export default function Dashboard() {
                   <ClipboardList className="w-4 h-4" strokeWidth={2.4} />
                   View Tasks
                 </a>
-                <button className="px-6 py-2.5 bg-white/10 backdrop-blur-xl rounded-xl font-black text-sm hover:bg-white/20 transition-all text-white border border-white/30 text-center flex-1 inline-flex items-center justify-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => openErpAssistant()}
+                  className="px-6 py-2.5 bg-white/10 backdrop-blur-xl rounded-xl font-black text-sm hover:bg-white/20 transition-all text-white border border-white/30 text-center flex-1 inline-flex items-center justify-center gap-2"
+                >
                   <MessageCircle className="w-4 h-4" strokeWidth={2.4} />
-                  Support Chat
+                  AI Assistant
                 </button>
               </div>
             </div>

@@ -51,11 +51,13 @@ export async function GET(request: NextRequest) {
       .filter(record => {
         const expectedGroup = `chk_${checklistId}`;
         const recordGroup = String(record.group_id || '').trim();
-        if (recordGroup && (recordGroup === expectedGroup || recordGroup === String(checklistId))) {
+        if (recordGroup === expectedGroup || recordGroup === String(checklistId)) {
           return true;
         }
-        const recordId = record.checklist_id || record.id;
-        return parseInt(recordId) === parseInt(checklistId);
+        if (record.checklist_id != null && String(record.checklist_id).trim() !== '') {
+          return parseInt(String(record.checklist_id), 10) === parseInt(checklistId, 10);
+        }
+        return false;
       })
       .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
 

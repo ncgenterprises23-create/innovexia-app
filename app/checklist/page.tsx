@@ -10,7 +10,7 @@ import { useLoader } from '@/components/LoaderProvider';
 import DateRangePicker from '@/components/DateRangePicker';
 import { formatDateToLocalTimezone } from '@/utils/timezone';
 import { parseDateString } from '@/lib/dateUtils';
-import { normalizeFrequency, toDateKey } from '@/lib/checklistOccurrences';
+import { normalizeFrequency, toDateKey, resolveOccurrenceDue, occurrenceKey } from '@/lib/checklistOccurrences';
 
 interface Checklist {
   id: number;
@@ -150,6 +150,9 @@ function CompactToolbar({
   onSearch,
   bulkCount = 0,
   onBulkComplete,
+  delayedSelectableCount = 0,
+  onSelectAllDelayed,
+  showSelectAllDelayed = false,
 }: {
   currentPage: number;
   totalPages: number;
@@ -162,6 +165,9 @@ function CompactToolbar({
   onSearch: (value: string) => void;
   bulkCount?: number;
   onBulkComplete?: () => void;
+  delayedSelectableCount?: number;
+  onSelectAllDelayed?: () => void;
+  showSelectAllDelayed?: boolean;
 }) {
   const pages = Math.max(1, totalPages || 1);
   const pageBtn = 'px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border border-[var(--theme-primary)]/25 bg-[var(--theme-light)] text-slate-600 hover:bg-[var(--theme-primary)]/20 disabled:opacity-30 disabled:pointer-events-none';
@@ -188,6 +194,15 @@ function CompactToolbar({
           {label} <span className="ml-1">{timeStats[label] || 0}</span>
         </button>
       ))}
+      {showSelectAllDelayed && delayedSelectableCount > 0 && (
+        <button
+          type="button"
+          onClick={onSelectAllDelayed}
+          className={`px-3 py-1.5 rounded-full text-xs font-black uppercase tracking-widest ${LIGHT_BG} ${LIGHT_BORDER} text-slate-600 hover:bg-[var(--theme-primary)]/20 ${DASH_SHADOW}`}
+        >
+          Select all delayed ({delayedSelectableCount})
+        </button>
+      )}
       {bulkCount > 0 && (
         <button
           onClick={onBulkComplete}
@@ -208,8 +223,16 @@ function CompactToolbar({
   );
 }
 
-function checklistRowKey(checklist: { occurrence_id?: string; id: number; due_date: string }) {
-  return checklist.occurrence_id || `${checklist.id}|${checklist.due_date}`;
+function checklistRowKey(checklist: {
+  occurrence_id?: string;
+  id: number;
+  due_date: string;
+  occurrence_date?: string;
+}) {
+  if (checklist.occurrence_id) return checklist.occurrence_id;
+  const dateKey = checklist.occurrence_date || toDateKey(checklist.due_date);
+  if (dateKey) return `${checklist.id}_${dateKey}`;
+  return `${checklist.id}|${checklist.due_date}`;
 }
 
 function getFrequencyBadgeClass(frequency: string) {
@@ -297,6 +320,7 @@ function ChecklistContent() {
   // Filter state
   const [showFilterModal, setShowFilterModal] = useState(false);
   const filterBtnRef = useRef<HTMLButtonElement>(null);
+  const bulkCompleteInFlight = useRef(false);
   const [filterPos, setFilterPos] = useState({ top: 0, right: 0 });
   const [isMobile, setIsMobile] = useState(false);
 
@@ -836,7 +860,7 @@ function ChecklistContent() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           checklistId: selectedChecklist.id,
-          dueDate: selectedChecklist.occurrence_date || selectedChecklist.due_date,
+          dueDate: resolveOccurrenceDue(selectedChecklist.occurrence_date, selectedChecklist.due_date),
           status,
           userId: user?.id,
           username: user?.username
@@ -1416,47 +1440,132 @@ function ChecklistContent() {
     });
   };
 
-  const handleBulkComplete = async () => {
-    if (selectedForBulk.length === 0) return;
-    try {
-      loader.showLoader();
-      const results = await Promise.all(selectedForBulk.map(async (item) => {
-        const response = await fetch('/api/checklists/update-status', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            checklistId: item.id,
-            dueDate: item.occurrence_date || item.due_date,
-            status: 'completed',
-            userId: user?.id,
-            username: user?.username
-          })
-        });
-        return { item, ok: response.ok };
-      }));
+  const selectAllDelayedInFilter = () => {
+    const delayed = filteredChecklists.filter(
+      (checklist) => (checklist.status || '').toLowerCase() === 'overdue'
+    );
+    setSelectedTaskKeys(new Set(delayed.map(checklistRowKey)));
+  };
 
-      const done = results.filter((result) => result.ok).map((result) => result.item);
-      if (done.length === 0) {
+  const delayedSelectableCount = useMemo(
+    () =>
+      filteredChecklists.filter(
+        (c) => (c.status || '').toLowerCase() === 'overdue' && (c.status || '').toLowerCase() !== 'completed'
+      ).length,
+    [filteredChecklists]
+  );
+
+  const handleBulkComplete = async () => {
+    if (selectedForBulk.length === 0 || bulkCompleteInFlight.current) return;
+
+    const selectionKeys = selectedForBulk.map(checklistRowKey);
+    const uniqueSelectionKeys = new Set(selectionKeys);
+    if (uniqueSelectionKeys.size !== selectionKeys.length) {
+      toast.error(
+        `Only ${uniqueSelectionKeys.size} unique tasks in your selection (${selectionKeys.length} rows). Refresh the page and use "Select all delayed" again.`
+      );
+      return;
+    }
+
+    try {
+      bulkCompleteInFlight.current = true;
+      loader.showLoader();
+
+      const payload: {
+        checklistId: number;
+        occurrenceDate: string;
+        occurrenceId?: string;
+        groupId?: string;
+        previousStatus?: string;
+      }[] = [];
+      for (const item of selectedForBulk) {
+        const occurrenceDate = resolveOccurrenceDue(item.occurrence_date, item.due_date);
+        if (!occurrenceDate) {
+          loader.hideLoader();
+          bulkCompleteInFlight.current = false;
+          toast.error(
+            `Task #${item.id} has no valid occurrence date. Refresh the checklist list and try again.`
+          );
+          return;
+        }
+        payload.push({
+          checklistId: item.id,
+          occurrenceDate,
+          occurrenceId: item.occurrence_id,
+          groupId: item.group_id,
+          previousStatus: item.status,
+        });
+      }
+
+      const response = await fetch('/api/checklists/bulk-update-status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          items: payload,
+          status: 'completed',
+          userId: user?.id,
+          username: user?.username,
+        }),
+      });
+
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
         loader.hideLoader();
-        toast.error('Failed to complete selected tasks');
+        bulkCompleteInFlight.current = false;
+        const failN = Array.isArray(data.failures) ? data.failures.length : data.failed;
+        toast.error(
+          data.error ||
+            (failN ? `${failN} item(s) could not be saved — check occurrence dates.` : 'Failed to complete selected tasks')
+        );
         return;
       }
 
-      const doneKeys = new Set(done.map(checklistRowKey));
-      setChecklists((prev) => prev.map((checklist) =>
-        doneKeys.has(checklistRowKey(checklist)) ? { ...checklist, status: 'completed', completed_at: new Date().toISOString() } : checklist
-      ));
-      setSelectedTaskKeys((prev) => {
-        const next = new Set(prev);
-        doneKeys.forEach((key) => next.delete(key));
-        return next;
-      });
+      const requested = (data.requested as number) || payload.length;
+      const completedCount = (data.completed as number) || 0;
+      const failedCount = (data.failed as number) || 0;
+
+      const savedKeys = new Set<string>(
+        Array.isArray(data.saved)
+          ? data.saved.map(
+              (s: { checklistId: number; occurrenceDate: string }) =>
+                occurrenceKey(s.checklistId, s.occurrenceDate)
+            )
+          : []
+      );
+
+      if (savedKeys.size > 0) {
+        setChecklists((prev) =>
+          prev.map((checklist) => {
+            const dateKey = checklist.occurrence_date || toDateKey(checklist.due_date);
+            if (!dateKey) return checklist;
+            if (!savedKeys.has(occurrenceKey(checklist.id, dateKey))) return checklist;
+            return { ...checklist, status: 'completed', completed_at: new Date().toISOString() };
+          })
+        );
+      }
+      setSelectedTaskKeys(new Set());
 
       loader.hideLoader();
-      toast.success(`Completed ${done.length} task${done.length === 1 ? '' : 's'}`);
+      bulkCompleteInFlight.current = false;
+      if (failedCount > 0) {
+        toast.error(
+          `Saved ${completedCount} of ${requested} rows to history; ${failedCount} failed (missing or invalid dates).`
+        );
+      } else if (completedCount !== payload.length) {
+        toast.error(
+          `Sent ${payload.length} tasks but only ${completedCount} rows were written. Check the server log and sheet row ${data.sheetStartRow ?? ''}.`
+        );
+      } else {
+        toast.success(
+          `Saved ${completedCount} rows to history (starting sheet row ${data.sheetStartRow ?? '?'}) — one row per occurrence.`
+        );
+      }
+      await fetchChecklists(false);
     } catch (error) {
       console.error('Error completing tasks:', error);
       loader.hideLoader();
+      bulkCompleteInFlight.current = false;
       toast.error('Error completing tasks');
     }
   };
@@ -1607,6 +1716,9 @@ function ChecklistContent() {
           onSearch={(value) => { setSearchTerm(value); setCurrentPage(1); }}
           bulkCount={viewMode === 'list' ? selectedForBulk.length : 0}
           onBulkComplete={handleBulkComplete}
+          showSelectAllDelayed={activeTimeFilter === 'Delayed'}
+          delayedSelectableCount={delayedSelectableCount}
+          onSelectAllDelayed={selectAllDelayedInFilter}
         />
 
         {/* Table */}

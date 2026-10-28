@@ -224,6 +224,7 @@ function DelegationContent() {
   // Filter state
   const [showFilterModal, setShowFilterModal] = useState(false);
   const filterBtnRef = useRef<HTMLButtonElement>(null);
+  const bulkCompleteInFlight = useRef(false);
   const [filterPos, setFilterPos] = useState({ top: 0, right: 0 });
   const [filters, setFilters] = useState({
     tasks: [] as string[],
@@ -1535,43 +1536,70 @@ function DelegationContent() {
   };
 
   const handleBulkComplete = async () => {
-    if (!user || selectedForBulk.length === 0) return;
+    if (!user || selectedForBulk.length === 0 || bulkCompleteInFlight.current) return;
     try {
+      bulkCompleteInFlight.current = true;
       loader.showLoader();
-      const results = await Promise.all(selectedForBulk.map(async (item) => {
-        const response = await fetch('/api/delegations/update-status', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            delegationId: item.id,
-            status: 'completed',
-            userId: user.id,
-            username: user.username,
-          }),
-        });
-        return { item, ok: response.ok };
+
+      const payload = selectedForBulk.map((item) => ({
+        delegationId: item.id,
+        previousStatus: item.status,
+        oldDueDate: item.due_date,
       }));
-      const done = results.filter((result) => result.ok).map((result) => result.item);
-      if (done.length === 0) {
+
+      const response = await fetch('/api/delegations/bulk-update-status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          items: payload,
+          status: 'completed',
+          userId: user.id,
+        }),
+      });
+
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
         loader.hideLoader();
-        toast.error('Failed to complete selected tasks');
+        bulkCompleteInFlight.current = false;
+        toast.error(data.error || 'Failed to complete selected tasks');
         return;
       }
-      const doneIds = new Set(done.map((item) => item.id));
-      const completedAt = new Date().toISOString();
-      setDelegations((prev) => prev.map((delegation) =>
-        doneIds.has(delegation.id) ? { ...delegation, status: 'completed', completed_at: completedAt } : delegation
-      ));
-      setSelectedIds((prev) => {
-        const next = new Set(prev);
-        doneIds.forEach((id) => next.delete(id));
-        return next;
-      });
+
+      const requested = (data.requested as number) || payload.length;
+      const completedCount = (data.completed as number) || 0;
+      const failedCount = (data.failed as number) || 0;
+      const savedIds = new Set<number>(
+        Array.isArray(data.saved) ? data.saved.map((id: number) => Number(id)) : []
+      );
+
+      if (savedIds.size > 0) {
+        const completedAt = new Date().toISOString();
+        setDelegations((prev) =>
+          prev.map((delegation) =>
+            savedIds.has(delegation.id)
+              ? { ...delegation, status: 'completed', completed_at: completedAt }
+              : delegation
+          )
+        );
+      }
+      setSelectedIds(new Set());
+
       loader.hideLoader();
-      toast.success(`Completed ${done.length} task${done.length === 1 ? '' : 's'}`);
+      bulkCompleteInFlight.current = false;
+      if (failedCount > 0) {
+        toast.error(`Saved ${completedCount} of ${requested} rows to history; ${failedCount} failed.`);
+      } else if (completedCount !== payload.length) {
+        toast.error(`Sent ${payload.length} tasks but only ${completedCount} history rows were written.`);
+      } else {
+        toast.success(
+          `Saved ${completedCount} rows to delegation history (starting sheet row ${data.sheetStartRow ?? '?'}).`
+        );
+      }
     } catch (error) {
       console.error('Error completing tasks:', error);
       loader.hideLoader();
+      bulkCompleteInFlight.current = false;
       toast.error('Error completing tasks');
     }
   };
