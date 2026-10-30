@@ -34,6 +34,36 @@ const getVal = (row: any, ...keys: string[]) => {
     return '';
 };
 
+/** Sheet column UPDATED FOB = Y means fixed/confirmed FOB; otherwise tentative. */
+const getUpdatedFobFlag = (row: any) => {
+    if (!row || typeof row !== 'object') return '';
+    const direct =
+      row['UPDATED FOB'] ??
+      row['Updated FOB'] ??
+      row['UPDATED_FOB'] ??
+      row['Updated_FOB'];
+    if (direct !== undefined && direct !== null && String(direct).trim() !== '') {
+      return String(direct);
+    }
+    const key = Object.keys(row).find((k) => k.trim().toUpperCase() === 'UPDATED FOB');
+    return key ? String(row[key]) : '';
+};
+
+const isFixedFobProduct = (row: any) => {
+    const raw = getUpdatedFobFlag(row).trim().toUpperCase();
+    if (raw === 'Y' || raw === 'YES') return true;
+    if (raw === 'TRUE' || raw === '1') return true;
+    for (const [key, value] of Object.entries(row || {})) {
+        if (key.trim().toUpperCase() !== 'UPDATED FOB') continue;
+        if (value === true) return true;
+        const v = String(value ?? '').trim().toUpperCase();
+        if (v === 'Y' || v === 'YES' || v === 'TRUE' || v === '1') return true;
+    }
+    return false;
+};
+
+const isTentativeFobProduct = (row: any) => !isFixedFobProduct(row);
+
 const formatImageUrl = (url: string) => {
     if (!url || typeof url !== 'string') return '';
     if (url.includes('drive.google.com')) {
@@ -64,6 +94,7 @@ export default function WebsitePage() {
   
   const [selectedProductType, setSelectedProductType] = useState<string | null>(null);
   const [selectedBrand, setSelectedBrand] = useState<string | null>(null);
+  const [fobPriceFilter, setFobPriceFilter] = useState<'all' | 'fixed' | 'tentative'>('all');
   const [rateType, setRateType] = useState<'FOB 20FT' | 'FOB 40FT'>('FOB 20FT');
   const [expandedProduct, setExpandedProduct] = useState<any | null>(null);
   const [viewLineItems, setViewLineItems] = useState<any[] | null>(null);
@@ -132,7 +163,12 @@ export default function WebsitePage() {
   useEffect(() => {
     setFilterParty('');
     setFilterPiNumber('');
+    setFobPriceFilter('all');
   }, [activeTab]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [fobPriceFilter, selectedProductType, selectedBrand, searchQuery]);
 
   useEffect(() => {
     const handleMessage = (e: MessageEvent) => {
@@ -192,6 +228,16 @@ export default function WebsitePage() {
     return { brandCounts, typeCounts };
   }, [data]);
 
+  const fobPriceCounts = useMemo(() => {
+    let fixed = 0;
+    let tentative = 0;
+    data.forEach((row) => {
+      if (isFixedFobProduct(row)) fixed += 1;
+      else tentative += 1;
+    });
+    return { fixed, tentative };
+  }, [data]);
+
   const filteredAndSortedData = useMemo(() => {
     let result = [...data];
 
@@ -242,13 +288,19 @@ export default function WebsitePage() {
     if (selectedProductType) result = result.filter(row => String(getVal(row, 'Product Type') || '').toUpperCase() === selectedProductType.toUpperCase());
     if (selectedBrand) result = result.filter(row => String(getVal(row, 'Brand') || '').toUpperCase() === selectedBrand.toUpperCase());
 
+    if (activeTab === 'PreOrder' && fobPriceFilter === 'fixed') {
+      result = result.filter(isFixedFobProduct);
+    } else if (activeTab === 'PreOrder' && fobPriceFilter === 'tentative') {
+      result = result.filter(isTentativeFobProduct);
+    }
+
     if (sortBy === 'Price: Low to High') {
         result.sort((a, b) => (parseFloat(String(getVal(a, rateType)).replace(/[^0-9.]/g, '')) || 0) - (parseFloat(String(getVal(b, rateType)).replace(/[^0-9.]/g, '')) || 0));
     } else if (sortBy === 'Price: High to Low') {
         result.sort((a, b) => (parseFloat(String(getVal(b, rateType)).replace(/[^0-9.]/g, '')) || 0) - (parseFloat(String(getVal(a, rateType)).replace(/[^0-9.]/g, '')) || 0));
     }
     return result;
-  }, [data, searchQuery, selectedProductType, selectedBrand, sortBy, rateType, activeTab, user, filterParty, filterPiNumber]);
+  }, [data, searchQuery, selectedProductType, selectedBrand, fobPriceFilter, sortBy, rateType, activeTab, user, filterParty, filterPiNumber]);
 
   const totalPages = Math.ceil(filteredAndSortedData.length / ITEMS_PER_PAGE);
   const paginatedData = useMemo(() => {
@@ -876,6 +928,38 @@ export default function WebsitePage() {
         {/* Compact & Fixed Sidebar */}
         <aside className="hidden lg:block w-[200px] shrink-0 h-[calc(100vh-6rem)] sticky top-24 bg-white shadow-sm overflow-y-auto no-scrollbar p-4 ml-2 rounded-sm border-r">
             <h3 className="text-[13px] font-black text-slate-800 mb-4 border-b pb-2 uppercase tracking-tighter">Filters</h3>
+
+            {activeTab === 'PreOrder' && (
+              <div className="mb-6">
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">FOB price</p>
+                <div className="space-y-0.5">
+                  <button
+                    type="button"
+                    onClick={() => setFobPriceFilter('all')}
+                    className={`w-full flex justify-between items-center px-2 py-1.5 rounded-sm text-[13px] font-bold transition-colors ${fobPriceFilter === 'all' ? 'bg-blue-50 text-[#2874f0]' : 'text-slate-600 hover:bg-slate-50'}`}
+                  >
+                    <span>All</span>
+                    <span className="text-[10px] opacity-40">{data.length}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFobPriceFilter('fixed')}
+                    className={`w-full flex justify-between items-center px-2 py-1.5 rounded-sm text-[13px] font-bold transition-colors ${fobPriceFilter === 'fixed' ? 'bg-emerald-50 text-emerald-700' : 'text-slate-600 hover:bg-slate-50'}`}
+                  >
+                    <span>Latest FOB</span>
+                    <span className="text-[10px] opacity-40">{fobPriceCounts.fixed}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFobPriceFilter('tentative')}
+                    className={`w-full flex justify-between items-center px-2 py-1.5 rounded-sm text-[13px] font-bold transition-colors ${fobPriceFilter === 'tentative' ? 'bg-orange-50 text-orange-700' : 'text-slate-600 hover:bg-slate-50'}`}
+                  >
+                    <span>Tentative FOB</span>
+                    <span className="text-[10px] opacity-40">{fobPriceCounts.tentative}</span>
+                  </button>
+                </div>
+              </div>
+            )}
             
             <div className="mb-6">
                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Category</p>
@@ -920,10 +1004,22 @@ export default function WebsitePage() {
                     </p>
 
                     {activeTab === 'PreOrder' && (
+                        <>
                         <div className="flex items-center bg-[#f1f3f6] p-0.5 rounded-sm border">
                             <button onClick={() => setRateType('FOB 20FT')} className={`px-6 py-1.5 text-[10px] font-black rounded-sm transition-all ${rateType === 'FOB 20FT' ? 'bg-[#2874f0] text-white shadow-sm' : 'text-slate-500 hover:bg-white/50'}`}>FOB 20FT</button>
                             <button onClick={() => setRateType('FOB 40FT')} className={`px-6 py-1.5 text-[10px] font-black rounded-sm transition-all ${rateType === 'FOB 40FT' ? 'bg-[#2874f0] text-white shadow-sm' : 'text-slate-500 hover:bg-white/50'}`}>FOB 40FT</button>
                         </div>
+                        <select
+                          value={fobPriceFilter}
+                          onChange={(e) => setFobPriceFilter(e.target.value as 'all' | 'fixed' | 'tentative')}
+                          className="text-[11px] font-black border bg-[#f1f3f6] px-3 py-1.5 rounded-sm outline-none cursor-pointer lg:hidden"
+                          aria-label="Filter by FOB price type"
+                        >
+                          <option value="all">All FOB prices</option>
+                          <option value="fixed">Latest FOB only</option>
+                          <option value="tentative">Tentative FOB only</option>
+                        </select>
+                        </>
                     )}
 
                     {activeTab !== 'PreOrder' && user && (
@@ -973,9 +1069,9 @@ export default function WebsitePage() {
                 </div>
             </div>
 
-            <div className={`grid gap-2 ${activeTab === 'PreOrder' ? 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6' : 'grid-cols-1'}`}>
+            <div className={`grid gap-2 ${activeTab === 'PreOrder' ? 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5' : 'grid-cols-1'}`}>
                 {loading ? Array(12).fill(0).map((_, i) => (
-                    <div key={i} className="bg-white h-72 animate-pulse rounded-sm"></div>
+                    <div key={i} className="bg-white h-56 animate-pulse rounded-sm"></div>
                 )) : activeTab === 'PreOrder' ? paginatedData.map((product, i) => {
                     const price = getVal(product, rateType);
                     const brand = getVal(product, 'Brand');
@@ -983,40 +1079,77 @@ export default function WebsitePage() {
                     const img = formatImageUrl(getVal(product, 'Image'));
                     const ean = getVal(product, 'Ean Code');
                     const qty = getCartQty(product);
+                    const fixedFob = isFixedFobProduct(product);
+                    const tentativeFob = !fixedFob;
                     
                     return (
-                        <div key={i} className="bg-white p-4 flex flex-col group relative hover:shadow-xl transition-all cursor-pointer rounded-sm border border-transparent hover:border-blue-100" onClick={() => setExpandedProduct(product)}>
-                            <div className="absolute top-1 right-1 z-10">
-                                <a href={`https://www.google.com/search?q=${ean}`} target="_blank" onClick={(e) => e.stopPropagation()} className="px-2 py-1 bg-white/90 border border-slate-100 rounded text-[9px] font-black text-[#2874f0] hover:bg-blue-600 hover:text-white transition-colors">EAN: {ean || 'N/A'}</a>
+                        <div
+                          key={i}
+                          className={`bg-white pt-0 p-2.5 flex flex-col group relative hover:shadow-lg transition-all cursor-pointer rounded-sm border overflow-hidden ${
+                            tentativeFob
+                              ? 'border-orange-300 bg-orange-50/50 ring-1 ring-orange-200 hover:border-orange-400'
+                              : 'border-transparent hover:border-blue-100'
+                          }`}
+                          onClick={() => setExpandedProduct(product)}
+                        >
+                            <div
+                              className={`w-[calc(100%+1.25rem)] -mx-2.5 mb-2 py-1.5 text-center ${
+                                tentativeFob ? 'bg-orange-500 text-white' : 'bg-emerald-600 text-white'
+                              }`}
+                            >
+                              <span className="text-[10px] font-black uppercase tracking-wider">
+                                {tentativeFob ? 'Tentative FOB' : 'Latest FOB'}
+                              </span>
                             </div>
 
-                            <div className="h-44 mb-3 flex items-center justify-center overflow-hidden bg-slate-50 rounded-sm p-4">
-                                {img ? <img src={img} referrerPolicy="no-referrer" className="max-h-full max-w-full object-contain duration-300" alt={name} /> : <div className="text-4xl opacity-10">📦</div>}
+                            <div className="relative h-28 mb-2 rounded-sm bg-slate-50 overflow-hidden">
+                              <div className="h-full w-full flex items-center justify-center p-2">
+                                {img ? (
+                                  <img
+                                    src={img}
+                                    referrerPolicy="no-referrer"
+                                    className="max-h-full max-w-full object-contain duration-300"
+                                    alt={name}
+                                  />
+                                ) : (
+                                  <div className="text-3xl opacity-10">📦</div>
+                                )}
+                              </div>
+                              <a
+                                href={`https://www.google.com/search?q=${ean}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                className="absolute top-1 right-1 z-10 max-w-[calc(100%-0.5rem)] truncate px-1.5 py-0.5 bg-white/95 border border-slate-200 rounded shadow-sm text-[8px] font-bold text-[#2874f0] hover:bg-blue-600 hover:text-white transition-colors leading-tight"
+                                title={ean ? `EAN: ${ean}` : 'EAN not available'}
+                              >
+                                EAN: {ean || 'N/A'}
+                              </a>
                             </div>
 
-                            <div className="flex-grow">
-                                <p className="text-[10px] text-[#2874f0] font-black uppercase mb-0.5 tracking-tight">{brand}</p>
-                                <h3 className="text-[13px] font-bold text-slate-800 line-clamp-2 leading-tight mb-2 group-hover:text-[#2874f0] transition-colors">{name}</h3>
-                                <div className="flex items-center gap-2 mb-3">
-                                    <span className="text-lg font-black text-slate-900">{price ? `$${price}` : 'Quote'}</span>
-                                    {price && <span className="text-[10px] text-slate-400 font-black uppercase">{rateType.split(' ')[1]}</span>}
+                            <div className="flex-grow min-h-0">
+                                <p className="text-[9px] text-[#2874f0] font-black uppercase mb-0.5 tracking-tight truncate">{brand}</p>
+                                <h3 className="text-[11px] font-bold text-slate-800 line-clamp-2 leading-snug mb-1 group-hover:text-[#2874f0] transition-colors">{name}</h3>
+                                <div className="flex items-baseline gap-1.5 mb-1.5">
+                                    <span className={`text-base font-black ${tentativeFob ? 'text-orange-700' : 'text-slate-900'}`}>{price ? `$${price}` : 'Quote'}</span>
+                                    {price && <span className="text-[9px] text-slate-400 font-black uppercase">{rateType.split(' ')[1]}</span>}
                                 </div>
                             </div>
 
-                            <div className="grid grid-cols-2 gap-2 mb-4">
-                                <div className="text-[11px] bg-slate-50 p-2 rounded-sm font-black text-slate-500 flex flex-col items-center">
-                                    <span className="text-[8px] opacity-40 uppercase">Grm</span>
-                                    <span className="text-slate-800">{getVal(product, 'Grm') || '—'}</span>
+                            <div className="grid grid-cols-2 gap-1.5 mb-2">
+                                <div className="text-[10px] bg-slate-50 py-1 px-1 rounded-sm font-black text-slate-500 flex flex-col items-center">
+                                    <span className="text-[7px] opacity-40 uppercase">Grm</span>
+                                    <span className="text-slate-800 text-[10px]">{getVal(product, 'Grm') || '—'}</span>
                                 </div>
-                                <div className="text-[11px] bg-slate-50 p-2 rounded-sm font-black text-slate-500 flex flex-col items-center">
-                                    <span className="text-[8px] opacity-40 uppercase">Cbm</span>
-                                    <span className="text-slate-900">{getVal(product, 'Cbm') || '—'}</span>
+                                <div className="text-[10px] bg-slate-50 py-1 px-1 rounded-sm font-black text-slate-500 flex flex-col items-center">
+                                    <span className="text-[7px] opacity-40 uppercase">Cbm</span>
+                                    <span className="text-slate-900 text-[10px]">{getVal(product, 'Cbm') || '—'}</span>
                                 </div>
                             </div>
 
-                            <div className="flex items-center gap-2 mt-auto" onClick={(e) => e.stopPropagation()}>
-                                <div className="flex items-center bg-[#f1f3f6] rounded-sm p-1 border">
-                                    <button onClick={() => updateCart(product, -1)} className="w-8 h-8 flex items-center justify-center text-[#2874f0] font-black hover:bg-white rounded-sm transition-colors text-sm">–</button>
+                            <div className="flex items-center gap-1.5 mt-auto" onClick={(e) => e.stopPropagation()}>
+                                <div className="flex items-center bg-[#f1f3f6] rounded-sm p-0.5 border">
+                                    <button onClick={() => updateCart(product, -1)} className="w-7 h-7 flex items-center justify-center text-[#2874f0] font-black hover:bg-white rounded-sm transition-colors text-xs">–</button>
                                     <input
                                       type="number"
                                       min="0"
@@ -1026,9 +1159,9 @@ export default function WebsitePage() {
                                         const val = parseInt(e.target.value);
                                         setCartQty(product, isNaN(val) ? 0 : val);
                                       }}
-                                      className="w-10 text-center bg-transparent text-[12px] font-black text-slate-800 outline-none cursor-text"
+                                      className="w-8 text-center bg-transparent text-[11px] font-black text-slate-800 outline-none cursor-text"
                                     />
-                                    <button onClick={() => updateCart(product, 1)} className="w-8 h-8 flex items-center justify-center text-[#2874f0] font-black hover:bg-white rounded-sm transition-colors text-sm">+</button>
+                                    <button onClick={() => updateCart(product, 1)} className="w-7 h-7 flex items-center justify-center text-[#2874f0] font-black hover:bg-white rounded-sm transition-colors text-xs">+</button>
                                 </div>
                                 <button onClick={(e) => { 
                                     e.stopPropagation(); 
@@ -1036,7 +1169,7 @@ export default function WebsitePage() {
                                         updateCart(product, 1); 
                                     }
                                     addToast('Added to cart', 'success'); 
-                                }} className="flex-grow py-2.5 bg-[#ff9f00] text-white text-[10px] font-black rounded-sm hover:bg-[#fb641b] transition-all uppercase shadow-sm active:scale-95 tracking-widest">
+                                }} className="flex-grow py-2 bg-[#ff9f00] text-white text-[9px] font-black rounded-sm hover:bg-[#fb641b] transition-all uppercase shadow-sm active:scale-95 tracking-widest">
                                     ADD
                                 </button>
                             </div>
@@ -2039,8 +2172,13 @@ export default function WebsitePage() {
                                 {formatImageUrl(getVal(expandedProduct, 'Image')) ? <img src={formatImageUrl(getVal(expandedProduct, 'Image'))} referrerPolicy="no-referrer" className="max-w-full max-h-full object-contain" /> : <div className="text-9xl opacity-10">📦</div>}
                             </div>
                             <p className="text-[10px] font-black text-[#2874f0] uppercase tracking-widest mb-1">{getVal(expandedProduct, 'Brand')}</p>
-                            <h3 className="text-xl font-black text-slate-900 leading-[1.2] mb-4">{getVal(expandedProduct, 'Product')}</h3>
-                            <div className="bg-blue-50 p-4 rounded-sm border-l-4 border-[#2874f0]">
+                            <h3 className="text-xl font-black text-slate-900 leading-[1.2] mb-2">{getVal(expandedProduct, 'Product')}</h3>
+                            {isFixedFobProduct(expandedProduct) ? (
+                              <span className="inline-block mb-4 px-4 py-2 bg-emerald-600 text-white text-base font-black uppercase rounded-md shadow-md tracking-wide">Latest FOB</span>
+                            ) : (
+                              <span className="inline-block mb-4 px-4 py-2 bg-orange-500 text-white text-base font-black uppercase rounded-md shadow-md tracking-wide">Tentative FOB</span>
+                            )}
+                            <div className={`p-4 rounded-sm border-l-4 ${isTentativeFobProduct(expandedProduct) ? 'bg-orange-50 border-orange-500' : 'bg-blue-50 border-[#2874f0]'}`}>
                                 <div className="flex justify-between items-center mb-2">
                                     <span className="text-[10px] text-slate-500 font-black uppercase">Rate (20FT)</span>
                                     <span className="text-xl font-black text-[#2874f0]">${getVal(expandedProduct, 'Fob 20Ft')}</span>

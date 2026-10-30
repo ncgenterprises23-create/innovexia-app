@@ -9796,21 +9796,25 @@ export async function updateIgstRefundConfig(configData: any[]) {
   }
 }
 
+const CLIENT_INTERFACE_SPREADSHEET_ID = '1udYmkJ6K1vhDjt106k9bYZuo1XB7HaWQy5tRFVR7uVk';
+/** PreOrder columns (e.g. UPDATED FOB in BO) extend beyond AZ; read wide range. */
+const CLIENT_INTERFACE_SHEET_RANGE = 'A:ZZ';
+
 export async function getClientInterfaceData(sheetName: string) {
   try {
     const sheets = await getGoogleSheetsClient();
-    const spreadsheetId = '1udYmkJ6K1vhDjt106k9bYZuo1XB7HaWQy5tRFVR7uVk';
+    const spreadsheetId = CLIENT_INTERFACE_SPREADSHEET_ID;
 
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: `${sheetName}!A:AZ`,
+      range: `${sheetName}!${CLIENT_INTERFACE_SHEET_RANGE}`,
       valueRenderOption: 'UNFORMATTED_VALUE',
     });
 
     const rows = response.data.values;
     if (!rows || rows.length === 0) return [];
 
-    const headers = rows[0];
+    const headers = rows[0].map((h: unknown) => String(h ?? '').trim());
     const dataRows = rows.slice(1);
 
     return dataRows
@@ -9824,14 +9828,14 @@ export async function getClientInterfaceData(sheetName: string) {
 export async function createClientInterfaceData(sheetName: string, data: any) {
   try {
     const sheets = await getGoogleSheetsClient();
-    const spreadsheetId = '1udYmkJ6K1vhDjt106k9bYZuo1XB7HaWQy5tRFVR7uVk';
+    const spreadsheetId = CLIENT_INTERFACE_SPREADSHEET_ID;
 
     // Get headers to ensure correct order
     const headerResponse = await sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: `${sheetName}!A1:AZ1`,
+      range: `${sheetName}!A1:ZZ1`,
     });
-    let headers = headerResponse.data.values?.[0] || [];
+    let headers = (headerResponse.data.values?.[0] || []).map((h: unknown) => String(h ?? '').trim());
 
     // Initialize headers for Orders/Tracker if empty
     if (headers.length === 0) {
@@ -9856,7 +9860,7 @@ export async function createClientInterfaceData(sheetName: string, data: any) {
 
     await sheets.spreadsheets.values.append({
       spreadsheetId,
-      range: `${sheetName}!A:AZ`,
+      range: `${sheetName}!${CLIENT_INTERFACE_SHEET_RANGE}`,
       valueInputOption: 'USER_ENTERED',
       requestBody: {
         values: rowDataArray,
@@ -9873,17 +9877,17 @@ export async function createClientInterfaceData(sheetName: string, data: any) {
 export async function updateClientInterfaceData(sheetName: string, identifierKey: string, identifierValue: any, updates: any) {
   try {
     const sheets = await getGoogleSheetsClient();
-    const spreadsheetId = '1udYmkJ6K1vhDjt106k9bYZuo1XB7HaWQy5tRFVR7uVk';
+    const spreadsheetId = CLIENT_INTERFACE_SPREADSHEET_ID;
 
     // 1. Get all data to find the row
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: `${sheetName}!A:AZ`,
+      range: `${sheetName}!${CLIENT_INTERFACE_SHEET_RANGE}`,
     });
     const rows = response.data.values;
     if (!rows || rows.length === 0) throw new Error('No data found');
 
-    const headers = rows[0];
+    const headers = rows[0].map((h: unknown) => String(h ?? '').trim());
     let rowIndex = -1;
     let existingData: any = null;
 
@@ -9918,7 +9922,7 @@ export async function updateClientInterfaceData(sheetName: string, identifierKey
 
     await sheets.spreadsheets.values.update({
       spreadsheetId,
-      range: `${sheetName}!A${actualRow}:AZ${actualRow}`,
+      range: `${sheetName}!A${actualRow}:ZZ${actualRow}`,
       valueInputOption: 'USER_ENTERED',
       requestBody: {
         values: [rowData],
@@ -9935,17 +9939,17 @@ export async function updateClientInterfaceData(sheetName: string, identifierKey
 export async function deleteClientInterfaceData(sheetName: string, identifierKey: string, identifierValue: any) {
   try {
     const sheets = await getGoogleSheetsClient();
-    const spreadsheetId = '1udYmkJ6K1vhDjt106k9bYZuo1XB7HaWQy5tRFVR7uVk';
+    const spreadsheetId = CLIENT_INTERFACE_SPREADSHEET_ID;
 
     // 1. Get all data to find the row
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: `${sheetName}!A:AZ`,
+      range: `${sheetName}!${CLIENT_INTERFACE_SHEET_RANGE}`,
     });
     const rows = response.data.values;
     if (!rows || rows.length === 0) throw new Error('No data found');
 
-    const headers = rows[0];
+    const headers = rows[0].map((h: unknown) => String(h ?? '').trim());
     let rowIndex = -1;
     if (identifierKey === 'compound') {
       const matchCriteria = JSON.parse(identifierValue);
