@@ -40,6 +40,7 @@ export const SPREADSHEET_IDS = {
   SALES_EXPORT_PURCHASE_ENQUIRY_FMS: '1NEy9qSv-9fCGVOjkW9cfgVZNdJbta79lcxIJ6xe_msE',
   IGST_REFUND: '1pmf0FcgLs_U_883CGwl6KWkwfg4a9Cq1RhVfMpijqh0',
   DIY_REQUIREMENT: '1yCL1jFQtPqJLlSY_V92jY5WqPc0JZEDZtX-rmB93Ous',
+  CRM_PIPELINE: '1dF3YYOudpOt3cBr-WOkaUGrGRiKqFdes9luAbxyfDOA',
 };
 
 // Backward compatibility

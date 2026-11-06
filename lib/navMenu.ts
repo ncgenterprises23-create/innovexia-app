@@ -22,6 +22,7 @@ export const NAV_MENU_ITEMS: NavMenuItem[] = [
   {
     label: 'CRM', icon: 'clipboard', roles: ['Admin', 'Manager'], children: [
       { label: 'CRM', icon: 'users', href: '/crm', roles: ['Admin', 'Manager'] },
+      { label: 'CRM Pipeline', icon: 'trending', href: '/crm-pipeline', roles: ['Admin', 'Manager'] },
       { label: 'O2D', icon: 'trending', href: '/o2d', roles: ['Admin', 'Manager'] },
       { label: 'Collection', icon: 'currency-dollar', href: '/collection', roles: ['Admin', 'Manager'] },
       { label: 'Payable', icon: 'currency-dollar', href: '/payable', roles: ['Admin', 'Manager'] },

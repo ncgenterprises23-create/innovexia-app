@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { ensureSessionId } from '@/utils/session';
 
@@ -10,7 +10,12 @@ export default function LoginPage() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [formReady, setFormReady] = useState(false);
   const router = useRouter();
+
+  useEffect(() => {
+    setFormReady(true);
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -91,7 +96,14 @@ export default function LoginPage() {
               </div>
             )}
 
-            <form onSubmit={handleSubmit} className="space-y-6">
+            {!formReady ? (
+              <div className="space-y-6" aria-hidden="true">
+                <div className="h-[3.25rem] bg-gray-100 rounded-xl animate-pulse" />
+                <div className="h-[3.25rem] bg-gray-100 rounded-xl animate-pulse" />
+                <div className="h-14 bg-gray-200/80 rounded-xl animate-pulse" />
+              </div>
+            ) : (
+            <form onSubmit={handleSubmit} className="space-y-6" autoComplete="on">
               {/* Username Input with Floating Label */}
               <div className="relative group">
                 <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none z-10">
@@ -213,6 +225,7 @@ export default function LoginPage() {
                 </div>
               </div>
             </form>
+            )}
           </div>
         </div>
       </div>
