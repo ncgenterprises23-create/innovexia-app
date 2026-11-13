@@ -12,7 +12,15 @@ export const CRM_PIPELINE_SHEETS = {
 
 const SPREADSHEET_ID = SPREADSHEET_IDS.CRM_PIPELINE;
 
-const PIPELINE_HEADERS = ['id', 'name', 'sequence', 'active', 'created_at', 'created_by'];
+const PIPELINE_HEADERS = [
+  'id',
+  'name',
+  'sequence',
+  'active',
+  'created_at',
+  'created_by',
+  'owner_username',
+];
 const STAGE_HEADERS = ['id', 'pipeline_id', 'name', 'sequence', 'active', 'is_won', 'is_lost', 'created_at'];
 const OPPORTUNITY_HEADERS = [
   'id', 'pipeline_id', 'stage_id', 'name', 'contact_name', 'email', 'phone', 'company',
@@ -38,6 +46,36 @@ const CRM_SHEET_DEFS: SheetDef[] = [
 ];
 
 let ensureInFlight: Promise<void> | null = null;
+
+const PIPELINES_CACHE_MS = 20_000;
+let pipelinesCache: { at: number; data: any[] } | null = null;
+
+function invalidateCrmPipelinesCache(): void {
+  pipelinesCache = null;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isSheetsQuotaError(error: unknown): boolean {
+  const e = error as { code?: number; response?: { status?: number } };
+  return e?.code === 429 || e?.response?.status === 429;
+}
+
+async function withSheetsRetry<T>(fn: () => Promise<T>, attempts = 4): Promise<T> {
+  let last: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fn();
+    } catch (error) {
+      last = error;
+      if (!isSheetsQuotaError(error) || i === attempts - 1) throw error;
+      await sleep(600 * (i + 1));
+    }
+  }
+  throw last;
+}
 
 async function getSpreadsheetMeta(sheets: any, refresh = false): Promise<any> {
   if (!refresh && (global as any)[spreadsheetMetaKey]) {
@@ -92,6 +130,26 @@ async function ensureAllCrmPipelineSheets(sheets: any): Promise<void> {
       requestBody: { values: [def.headers] },
     });
   }
+}
+
+async function ensurePipelineOptionalColumns(sheets: any): Promise<void> {
+  if ((global as any).crm_pipeline_pl_extra_cols) return;
+  const title = CRM_PIPELINE_SHEETS.PIPELINES;
+  const headerRes = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `'${title}'!A1:ZZ1`,
+  });
+  let headers = (headerRes.data.values?.[0] || []) as string[];
+  if (!headers.includes('owner_username')) {
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SPREADSHEET_ID,
+      range: `'${title}'!${sheetColLetter(headers.length)}1`,
+      valueInputOption: 'RAW',
+      requestBody: { values: [['owner_username']] },
+    });
+    headers = [...headers, 'owner_username'];
+  }
+  (global as any).crm_pipeline_pl_extra_cols = true;
 }
 
 async function ensureOpportunityOptionalColumns(sheets: any): Promise<void> {
@@ -150,6 +208,7 @@ async function seedDefaultPipelineIfEmpty(sheets: any): Promise<void> {
 async function runEnsureCrmPipelineSheetsInitialized(): Promise<void> {
   const sheets = await getGoogleSheetsClient();
   await ensureAllCrmPipelineSheets(sheets);
+  await ensurePipelineOptionalColumns(sheets);
   await ensureOpportunityOptionalColumns(sheets);
   await seedDefaultPipelineIfEmpty(sheets);
   (global as any)[ensuredKey] = true;
@@ -192,7 +251,7 @@ async function readSheetRowsWithClient(
 
 async function readSheetRows(sheetName: string): Promise<{ headers: string[]; rows: any[] }> {
   const sheets = await getGoogleSheetsClient();
-  return readSheetRowsWithClient(sheets, sheetName);
+  return withSheetsRetry(() => readSheetRowsWithClient(sheets, sheetName));
 }
 
 async function appendRowWithClient(
@@ -307,24 +366,47 @@ export async function appendCrmPipelineLog(entry: Record<string, any>): Promise<
   return log;
 }
 
-export async function getCrmPipelines(): Promise<any[]> {
+export async function getCrmPipelines(options?: { forceRefresh?: boolean }): Promise<any[]> {
   await ensureCrmPipelineSheetsInitialized();
+  const now = Date.now();
+  if (!options?.forceRefresh && pipelinesCache && now - pipelinesCache.at < PIPELINES_CACHE_MS) {
+    return pipelinesCache.data;
+  }
   const { rows } = await readSheetRows(CRM_PIPELINE_SHEETS.PIPELINES);
-  return rows
+  const data = rows
     .filter((p) => String(p.active || 'Y').toUpperCase() === 'Y')
     .map((p) => ({ ...p, id: String(p.id) }))
     .sort(compareBySequenceThenId);
+  pipelinesCache = { at: now, data };
+  return data;
+}
+
+export function filterCrmPipelinesForUser(
+  pipelines: any[],
+  username: string,
+  isAdmin: boolean
+): any[] {
+  if (isAdmin) return pipelines;
+  const mine = String(username || '').trim().toLowerCase();
+  if (!mine) return [];
+  return pipelines.filter((p) => {
+    const owner = String(p.owner_username || p.created_by || '').trim().toLowerCase();
+    return owner === mine;
+  });
 }
 
 export async function createCrmPipeline(
   name: string,
   user?: CrmPipelineUser,
-  withDefaultStages = true
+  withDefaultStages = true,
+  ownerUsername?: string
 ): Promise<any> {
   await ensureCrmPipelineSheetsInitialized();
   const { rows } = await readSheetRows(CRM_PIPELINE_SHEETS.PIPELINES);
   const now = formatToSheetDate(new Date());
   const id = sheetNewId('pl');
+  const owner =
+    String(ownerUsername || '').trim() || String(user?.username || '').trim() || 'user';
   const pipeline = {
     id,
     name,
@@ -332,8 +414,10 @@ export async function createCrmPipeline(
     active: 'Y',
     created_at: now,
     created_by: user?.username || 'user',
+    owner_username: owner,
   };
   await appendRow(CRM_PIPELINE_SHEETS.PIPELINES, PIPELINE_HEADERS, pipeline);
+  invalidateCrmPipelinesCache();
 
   if (withDefaultStages) {
     const defaults = ['New', 'Qualified', 'Discussion'];
@@ -695,6 +779,70 @@ export async function createCrmScheduledActivity(
     user_id: user?.id ?? '',
     user_name: userLabel(user),
   });
+}
+
+export async function updateCrmScheduledActivity(
+  activityId: string,
+  updates: {
+    due_date?: string;
+    body?: string;
+    activity_type?: string;
+    summary?: string;
+  },
+  user?: CrmPipelineUser
+): Promise<any> {
+  await ensureCrmPipelineSheetsInitialized();
+  const { rows } = await readSheetRows(CRM_PIPELINE_SHEETS.ACTIVITY_LOG);
+  const activity = rows.find((r) => String(r.id) === String(activityId));
+  if (!activity) throw new Error('Activity not found');
+  if (String(activity.event_type) !== 'activity') {
+    throw new Error('Only scheduled activities can be edited');
+  }
+  if (String(activity.is_done || 'N').toUpperCase() === 'Y') {
+    throw new Error('Activity is already completed');
+  }
+
+  let payload: Record<string, any> = { kind: 'scheduled_activity' };
+  const rawBody = String(activity.body || '');
+  if (rawBody.trim()) {
+    try {
+      const parsed = JSON.parse(rawBody);
+      if (parsed && typeof parsed === 'object') payload = { ...parsed };
+    } catch {
+      payload.body = rawBody;
+    }
+  }
+  payload.kind = 'scheduled_activity';
+
+  if (updates.activity_type !== undefined) {
+    payload.activity_type = updates.activity_type;
+    payload.summary = updates.summary || updates.activity_type;
+  }
+  if (updates.body !== undefined) payload.body = updates.body;
+  if (updates.due_date !== undefined) payload.due_date = updates.due_date;
+
+  const activityType = String(payload.activity_type || activity.activity_type || 'call');
+  const summary =
+    updates.summary ||
+    String(payload.summary || activity.summary || activityType);
+  const dueDate =
+    updates.due_date !== undefined ? updates.due_date : String(activity.due_date || payload.due_date || '');
+
+  await updateRowById(CRM_PIPELINE_SHEETS.ACTIVITY_LOG, activityId, {
+    activity_type: activityType,
+    summary,
+    due_date: dueDate,
+    body: JSON.stringify(payload),
+  });
+
+  return {
+    id: activityId,
+    activity_type: activityType,
+    summary,
+    due_date: dueDate,
+    body: JSON.stringify(payload),
+    user_name: userLabel(user),
+  };
 }
 
 export async function markCrmActivityDone(activityId: string, user?: CrmPipelineUser): Promise<any> {

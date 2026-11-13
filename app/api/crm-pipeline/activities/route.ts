@@ -4,6 +4,7 @@ import {
   createCrmPipelineNote,
   createCrmScheduledActivity,
   markCrmActivityDone,
+  updateCrmScheduledActivity,
 } from '@/lib/crmPipelineSheets';
 
 export async function GET(request: NextRequest) {
@@ -56,9 +57,32 @@ export async function POST(request: NextRequest) {
 
 export async function PATCH(request: NextRequest) {
   try {
-    const { activityId, user } = await request.json();
+    const body = await request.json();
+    const { activityId, user, action, updates } = body;
     if (!activityId) {
       return NextResponse.json({ error: 'activityId is required' }, { status: 400 });
+    }
+    if (action === 'update') {
+      if (!updates || typeof updates !== 'object') {
+        return NextResponse.json({ error: 'updates is required' }, { status: 400 });
+      }
+      const activityType = updates.activity_type;
+      const summary =
+        updates.summary ||
+        (activityType
+          ? String(activityType).charAt(0).toUpperCase() + String(activityType).slice(1)
+          : undefined);
+      const result = await updateCrmScheduledActivity(
+        activityId,
+        {
+          due_date: updates.due_date,
+          body: updates.body,
+          activity_type: updates.activity_type,
+          summary,
+        },
+        user
+      );
+      return NextResponse.json({ activity: result });
     }
     const result = await markCrmActivityDone(activityId, user);
     return NextResponse.json({ activity: result });

@@ -7,7 +7,6 @@ import { motion, AnimatePresence } from 'framer-motion';
 import LayoutWrapper from '@/components/LayoutWrapper';
 import { ensureSessionId } from '@/utils/session';
 import { useToast } from '@/components/ToastProvider';
-import { formatDateToLocalTimezone } from '@/utils/timezone';
 import Icon from '@/components/Icon';
 import {
   User,
@@ -37,7 +36,6 @@ import {
   Plus,
   X,
   MoreVertical,
-  Check,
   MessageSquare,
   ListTodo,
   Loader2,
@@ -49,7 +47,14 @@ import {
   mergeTagNames,
   tagsToString,
 } from '@/lib/crmPipelineTags';
-import { LEAD_CARD_COLOR_OPTIONS, leadCardSurfaceClass } from '@/lib/crmPipelineLeadColors';
+import {
+  FOLLOW_UP_FILTER_CHIPS,
+  followUpBucket,
+  leadCardCornerBubbleClass,
+  leadCardCornerMenuClass,
+  leadCardFollowUpSurface,
+  type FollowUpFilter,
+} from '@/lib/crmPipelineFollowUp';
 import { parseSheetDate } from '@/lib/dateUtils';
 import { compareBySequenceThenId } from '@/lib/crmPipelineStageSort';
 
@@ -60,14 +65,17 @@ const LIGHT_SURFACE = `${LIGHT_BG} ${LIGHT_BORDER} ${DASH_SHADOW}`;
 const PIPELINE_ICON = 'w-4 h-4 shrink-0 text-[var(--theme-primary)] opacity-90';
 const BTN_SPINNER = 'w-4 h-4 animate-spin shrink-0';
 const LEAD_CARD =
-  'p-2.5 rounded-md border border-slate-200/90 dark:border-slate-600/50 shadow-sm cursor-grab active:cursor-grabbing hover:shadow-md transition-shadow';
+  'p-2.5 pt-2 rounded-md border shadow-sm cursor-grab active:cursor-grabbing hover:shadow-md transition-shadow overflow-hidden';
+const QUICK_ADD_CARD =
+  'rounded-md border border-slate-200/90 dark:border-slate-600/50 shadow-sm bg-white dark:bg-slate-800 cursor-default shrink-0';
 const GHOST_BTN =
   'inline-flex items-center justify-center w-7 h-7 rounded-md text-slate-500 hover:text-slate-800 hover:bg-slate-200/60 dark:hover:bg-slate-700/60 transition-colors';
 /** Odoo-style: bottom line only, no focus ring box */
 const ODDO_INPUT =
   'w-full min-w-0 bg-transparent text-slate-800 dark:text-slate-100 placeholder:text-slate-400 border-0 border-b border-slate-300/90 dark:border-slate-600 rounded-none outline-none shadow-none ring-0 focus:outline-none focus:ring-0 focus:shadow-none focus:border-[var(--theme-primary)] appearance-none';
 
-type Pipeline = { id: string; name: string; sequence?: number };
+type Pipeline = { id: string; name: string; sequence?: number; owner_username?: string };
+type AppUserOption = { username: string; full_name?: string; role_name?: string };
 type Stage = { id: string; pipeline_id: string; name: string; sequence?: number };
 type Opportunity = {
   id: string;
@@ -229,12 +237,72 @@ function TagPills({ tags, max = 4 }: { tags: string[]; max?: number }) {
   );
 }
 
-function formatFollowUpShort(d?: string): string {
+/** CRM display: `19 Nov 26` */
+function formatCrmDisplayDate(d?: string | null, withTime = false): string {
+  const raw = d != null ? String(d).trim() : '';
+  if (!raw) return '';
+  const iso = parseSheetDate(raw);
+  const dt = iso ? new Date(iso) : new Date(raw.includes('T') ? raw : `${raw}T12:00:00`);
+  if (Number.isNaN(dt.getTime())) return raw;
+  const datePart = dt.toLocaleDateString('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    year: '2-digit',
+  });
+  if (!withTime) return datePart;
+  const timePart = dt.toLocaleTimeString('en-IN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true,
+  });
+  return `${datePart}, ${timePart}`;
+}
+
+function sheetDateToInputValue(d?: string | null): string {
   const iso = parseSheetDate(d);
-  if (!iso) return '';
+  if (!iso) {
+    const raw = d != null ? String(d).trim() : '';
+    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+    return '';
+  }
   const dt = new Date(iso);
   if (Number.isNaN(dt.getTime())) return '';
-  return dt.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+  const y = dt.getFullYear();
+  const m = String(dt.getMonth() + 1).padStart(2, '0');
+  const day = String(dt.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function scheduledActivityFromLog(act: Activity): {
+  activity_type: 'todo' | 'email' | 'call' | 'meeting';
+  body: string;
+  due_date: string;
+} {
+  const types = ['todo', 'email', 'call', 'meeting'] as const;
+  const raw = activityBodyToString(act.body);
+  let activity_type: (typeof types)[number] = 'call';
+  let body = '';
+  let due_date = sheetDateToInputValue(act.due_date);
+  try {
+    const parsed = JSON.parse(raw) as Record<string, any>;
+    if (parsed?.kind === 'scheduled_activity') {
+      const t = String(parsed.activity_type || act.activity_type || 'call').toLowerCase();
+      if (types.includes(t as (typeof types)[number])) activity_type = t as (typeof types)[number];
+      body = String(parsed.body ?? '');
+      due_date = sheetDateToInputValue(parsed.due_date || act.due_date);
+    }
+  } catch {
+    if (raw.trim()) body = raw;
+    const t = String(act.activity_type || 'call').toLowerCase();
+    if (types.includes(t as (typeof types)[number])) activity_type = t as (typeof types)[number];
+  }
+  return { activity_type, body, due_date };
+}
+
+function formatActivityDetailLine(line: string): string {
+  const m = line.match(/^Due:\s*(.+)$/i);
+  if (m) return `Due: ${formatCrmDisplayDate(m[1].trim())}`;
+  return line;
 }
 
 function activityBodyToString(body: Activity['body']): string {
@@ -261,9 +329,9 @@ function formatActivityBodyDisplay(act: Activity): { title?: string; lines: stri
       }
       if (parsed.kind === 'scheduled_activity') {
         const lines: string[] = [];
-        if (parsed.summary) lines.push(String(parsed.summary));
         if (parsed.body) lines.push(String(parsed.body));
-        if (parsed.due_date) lines.push(`Due: ${parsed.due_date}`);
+        const dueRaw = parsed.due_date || act.due_date;
+        if (dueRaw) lines.push(`Due: ${formatCrmDisplayDate(String(dueRaw))}`);
         return { lines };
       }
       if (parsed.kind === 'lead_fields' && parsed.changes && typeof parsed.changes === 'object') {
@@ -334,18 +402,27 @@ export default function CrmPipelinePage() {
   const [submittingNote, setSubmittingNote] = useState(false);
   const [schedulingActivity, setSchedulingActivity] = useState(false);
   const [markingActivityId, setMarkingActivityId] = useState<string | null>(null);
+  const [updatingActivityId, setUpdatingActivityId] = useState<string | null>(null);
+  const [activityInlineId, setActivityInlineId] = useState<string | null>(null);
+  const [activityInlineMode, setActivityInlineMode] = useState<'reschedule' | 'edit'>('edit');
+  const [activityInlineDraft, setActivityInlineDraft] = useState({
+    activity_type: 'call' as 'todo' | 'email' | 'call' | 'meeting',
+    due_date: '',
+    body: '',
+  });
   const [deletingOppId, setDeletingOppId] = useState<string | null>(null);
   const [renamingStageId, setRenamingStageId] = useState<string | null>(null);
   const [deletingStageId, setDeletingStageId] = useState<string | null>(null);
   const [reorderingStages, setReorderingStages] = useState(false);
-  const [patchingCardColorOppId, setPatchingCardColorOppId] = useState<string | null>(null);
+  const [stageFollowUpFilters, setStageFollowUpFilters] = useState<Record<string, FollowUpFilter>>({});
+  const [newPipelineOwnerUsername, setNewPipelineOwnerUsername] = useState('');
+  const [pipelineUserOptions, setPipelineUserOptions] = useState<AppUserOption[]>([]);
   const [drawerMotionEntered, setDrawerMotionEntered] = useState(false);
   const [activities, setActivities] = useState<Activity[]>([]);
   const [chatterTab, setChatterTab] = useState<'note' | 'activity'>('note');
   const [noteText, setNoteText] = useState('');
   const [activityForm, setActivityForm] = useState({
-    activity_type: 'call',
-    summary: 'Call',
+    activity_type: 'call' as 'todo' | 'email' | 'call' | 'meeting',
     due_date: '',
     body: '',
   });
@@ -371,30 +448,46 @@ export default function CrmPipelinePage() {
   const userPayload = useMemo(
     () =>
       currentUser
-        ? { id: currentUser.id, username: currentUser.username, full_name: currentUser.full_name }
+        ? {
+            id: currentUser.id,
+            username: currentUser.username,
+            full_name: currentUser.full_name,
+            role_name: currentUser.role_name,
+          }
         : undefined,
     [currentUser]
   );
 
-  const loadPipelines = useCallback(async (): Promise<string> => {
-    const res = await fetch('/api/crm-pipeline/pipelines');
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Failed to load pipelines');
-    const list: Pipeline[] = (data.pipelines || []).map((p: Pipeline) => ({
-      ...p,
-      id: String(p.id),
-    }));
-    setPipelines(list);
-    setSelectedPipelineId((prev) => {
-      if (prev && list.some((p) => p.id === prev)) return prev;
-      return list[0]?.id || '';
-    });
-    const current =
-      selectedPipelineId && list.some((p) => p.id === selectedPipelineId)
-        ? selectedPipelineId
-        : list[0]?.id || '';
-    return current;
-  }, [selectedPipelineId]);
+  const isPipelineAdmin = useMemo(
+    () => String(currentUser?.role_name || '').trim().toLowerCase() === 'admin',
+    [currentUser?.role_name]
+  );
+
+  const loadPipelines = useCallback(
+    async (user?: { username?: string; role_name?: string } | null): Promise<string> => {
+      const u = user ?? currentUser;
+      const qs = new URLSearchParams();
+      if (u?.username) qs.set('username', String(u.username));
+      if (u?.role_name) qs.set('role', String(u.role_name));
+      const res = await fetch(
+        qs.toString() ? `/api/crm-pipeline/pipelines?${qs}` : '/api/crm-pipeline/pipelines'
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to load pipelines');
+      const list: Pipeline[] = (data.pipelines || []).map((p: Pipeline) => ({
+        ...p,
+        id: String(p.id),
+      }));
+      setPipelines(list);
+      let resolvedId = list[0]?.id || '';
+      setSelectedPipelineId((prev) => {
+        resolvedId = prev && list.some((p) => p.id === prev) ? prev : list[0]?.id || '';
+        return resolvedId;
+      });
+      return resolvedId;
+    },
+    [currentUser]
+  );
 
   const loadBoard = useCallback(async (pipelineId: string) => {
     if (!pipelineId) return;
@@ -432,7 +525,7 @@ export default function CrmPipelinePage() {
           return;
         }
         setCurrentUser(auth.user);
-        await loadPipelines();
+        await loadPipelines(auth.user);
       } catch (e) {
         console.error(e);
         toast.error('Failed to load CRM Pipeline');
@@ -441,7 +534,12 @@ export default function CrmPipelinePage() {
       }
     };
     init();
-  }, [router, toast, loadPipelines]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- run once on mount; loadPipelines must not depend on selectedPipelineId
+  }, [router, toast]);
+
+  useEffect(() => {
+    setStageFollowUpFilters({});
+  }, [selectedPipelineId]);
 
   useEffect(() => {
     if (!selectedPipelineId) return;
@@ -536,7 +634,7 @@ export default function CrmPipelinePage() {
     [pipelines, selectedPipelineId]
   );
 
-  const filteredOpps = useMemo(() => {
+  const baseFilteredOpps = useMemo(() => {
     let list = opportunities;
     if (myOnly && currentUser?.username) {
       const mine = String(currentUser.username).toLowerCase();
@@ -559,6 +657,27 @@ export default function CrmPipelinePage() {
     );
   }, [opportunities, search, myOnly, filterUnassigned, currentUser]);
 
+  const oppsByStageBase = useMemo(() => {
+    const map: Record<string, Opportunity[]> = {};
+    for (const s of stages) map[s.id] = [];
+    for (const o of baseFilteredOpps) {
+      if (map[o.stage_id]) map[o.stage_id].push(o);
+    }
+    return map;
+  }, [stages, baseFilteredOpps]);
+
+  const stageFollowUpCounts = useMemo(() => {
+    const out: Record<string, { future: number; today: number; past: number; none: number }> = {};
+    for (const s of stages) {
+      const counts = { future: 0, today: 0, past: 0, none: 0 };
+      for (const o of oppsByStageBase[s.id] || []) {
+        counts[followUpBucket(openActivities[o.id]?.due_date)]++;
+      }
+      out[s.id] = counts;
+    }
+    return out;
+  }, [stages, oppsByStageBase, openActivities]);
+
   const displayStages = useMemo(() => {
     if (!dragStageId || !dragOverStageId || dragStageId === dragOverStageId) return stages;
     const list = [...stages];
@@ -572,12 +691,16 @@ export default function CrmPipelinePage() {
 
   const oppsByStage = useMemo(() => {
     const map: Record<string, Opportunity[]> = {};
-    for (const s of stages) map[s.id] = [];
-    for (const o of filteredOpps) {
-      if (map[o.stage_id]) map[o.stage_id].push(o);
+    for (const s of stages) {
+      const list = oppsByStageBase[s.id] || [];
+      const filter = stageFollowUpFilters[s.id] || 'all';
+      map[s.id] =
+        filter === 'all'
+          ? list
+          : list.filter((o) => followUpBucket(openActivities[o.id]?.due_date) === filter);
     }
     return map;
-  }, [stages, filteredOpps]);
+  }, [stages, oppsByStageBase, stageFollowUpFilters, openActivities]);
 
   const stageTotals = useMemo(() => {
     const totals: Record<string, { revenue: number; mrr: number }> = {};
@@ -597,21 +720,66 @@ export default function CrmPipelinePage() {
     if (selectedOpp) await loadActivities(selectedOpp.id);
   };
 
+  useEffect(() => {
+    if (!showNewPipeline || !isPipelineAdmin) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/users');
+        const data = await res.json();
+        if (!res.ok || cancelled) return;
+        const list: AppUserOption[] = (data.users || [])
+          .map((u: any) => ({
+            username: String(u.username || ''),
+            full_name: u.full_name,
+            role_name: u.role_name,
+          }))
+          .filter((u: AppUserOption) => u.username);
+        setPipelineUserOptions(list);
+        if (list.length) {
+          setNewPipelineOwnerUsername((prev) =>
+            prev ||
+            list.find((u) => u.username === currentUser?.username)?.username ||
+            list[0].username
+          );
+        }
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [showNewPipeline, isPipelineAdmin, currentUser?.username]);
+
   const handleCreatePipeline = async () => {
     if (!newPipelineName.trim()) return;
+    if (!isPipelineAdmin) {
+      toast.error('Only admins can create pipelines');
+      return;
+    }
+    if (!newPipelineOwnerUsername.trim()) {
+      toast.error('Select a user for this pipeline');
+      return;
+    }
     if (creatingPipeline) return;
     setCreatingPipeline(true);
     try {
       const res = await fetch('/api/crm-pipeline/pipelines', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: newPipelineName, user: userPayload }),
+        body: JSON.stringify({
+          name: newPipelineName,
+          user: userPayload,
+          owner_username: newPipelineOwnerUsername.trim(),
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       toast.success('Pipeline created');
       setShowNewPipeline(false);
       setNewPipelineName('');
+      setNewPipelineOwnerUsername('');
       setSelectedPipelineId(data.pipeline.id);
       await refreshAll();
     } catch (e: any) {
@@ -726,7 +894,7 @@ export default function CrmPipelinePage() {
     oppId: string,
     updates: Partial<Opportunity>,
     current?: Opportunity | null,
-    opts?: { cardColorSpinner?: boolean; successToast?: string }
+    opts?: { successToast?: string }
   ): Promise<boolean> => {
     const base = current ?? opportunities.find((o) => o.id === oppId);
     if (!base) return false;
@@ -734,7 +902,6 @@ export default function CrmPipelinePage() {
       ([key, val]) => String(base[key as keyof Opportunity] ?? '') !== String(val ?? '')
     );
     if (!hasChange) return true;
-    if (opts?.cardColorSpinner) setPatchingCardColorOppId(oppId);
     try {
       const res = await fetch('/api/crm-pipeline/opportunities', {
         method: 'PATCH',
@@ -759,8 +926,6 @@ export default function CrmPipelinePage() {
     } catch (e: any) {
       toast.error(e.message || 'Update failed');
       return false;
-    } finally {
-      if (opts?.cardColorSpinner) setPatchingCardColorOppId(null);
     }
   };
 
@@ -890,6 +1055,8 @@ export default function CrmPipelinePage() {
 
   const submitActivity = async () => {
     if (!selectedOpp || schedulingActivity) return;
+    const type = activityForm.activity_type;
+    const summary = type.charAt(0).toUpperCase() + type.slice(1);
     setSchedulingActivity(true);
     try {
       const res = await fetch('/api/crm-pipeline/activities', {
@@ -899,8 +1066,8 @@ export default function CrmPipelinePage() {
           opportunityId: selectedOpp.id,
           type: 'activity',
           payload: {
-            activity_type: activityForm.activity_type,
-            summary: activityForm.summary,
+            activity_type: type,
+            summary,
             due_date: activityForm.due_date,
             body: activityForm.body,
             assigned_to: userPayload?.full_name || userPayload?.username || '',
@@ -909,7 +1076,7 @@ export default function CrmPipelinePage() {
         }),
       });
       if (!res.ok) throw new Error('Failed');
-      setActivityForm({ activity_type: 'call', summary: 'Call', due_date: '', body: '' });
+      setActivityForm({ activity_type: 'call', due_date: '', body: '' });
       void loadActivities(selectedOpp.id);
       void loadBoard(selectedPipelineId);
       toast.success('Activity scheduled');
@@ -925,6 +1092,7 @@ export default function CrmPipelinePage() {
     setShowTagModal(false);
     setTagDropdownOpen(false);
     setTagSearch('');
+    setActivityInlineId(null);
   };
 
   const filteredCatalogTags = useMemo(() => {
@@ -933,6 +1101,47 @@ export default function CrmPipelinePage() {
     if (!q) return list;
     return list.filter((n) => n.toLowerCase().includes(q));
   }, [tagSearch]);
+
+  const openActivityInline = (act: Activity, mode: 'reschedule' | 'edit') => {
+    const fields = scheduledActivityFromLog(act);
+    setActivityInlineId(act.id);
+    setActivityInlineMode(mode);
+    setActivityInlineDraft(fields);
+  };
+
+  const saveActivityInline = async () => {
+    if (!activityInlineId || !selectedOpp || updatingActivityId) return;
+    setUpdatingActivityId(activityInlineId);
+    try {
+      const type = activityInlineDraft.activity_type;
+      const res = await fetch('/api/crm-pipeline/activities', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          activityId: activityInlineId,
+          action: 'update',
+          user: userPayload,
+          updates: {
+            activity_type: type,
+            due_date: activityInlineDraft.due_date,
+            body: activityInlineDraft.body,
+          },
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Failed');
+      }
+      setActivityInlineId(null);
+      void loadActivities(selectedOpp.id);
+      void loadBoard(selectedPipelineId);
+      toast.success(activityInlineMode === 'reschedule' ? 'Rescheduled' : 'Activity updated');
+    } catch (e: any) {
+      toast.error(e.message || 'Update failed');
+    } finally {
+      setUpdatingActivityId(null);
+    }
+  };
 
   const markActivityDone = async (activityId: string) => {
     if (markingActivityId) return;
@@ -1074,48 +1283,59 @@ export default function CrmPipelinePage() {
             CRM Pipeline
           </h1>
 
-          <div className="relative shrink-0" ref={pipelineDropdownRef}>
-            <button
-              type="button"
-              onClick={() => setPipelineDropdownOpen((v) => !v)}
-              className={`flex items-center gap-2 pl-3 pr-2 py-2 rounded-lg text-sm font-bold ${LIGHT_SURFACE} min-w-[8rem]`}
+          {!isPipelineAdmin && pipelines.length <= 1 ? (
+            <span
+              className={`shrink-0 px-3 py-2 rounded-lg text-sm font-bold ${LIGHT_SURFACE} max-w-[14rem] truncate`}
+              title={selectedPipeline?.name || 'Pipeline'}
             >
-              <span className="truncate max-w-[10rem]">{selectedPipeline?.name || 'Pipeline'}</span>
-              <ChevronDown size={16} className="text-slate-500 shrink-0" />
-            </button>
-            {pipelineDropdownOpen && (
-              <div className="absolute left-0 top-full mt-1 z-50 min-w-[12rem] rounded-lg border border-slate-200 bg-white dark:bg-slate-900 shadow-xl py-1 text-sm">
-                {pipelines.map((p) => (
-                  <button
-                    key={p.id}
-                    type="button"
-                    onClick={() => {
-                      setSelectedPipelineId(p.id);
-                      setPipelineDropdownOpen(false);
-                    }}
-                    className={`flex w-full px-3 py-2 text-left hover:bg-slate-50 dark:hover:bg-slate-800 ${
-                      p.id === selectedPipelineId ? 'font-bold text-[var(--theme-primary)]' : ''
-                    }`}
-                  >
-                    {p.name}
-                  </button>
-                ))}
-                <div className="border-t border-slate-100 dark:border-slate-700 mt-1 pt-1">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPipelineDropdownOpen(false);
-                      setShowNewPipeline(true);
-                    }}
-                    className="flex w-full items-center gap-2 px-3 py-2 text-left font-semibold text-slate-700 hover:bg-[var(--theme-light)]"
-                  >
-                    <Plus size={16} className="text-[var(--theme-primary)]" />
-                    Add pipeline
-                  </button>
+              {selectedPipeline?.name || 'Pipeline'}
+            </span>
+          ) : (
+            <div className="relative shrink-0" ref={pipelineDropdownRef}>
+              <button
+                type="button"
+                onClick={() => setPipelineDropdownOpen((v) => !v)}
+                className={`flex items-center gap-2 pl-3 pr-2 py-2 rounded-lg text-sm font-bold ${LIGHT_SURFACE} min-w-[8rem]`}
+              >
+                <span className="truncate max-w-[10rem]">{selectedPipeline?.name || 'Pipeline'}</span>
+                <ChevronDown size={16} className="text-slate-500 shrink-0" />
+              </button>
+              {pipelineDropdownOpen && (
+                <div className="absolute left-0 top-full mt-1 z-50 min-w-[12rem] rounded-lg border border-slate-200 bg-white dark:bg-slate-900 shadow-xl py-1 text-sm">
+                  {pipelines.map((p) => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => {
+                        setSelectedPipelineId(p.id);
+                        setPipelineDropdownOpen(false);
+                      }}
+                      className={`flex w-full px-3 py-2 text-left hover:bg-slate-50 dark:hover:bg-slate-800 ${
+                        p.id === selectedPipelineId ? 'font-bold text-[var(--theme-primary)]' : ''
+                      }`}
+                    >
+                      {p.name}
+                    </button>
+                  ))}
+                  {isPipelineAdmin && (
+                    <div className="border-t border-slate-100 dark:border-slate-700 mt-1 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPipelineDropdownOpen(false);
+                          setShowNewPipeline(true);
+                        }}
+                        className="flex w-full items-center gap-2 px-3 py-2 text-left font-semibold text-slate-700 hover:bg-[var(--theme-light)]"
+                      >
+                        <Plus size={16} className="text-[var(--theme-primary)]" />
+                        Add pipeline
+                      </button>
+                    </div>
+                  )}
                 </div>
-              </div>
-            )}
-          </div>
+              )}
+            </div>
+          )}
 
           <div ref={filterBarRef} className="flex-1 flex min-w-[200px] max-w-3xl relative">
             <div
@@ -1237,12 +1457,12 @@ export default function CrmPipelinePage() {
         </div>
 
         <div className="flex-1 overflow-x-auto overflow-y-hidden px-4 py-3 min-h-0 bg-[var(--theme-light)] dark:bg-slate-900">
-          <div className="flex gap-2 h-full min-w-max pb-2 items-start">
+          <div className="flex gap-2 h-full min-h-0 min-w-max pb-2 items-stretch">
             {displayStages.map((stage) => (
               <motion.div
                 key={stage.id}
                 layout={false}
-                className={`w-[17rem] flex flex-col max-h-full flex-shrink-0 rounded-lg transition-all duration-200 ${
+                className={`w-[17rem] flex flex-col h-full min-h-0 max-h-full flex-shrink-0 rounded-lg transition-all duration-200 ${
                   dragStageId === stage.id ? 'opacity-40 scale-[0.97]' : ''
                 } ${
                   dragOverStageId === stage.id && dragStageId && dragStageId !== stage.id
@@ -1306,6 +1526,12 @@ export default function CrmPipelinePage() {
                   <h3 className="flex-1 min-w-0 text-sm font-bold text-slate-800 dark:text-slate-100 truncate">
                     {stage.name}
                   </h3>
+                  <span
+                    className="shrink-0 text-[10px] font-black tabular-nums text-slate-600 dark:text-slate-200 bg-slate-100 dark:bg-slate-700/80 px-1.5 py-0.5 rounded-full min-w-[1.4rem] text-center"
+                    title="Active leads in this stage"
+                  >
+                    {oppsByStage[stage.id]?.length || 0}
+                  </span>
                   <div className="flex items-center shrink-0 rounded-md border border-slate-200/80 dark:border-slate-600/80 bg-white/40 dark:bg-slate-800/40 overflow-hidden">
                     <button
                       type="button"
@@ -1328,52 +1554,105 @@ export default function CrmPipelinePage() {
                     </button>
                   </div>
                 </div>
-                <div className="h-1 bg-slate-200/90 dark:bg-slate-700 rounded-full mb-1 overflow-hidden">
-                  <div
-                    className="h-full bg-[var(--theme-primary)]/70 rounded-full transition-all"
-                    style={{
-                      width: `${Math.min(100, ((oppsByStage[stage.id]?.length || 0) / Math.max(1, opportunities.length)) * 100)}%`,
-                    }}
-                  />
+                <div className="flex items-center gap-2 mb-1 min-h-[1rem]">
+                  <div className="flex-1 min-w-0 h-1 bg-slate-200/90 dark:bg-slate-700 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-[var(--theme-primary)]/70 rounded-full transition-all"
+                      style={{
+                        width: `${Math.min(100, ((oppsByStage[stage.id]?.length || 0) / Math.max(1, baseFilteredOpps.length)) * 100)}%`,
+                      }}
+                    />
+                  </div>
+                  <p
+                    className="shrink-0 text-xs font-bold text-[#000000] dark:text-white tabular-nums text-right max-w-[6.5rem] truncate leading-snug"
+                    title={
+                      stageTotals[stage.id]?.mrr
+                        ? `${formatInr(stageTotals[stage.id]?.revenue)} · MRR ${formatInr(stageTotals[stage.id].mrr)}`
+                        : formatInr(stageTotals[stage.id]?.revenue)
+                    }
+                  >
+                    {formatInr(stageTotals[stage.id]?.revenue)}
+                    {stageTotals[stage.id]?.mrr ? (
+                      <span className="font-bold text-[#000000] dark:text-white/90">
+                        {' '}
+                        · {formatInr(stageTotals[stage.id].mrr)}
+                      </span>
+                    ) : null}
+                  </p>
                 </div>
-                <p className="text-[11px] font-medium text-slate-500 mb-2 tabular-nums">
-                  {formatInr(stageTotals[stage.id]?.revenue)}
-                  {stageTotals[stage.id]?.mrr ? ` · MRR ${formatInr(stageTotals[stage.id].mrr)}` : ''}
-                </p>
+                <div
+                  className="flex items-center gap-1 mb-2 flex-wrap"
+                  aria-label={`Follow-up filters for ${stage.name}`}
+                >
+                  {FOLLOW_UP_FILTER_CHIPS.map((chip) => {
+                    const stageCounts = stageFollowUpCounts[stage.id];
+                    const count = stageCounts?.[chip.id] ?? 0;
+                    const stageFilter = stageFollowUpFilters[stage.id] || 'all';
+                    const active = stageFilter === chip.id;
+                    return (
+                      <button
+                        key={chip.id}
+                        type="button"
+                        title={`${chip.title} · ${count}`}
+                        onClick={() =>
+                          setStageFollowUpFilters((prev) => {
+                            const cur = prev[stage.id] || 'all';
+                            const next = cur === chip.id ? 'all' : chip.id;
+                            return { ...prev, [stage.id]: next };
+                          })
+                        }
+                        className={`w-6 h-6 rounded-full ${chip.ring} shrink-0 transition-all hover:scale-110 flex items-center justify-center text-[9px] font-black tabular-nums leading-none shadow-sm ${
+                          chip.id === 'today' ? 'text-slate-900' : 'text-white'
+                        } ${
+                          active
+                            ? `ring-2 ${chip.activeRing} ring-offset-1 ring-offset-[var(--theme-light)] dark:ring-offset-slate-900`
+                            : 'opacity-90 hover:opacity-100'
+                        }`}
+                      >
+                        {count}
+                      </button>
+                    );
+                  })}
+                </div>
 
                 {quickAddStageId === stage.id && (
-                  <div ref={quickAddRef} className={`mb-2 p-2.5 ${LEAD_CARD} bg-white dark:bg-slate-800 cursor-default space-y-0`}>
-                    <QuickInputRow
-                      icon={User}
-                      placeholder="Contact name"
-                      value={quickForm.contact_name}
-                      onChange={(e) => setQuickForm({ ...quickForm, contact_name: e.target.value })}
-                    />
-                    <QuickInputRow
-                      icon={Briefcase}
-                      placeholder="Opportunity name"
-                      value={quickForm.name}
-                      onChange={(e) => setQuickForm({ ...quickForm, name: e.target.value })}
-                    />
-                    <QuickInputRow
-                      icon={Mail}
-                      placeholder="Email"
-                      value={quickForm.email}
-                      onChange={(e) => setQuickForm({ ...quickForm, email: e.target.value })}
-                    />
-                    <QuickInputRow
-                      icon={Phone}
-                      placeholder="Phone"
-                      value={quickForm.phone}
-                      onChange={(e) => setQuickForm({ ...quickForm, phone: e.target.value })}
-                    />
-                    <QuickInputRow
-                      icon={IndianRupee}
-                      placeholder="Expected revenue"
-                      value={quickForm.expected_revenue}
-                      onChange={(e) => setQuickForm({ ...quickForm, expected_revenue: e.target.value })}
-                    />
-                    <div className="flex items-center gap-1 pt-2">
+                  <div
+                    ref={quickAddRef}
+                    className={`mb-2 ${QUICK_ADD_CARD} flex flex-col max-h-[min(13.5rem,42vh)]`}
+                  >
+                    <div className="px-2.5 pt-2 pb-1 overflow-y-auto min-h-0 flex-1 space-y-0">
+                      <QuickInputRow
+                        icon={User}
+                        placeholder="Contact name"
+                        value={quickForm.contact_name}
+                        onChange={(e) => setQuickForm({ ...quickForm, contact_name: e.target.value })}
+                      />
+                      <QuickInputRow
+                        icon={Briefcase}
+                        placeholder="Opportunity name"
+                        value={quickForm.name}
+                        onChange={(e) => setQuickForm({ ...quickForm, name: e.target.value })}
+                      />
+                      <QuickInputRow
+                        icon={Mail}
+                        placeholder="Email"
+                        value={quickForm.email}
+                        onChange={(e) => setQuickForm({ ...quickForm, email: e.target.value })}
+                      />
+                      <QuickInputRow
+                        icon={Phone}
+                        placeholder="Phone"
+                        value={quickForm.phone}
+                        onChange={(e) => setQuickForm({ ...quickForm, phone: e.target.value })}
+                      />
+                      <QuickInputRow
+                        icon={IndianRupee}
+                        placeholder="Expected revenue"
+                        value={quickForm.expected_revenue}
+                        onChange={(e) => setQuickForm({ ...quickForm, expected_revenue: e.target.value })}
+                      />
+                    </div>
+                    <div className="shrink-0 flex items-center gap-1 px-2.5 py-2 border-t border-slate-200/90 dark:border-slate-600/60 bg-white dark:bg-slate-800 rounded-b-md">
                       <button
                         type="button"
                         disabled={quickAddingOpp}
@@ -1385,7 +1664,7 @@ export default function CrmPipelinePage() {
                       </button>
                       <button
                         type="button"
-                        title="Edit"
+                        title="Close"
                         onClick={() => setQuickAddStageId(null)}
                         className={GHOST_BTN}
                       >
@@ -1406,10 +1685,25 @@ export default function CrmPipelinePage() {
                   </div>
                 )}
 
-                <div className={`flex-1 overflow-y-auto space-y-2 min-h-[80px] pr-0.5 ${foldedStageIds.has(stage.id) ? 'hidden' : ''}`}>
-                  {(oppsByStage[stage.id] || []).map((opp) => {
+                <div
+                  className={`flex-1 min-h-0 overflow-y-auto pr-0.5 ${foldedStageIds.has(stage.id) ? 'hidden' : ''}`}
+                >
+                  {(() => {
+                    const stageOpps = oppsByStage[stage.id] || [];
+                    if (stageOpps.length === 0) return null;
+                    const stack = stageOpps.length > 1;
+                    return (
+                      <div
+                        className={
+                          stack
+                            ? 'rounded-md overflow-hidden border border-slate-200/90 dark:border-slate-600/50 divide-y divide-slate-200/80 dark:divide-slate-600/50 shadow-sm'
+                            : ''
+                        }
+                      >
+                        {stageOpps.map((opp) => {
                     const tags = parseTags(opp.tags);
                     const openAct = openActivities[opp.id];
+                    const fuBucket = followUpBucket(openAct?.due_date);
                     const displayName = opp.contact_name || opp.company || '';
                     const initial = (displayName || opp.name || '?')[0]?.toUpperCase();
                     return (
@@ -1430,10 +1724,22 @@ export default function CrmPipelinePage() {
                           if (dragOppId) return;
                           setSelectedOpp(opp);
                         }}
-                        className={`${LEAD_CARD} ${leadCardSurfaceClass(opp.card_color)} ${dragOppId === opp.id ? 'opacity-50 ring-2 ring-[var(--theme-primary)]/40' : ''}`}
+                        className={`${LEAD_CARD} relative ${leadCardFollowUpSurface(fuBucket)} ${
+                          stack ? 'border-0 rounded-none shadow-none hover:shadow-none' : ''
+                        } ${dragOppId === opp.id ? 'opacity-50 ring-2 ring-[var(--theme-primary)]/40' : ''}`}
                       >
-                        <div className="flex items-start gap-1 mb-0.5">
-                          <div className="flex-1 min-w-0 text-xs font-bold text-slate-800 dark:text-slate-100 line-clamp-2 leading-snug">
+                        <div
+                          aria-hidden
+                          className={`pointer-events-none absolute -top-[4.25rem] -right-[4.25rem] w-[8.5rem] h-[8.5rem] rounded-full ${leadCardCornerBubbleClass(fuBucket)}`}
+                        />
+                        <div className="relative z-[1] flex items-start gap-1 mb-0.5">
+                          <Briefcase
+                            size={14}
+                            strokeWidth={2.25}
+                            className="shrink-0 mt-0.5 text-[var(--theme-primary)] dark:text-[var(--theme-primary)] opacity-90"
+                            aria-hidden
+                          />
+                          <div className="flex-1 min-w-0 text-xs font-bold text-slate-800 dark:text-slate-100 line-clamp-2 leading-snug pr-1">
                             {opp.name}
                           </div>
                           <button
@@ -1448,9 +1754,9 @@ export default function CrmPipelinePage() {
                               }
                               openLeadMenu(opp, e.currentTarget);
                             }}
-                            className="shrink-0 p-0.5 rounded border border-transparent hover:border-slate-200 hover:bg-white/80 text-slate-500"
+                            className={`shrink-0 -mt-0.5 -mr-0.5 p-1.5 rounded-lg ${leadCardCornerMenuClass(fuBucket)}`}
                           >
-                            <MoreVertical size={14} strokeWidth={2} />
+                            <MoreVertical size={16} strokeWidth={2.25} />
                           </button>
                         </div>
                         {displayName && (
@@ -1470,12 +1776,12 @@ export default function CrmPipelinePage() {
                             {openAct && (
                               <span
                                 className="inline-flex items-center gap-0.5 text-amber-700 dark:text-amber-400 max-w-[7rem]"
-                                title={`${openAct.summary || 'Follow-up'}${openAct.due_date ? ` · ${formatFollowUpShort(openAct.due_date)}` : ''}${openAct.user_name ? ` · ${openAct.user_name}` : ''}`}
+                                title={`${openAct.summary || 'Follow-up'}${openAct.due_date ? ` · ${formatCrmDisplayDate(openAct.due_date)}` : ''}${openAct.user_name ? ` · ${openAct.user_name}` : ''}`}
                               >
-                                <Clock size={13} strokeWidth={2} className="shrink-0" />
+                                <Clock size={14} strokeWidth={2.25} className="shrink-0" />
                                 {openAct.due_date && (
-                                  <span className="text-[9px] font-bold truncate tabular-nums">
-                                    {formatFollowUpShort(openAct.due_date)}
+                                  <span className="text-xs font-bold truncate tabular-nums">
+                                    {formatCrmDisplayDate(openAct.due_date)}
                                   </span>
                                 )}
                               </span>
@@ -1486,8 +1792,14 @@ export default function CrmPipelinePage() {
                           </div>
                         </div>
                         {openAct?.due_date && (
-                          <div className="text-[9px] text-slate-500 mt-1 truncate" title={openAct.user_name || ''}>
-                            {openAct.user_name ? `By ${openAct.user_name}` : 'Scheduled'}
+                          <div
+                            className="flex items-center gap-1 text-xs font-semibold text-slate-600 dark:text-slate-300 mt-1 truncate"
+                            title={openAct.user_name || ''}
+                          >
+                            <User size={13} strokeWidth={2.25} className="shrink-0 text-slate-500" aria-hidden />
+                            <span className="truncate">
+                              {openAct.user_name ? `By ${openAct.user_name}` : 'Scheduled'}
+                            </span>
                           </div>
                         )}
                         {Number(opp.expected_revenue) > 0 && (
@@ -1498,7 +1810,10 @@ export default function CrmPipelinePage() {
                         )}
                       </div>
                     );
-                  })}
+                        })}
+                      </div>
+                    );
+                  })()}
                 </div>
               </motion.div>
             ))}
@@ -1550,7 +1865,7 @@ export default function CrmPipelinePage() {
       </div>
 
       <AnimatePresence>
-        {showNewPipeline && (
+        {showNewPipeline && isPipelineAdmin && (
           <Modal onClose={() => setShowNewPipeline(false)} title="New pipeline">
             <input
               className="w-full border rounded-lg px-3 py-2 text-sm mb-3"
@@ -1558,6 +1873,23 @@ export default function CrmPipelinePage() {
               value={newPipelineName}
               onChange={(e) => setNewPipelineName(e.target.value)}
             />
+            <label className="block text-xs font-bold uppercase tracking-wide text-slate-500 mb-1">
+              Assign to user
+            </label>
+            <select
+              className="w-full border rounded-lg px-3 py-2 text-sm mb-3 bg-white dark:bg-slate-900"
+              value={newPipelineOwnerUsername}
+              onChange={(e) => setNewPipelineOwnerUsername(e.target.value)}
+            >
+              {pipelineUserOptions.length === 0 && (
+                <option value="">Loading users…</option>
+              )}
+              {pipelineUserOptions.map((u) => (
+                <option key={u.username} value={u.username}>
+                  {u.full_name ? `${u.full_name} (${u.username})` : u.username}
+                </option>
+              ))}
+            </select>
             <button
               type="button"
               disabled={creatingPipeline}
@@ -1623,63 +1955,66 @@ export default function CrmPipelinePage() {
                 </button>
               </div>
 
-              <div className="px-4 py-2 flex flex-wrap gap-2 border-b">
-                <button
-                  type="button"
-                  disabled={settingOutcome !== null}
-                  onClick={() => void setOutcome('won')}
-                  className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-bold inline-flex items-center gap-1.5 disabled:opacity-60"
-                >
-                  {settingOutcome === 'won' && <InlineSpinner className="w-3.5 h-3.5 text-white" />}
-                  Won
-                </button>
-                <button
-                  type="button"
-                  disabled={settingOutcome !== null}
-                  onClick={() => void setOutcome('lost')}
-                  className="px-3 py-1.5 rounded-lg bg-red-600 text-white text-xs font-bold inline-flex items-center gap-1.5 disabled:opacity-60"
-                >
-                  {settingOutcome === 'lost' && <InlineSpinner className="w-3.5 h-3.5 text-white" />}
-                  Lost
-                </button>
-              </div>
-
-              <div className="px-4 py-3 border-b space-y-2 bg-slate-50/80 dark:bg-slate-800/40">
-                <div className="flex flex-wrap items-center gap-1.5">
-                  {stageProgressItems.map(({ stage: s }) => {
-                    const cur = String(selectedOpp.stage_id || '');
-                    const id = String(s.id);
-                    const isCurrent = id === cur;
-                    return (
-                      <button
-                        key={s.id}
-                        type="button"
-                        title={s.name}
-                        disabled={movingOppId === selectedOpp.id}
-                        onClick={() => void moveToStage(selectedOpp.id, s.id)}
-                        className={`max-w-[11rem] shrink-0 truncate rounded-full px-3 py-1.5 text-left text-[11px] font-bold transition-all border inline-flex items-center gap-1 disabled:opacity-60 ${
-                          isCurrent
-                            ? 'bg-[var(--theme-primary)] text-gray-900 border-[var(--theme-primary)] shadow-sm ring-2 ring-[var(--theme-primary)]/35'
-                            : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-600 hover:border-slate-300 dark:hover:border-slate-500'
-                        }`}
-                      >
-                        {movingOppId === selectedOpp.id && movingToStageId === s.id && (
-                          <InlineSpinner className="w-3 h-3 shrink-0" />
-                        )}
-                        {s.name}
-                      </button>
-                    );
-                  })}
+              <div className="flex-1 grid min-h-0 overflow-hidden grid-cols-[minmax(0,1fr)_22rem] grid-rows-[auto_auto_minmax(0,1fr)]">
+                <div className="col-start-1 row-start-1 px-4 py-2 flex flex-wrap gap-2 border-b border-r bg-white dark:bg-slate-900">
+                  <button
+                    type="button"
+                    disabled={settingOutcome !== null}
+                    onClick={() => void setOutcome('won')}
+                    className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-bold inline-flex items-center gap-1.5 disabled:opacity-60"
+                  >
+                    {settingOutcome === 'won' && <InlineSpinner className="w-3.5 h-3.5 text-white" />}
+                    Won
+                  </button>
+                  <button
+                    type="button"
+                    disabled={settingOutcome !== null}
+                    onClick={() => void setOutcome('lost')}
+                    className="px-3 py-1.5 rounded-lg bg-red-600 text-white text-xs font-bold inline-flex items-center gap-1.5 disabled:opacity-60"
+                  >
+                    {settingOutcome === 'lost' && <InlineSpinner className="w-3.5 h-3.5 text-white" />}
+                    Lost
+                  </button>
                 </div>
-                <p className="text-[10px] text-slate-500">
-                  Current: <span className="font-semibold text-slate-700 dark:text-slate-200">{stages.find((x) => String(x.id) === String(selectedOpp.stage_id))?.name || '—'}</span>
-                  {' · '}
-                  Click a stage to move the lead.
-                </p>
-              </div>
 
-              <div className="flex-1 flex min-h-0 overflow-hidden">
-                <div className="flex-1 overflow-y-auto p-4 border-r bg-white dark:bg-slate-900">
+                <div className="col-start-1 row-start-2 px-4 py-3 border-b border-r space-y-2 bg-slate-50/80 dark:bg-slate-800/40">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {stageProgressItems.map(({ stage: s }) => {
+                      const cur = String(selectedOpp.stage_id || '');
+                      const id = String(s.id);
+                      const isCurrent = id === cur;
+                      return (
+                        <button
+                          key={s.id}
+                          type="button"
+                          title={s.name}
+                          disabled={movingOppId === selectedOpp.id}
+                          onClick={() => void moveToStage(selectedOpp.id, s.id)}
+                          className={`max-w-[11rem] shrink-0 truncate rounded-full px-3 py-1.5 text-left text-[11px] font-bold transition-all border inline-flex items-center gap-1 disabled:opacity-60 ${
+                            isCurrent
+                              ? 'bg-[var(--theme-primary)] text-gray-900 border-[var(--theme-primary)] shadow-sm ring-2 ring-[var(--theme-primary)]/35'
+                              : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-600 hover:border-slate-300 dark:hover:border-slate-500'
+                          }`}
+                        >
+                          {movingOppId === selectedOpp.id && movingToStageId === s.id && (
+                            <InlineSpinner className="w-3 h-3 shrink-0" />
+                          )}
+                          {s.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <p className="text-[10px] text-slate-500">
+                    Current:{' '}
+                    <span className="font-semibold text-slate-700 dark:text-slate-200">
+                      {stages.find((x) => String(x.id) === String(selectedOpp.stage_id))?.name || '—'}
+                    </span>
+                    {' · '}
+                    Click a stage to move the lead.
+                  </p>
+                </div>
+
+                <div className="col-start-1 row-start-3 overflow-y-auto p-4 border-r bg-white dark:bg-slate-900 min-h-0">
                   {oppDraft && (
                     <>
                       <div className="mb-4 pb-3 border-b border-slate-100">
@@ -1884,8 +2219,8 @@ export default function CrmPipelinePage() {
                   )}
                 </div>
 
-                <div className="w-[22rem] flex flex-col min-h-0 bg-gradient-to-b from-slate-50 to-slate-100/90 dark:from-slate-900 dark:to-slate-800/90 border-l border-slate-200/80 dark:border-slate-700">
-                  <div className="flex p-1.5 gap-1 border-b border-slate-200/80 dark:border-slate-700 bg-white/60 dark:bg-slate-900/40">
+                <div className="col-start-2 row-start-1 row-span-3 flex flex-col min-h-0 overflow-hidden bg-gradient-to-b from-slate-50 to-slate-100/90 dark:from-slate-900 dark:to-slate-800/90 border-l border-slate-200/80 dark:border-slate-700">
+                  <div className="shrink-0 flex p-1.5 gap-1 border-b border-slate-200/80 dark:border-slate-700 bg-white/60 dark:bg-slate-900/40">
                     {(['note', 'activity'] as const).map((tab) => (
                       <button
                         key={tab}
@@ -1902,11 +2237,11 @@ export default function CrmPipelinePage() {
                       </button>
                     ))}
                   </div>
-                  <div className="p-3 border-b border-slate-200/60 dark:border-slate-700 bg-white/50 dark:bg-slate-900/30">
+                  <div className="shrink-0 p-3 border-b-2 border-slate-200/90 dark:border-slate-600 bg-white/70 dark:bg-slate-900/40 shadow-sm">
                     {chatterTab === 'note' ? (
                       <div className="rounded-xl border border-slate-200/90 dark:border-slate-600 bg-white dark:bg-slate-900 p-3 shadow-sm">
                         <textarea
-                          className="w-full text-sm rounded-lg border-0 bg-slate-50 dark:bg-slate-800 p-2.5 min-h-[72px] placeholder:text-slate-400 focus:ring-2 focus:ring-[var(--theme-primary)]/40"
+                          className="w-full text-sm rounded-lg border-0 bg-slate-50 dark:bg-slate-800 p-2.5 min-h-[56px] placeholder:text-slate-400 focus:ring-2 focus:ring-[var(--theme-primary)]/40"
                           placeholder="Log an internal note…"
                           value={noteText}
                           onChange={(e) => setNoteText(e.target.value)}
@@ -1931,13 +2266,7 @@ export default function CrmPipelinePage() {
                             <button
                               key={t}
                               type="button"
-                              onClick={() =>
-                                setActivityForm({
-                                  ...activityForm,
-                                  activity_type: t,
-                                  summary: t.charAt(0).toUpperCase() + t.slice(1),
-                                })
-                              }
+                              onClick={() => setActivityForm({ ...activityForm, activity_type: t })}
                               className={`px-2.5 py-1 rounded-md text-[10px] font-bold capitalize transition-colors ${
                                 activityForm.activity_type === t
                                   ? 'bg-[var(--theme-primary)] text-gray-900 shadow-sm'
@@ -1948,11 +2277,6 @@ export default function CrmPipelinePage() {
                             </button>
                           ))}
                         </div>
-                        <input
-                          className="w-full text-sm rounded-lg border border-slate-200 dark:border-slate-600 px-2.5 py-2 bg-slate-50/80 dark:bg-slate-800"
-                          value={activityForm.summary}
-                          onChange={(e) => setActivityForm({ ...activityForm, summary: e.target.value })}
-                        />
                         <div className="relative">
                           <Calendar className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
                           <input
@@ -2009,7 +2333,7 @@ export default function CrmPipelinePage() {
                               </span>
                             </div>
                             <span className="text-[9px] text-slate-400 tabular-nums shrink-0">
-                              {act.created_at ? formatDateToLocalTimezone(act.created_at) : ''}
+                              {act.created_at ? formatCrmDisplayDate(act.created_at, true) : ''}
                             </span>
                           </div>
                           <div className="mt-1 font-semibold text-slate-800 dark:text-slate-100">{act.summary || act.event_type}</div>
@@ -2022,7 +2346,7 @@ export default function CrmPipelinePage() {
                                   {title && <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">{title}</p>}
                                   {lines.map((line, i) => (
                                     <p key={i} className="whitespace-pre-wrap break-words leading-snug">
-                                      {line}
+                                      {formatActivityDetailLine(line)}
                                     </p>
                                   ))}
                                 </div>
@@ -2034,15 +2358,98 @@ export default function CrmPipelinePage() {
                             </p>
                           )}
                           {act.event_type === 'activity' && String(act.is_done).toUpperCase() !== 'Y' && (
-                            <button
-                              type="button"
-                              disabled={markingActivityId !== null}
-                              onClick={() => void markActivityDone(act.id)}
-                              className="mt-2 text-[10px] font-bold text-emerald-700 dark:text-emerald-400 px-2 py-1 rounded-md bg-emerald-100/80 dark:bg-emerald-900/40 hover:bg-emerald-200/80 inline-flex items-center gap-1 disabled:opacity-60"
-                            >
-                              {markingActivityId === act.id && <InlineSpinner className="w-3 h-3" />}
-                              Mark done
-                            </button>
+                            <>
+                              <div className="mt-2 flex flex-wrap gap-1">
+                                <button
+                                  type="button"
+                                  disabled={markingActivityId !== null || updatingActivityId !== null}
+                                  onClick={() => void markActivityDone(act.id)}
+                                  className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400 px-2 py-1 rounded-md bg-emerald-100/80 dark:bg-emerald-900/40 hover:bg-emerald-200/80 inline-flex items-center gap-1 disabled:opacity-60"
+                                >
+                                  {markingActivityId === act.id && <InlineSpinner className="w-3 h-3" />}
+                                  Mark done
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={markingActivityId !== null || updatingActivityId !== null}
+                                  onClick={() => openActivityInline(act, 'reschedule')}
+                                  className="text-[10px] font-bold text-sky-700 dark:text-sky-300 px-2 py-1 rounded-md bg-sky-100/80 dark:bg-sky-900/40 hover:bg-sky-200/80 disabled:opacity-60"
+                                >
+                                  Reschedule
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={markingActivityId !== null || updatingActivityId !== null}
+                                  onClick={() => openActivityInline(act, 'edit')}
+                                  className="text-[10px] font-bold text-violet-700 dark:text-violet-300 px-2 py-1 rounded-md bg-violet-100/80 dark:bg-violet-900/40 hover:bg-violet-200/80 disabled:opacity-60"
+                                >
+                                  Edit
+                                </button>
+                              </div>
+                              {activityInlineId === act.id && (
+                                <div className="mt-2 p-2 rounded-lg border border-slate-200 dark:border-slate-600 bg-white/90 dark:bg-slate-800/90 space-y-2">
+                                  {activityInlineMode === 'edit' && (
+                                    <div className="flex flex-wrap gap-1">
+                                      {(['todo', 'email', 'call', 'meeting'] as const).map((t) => (
+                                        <button
+                                          key={t}
+                                          type="button"
+                                          onClick={() =>
+                                            setActivityInlineDraft((d) => ({ ...d, activity_type: t }))
+                                          }
+                                          className={`px-2 py-0.5 rounded-md text-[9px] font-bold capitalize ${
+                                            activityInlineDraft.activity_type === t
+                                              ? 'bg-[var(--theme-primary)] text-gray-900'
+                                              : 'bg-slate-100 dark:bg-slate-700 text-slate-600'
+                                          }`}
+                                        >
+                                          {t}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  )}
+                                  <div className="relative">
+                                    <Calendar className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+                                    <input
+                                      type="date"
+                                      className="w-full text-xs rounded-lg border border-slate-200 dark:border-slate-600 pl-7 pr-2 py-1.5 bg-slate-50 dark:bg-slate-900"
+                                      value={activityInlineDraft.due_date}
+                                      onChange={(e) =>
+                                        setActivityInlineDraft((d) => ({ ...d, due_date: e.target.value }))
+                                      }
+                                    />
+                                  </div>
+                                  {activityInlineMode === 'edit' && (
+                                    <textarea
+                                      className="w-full text-xs rounded-lg border border-slate-200 dark:border-slate-600 p-2 min-h-[52px] bg-slate-50 dark:bg-slate-900"
+                                      placeholder="Details…"
+                                      value={activityInlineDraft.body}
+                                      onChange={(e) =>
+                                        setActivityInlineDraft((d) => ({ ...d, body: e.target.value }))
+                                      }
+                                    />
+                                  )}
+                                  <div className="flex gap-1">
+                                    <button
+                                      type="button"
+                                      disabled={updatingActivityId === act.id}
+                                      onClick={() => void saveActivityInline()}
+                                      className="flex-1 py-1.5 rounded-md bg-[var(--theme-primary)] text-[10px] font-black text-gray-900 disabled:opacity-60 inline-flex items-center justify-center gap-1"
+                                    >
+                                      {updatingActivityId === act.id && <InlineSpinner className="w-3 h-3" />}
+                                      Save
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setActivityInlineId(null)}
+                                      className="px-2 py-1.5 rounded-md text-[10px] font-bold text-slate-600 bg-slate-100 dark:bg-slate-700"
+                                    >
+                                      Cancel
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+                            </>
                           )}
                         </div>
                       );
@@ -2096,59 +2503,6 @@ export default function CrmPipelinePage() {
                 'Delete'
               )}
             </button>
-            <div className="border-t border-slate-100 dark:border-slate-700 px-3 py-2.5 bg-slate-50/80 dark:bg-slate-800/50">
-              <p className="text-[10px] font-bold uppercase tracking-wide text-slate-600 dark:text-slate-300 mb-2">
-                Card color
-              </p>
-              <div className="grid grid-cols-4 gap-2">
-                {LEAD_CARD_COLOR_OPTIONS.map((opt) => {
-                  const selected = String(leadMenuOpp.card_color || '') === opt.id;
-                  const lightSwatch = ['', 'yellow', 'lime'].includes(opt.id);
-                  return (
-                    <button
-                      key={opt.id || 'default'}
-                      type="button"
-                      title={opt.label}
-                      aria-label={opt.label}
-                      disabled={patchingCardColorOppId === leadMenuOpp.id}
-                      onClick={() => {
-                        void (async () => {
-                          setLeadMenuOppId(leadMenuOpp.id);
-                          const ok = await patchLead(
-                            leadMenuOpp.id,
-                            { card_color: opt.id },
-                            leadMenuOpp,
-                            { cardColorSpinner: true, successToast: 'Card color updated' }
-                          );
-                          if (ok) {
-                            setOpportunities((prev) =>
-                              prev.map((o) => (o.id === leadMenuOpp.id ? { ...o, card_color: opt.id } : o))
-                            );
-                          }
-                        })();
-                      }}
-                      className={`relative w-8 h-8 rounded-full ${opt.swatchClass} ring-1 ring-slate-300/90 dark:ring-slate-500 shadow-sm hover:scale-110 hover:ring-2 hover:ring-[var(--theme-primary)] transition-all mx-auto disabled:opacity-60`}
-                    >
-                      {patchingCardColorOppId === leadMenuOpp.id ? (
-                        <InlineSpinner className="absolute inset-0 m-auto w-3.5 h-3.5 text-slate-700 dark:text-slate-200" />
-                      ) : (
-                        selected && (
-                          <Check
-                            size={14}
-                            className={
-                              lightSwatch
-                                ? 'absolute inset-0 m-auto text-slate-800 dark:text-slate-900 drop-shadow-[0_0_2px_rgba(255,255,255,0.9)]'
-                                : 'absolute inset-0 m-auto text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.45)]'
-                            }
-                            strokeWidth={3}
-                          />
-                        )
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
           </div>
         </div>
       )}
