@@ -58,18 +58,48 @@ const CRM_SHEET_DEFS: SheetDef[] = [
 
 let ensureInFlight: Promise<void> | null = null;
 
-const PIPELINES_CACHE_MS = 20_000;
+const PIPELINES_CACHE_MS = 60_000;
 let pipelinesCache: { at: number; data: any[] } | null = null;
+
+const STAGES_CACHE_MS = 60_000;
+const stagesCache = new Map<string, { at: number; stages: any[] }>();
+
+const BOARD_CACHE_MS = 60_000;
+type BoardCacheEntry = {
+  at: number;
+  opportunities: any[];
+  openActivitiesByOpp: Record<string, any>;
+};
+const boardCache = new Map<string, BoardCacheEntry>();
 
 function invalidateCrmPipelinesCache(): void {
   pipelinesCache = null;
+}
+
+export function invalidateCrmStagesCache(pipelineId?: string): void {
+  if (!pipelineId) {
+    stagesCache.clear();
+    return;
+  }
+  stagesCache.delete(String(pipelineId));
+}
+
+export function invalidateCrmBoardCache(pipelineId?: string): void {
+  if (!pipelineId) {
+    boardCache.clear();
+    return;
+  }
+  const prefix = `${String(pipelineId)}|`;
+  for (const key of boardCache.keys()) {
+    if (key.startsWith(prefix)) boardCache.delete(key);
+  }
 }
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function isSheetsQuotaError(error: unknown): boolean {
+export function isSheetsQuotaError(error: unknown): boolean {
   const e = error as { code?: number; response?: { status?: number } };
   return e?.code === 429 || e?.response?.status === 429;
 }
@@ -470,17 +500,27 @@ export async function createCrmPipeline(
   return pipeline;
 }
 
-export async function getCrmPipelineStages(pipelineId: string): Promise<any[]> {
+export async function getCrmPipelineStages(
+  pipelineId: string,
+  options?: { forceRefresh?: boolean }
+): Promise<any[]> {
   await ensureCrmPipelineSheetsInitialized();
+  const pid = String(pipelineId);
+  const now = Date.now();
+  if (!options?.forceRefresh) {
+    const hit = stagesCache.get(pid);
+    if (hit && now - hit.at < STAGES_CACHE_MS) return hit.stages;
+  }
   const { rows } = await readSheetRows(CRM_PIPELINE_SHEETS.STAGES);
-  return rows
+  const stages = rows
     .filter(
       (s) =>
-        String(s.pipeline_id) === String(pipelineId) &&
-        String(s.active || 'Y').toUpperCase() === 'Y'
+        String(s.pipeline_id) === pid && String(s.active || 'Y').toUpperCase() === 'Y'
     )
     .map((s) => ({ ...s, id: String(s.id), pipeline_id: String(s.pipeline_id) }))
     .sort(compareBySequenceThenId);
+  stagesCache.set(pid, { at: now, stages });
+  return stages;
 }
 
 export async function createCrmPipelineStage(
@@ -502,6 +542,7 @@ export async function createCrmPipelineStage(
     created_at: formatToSheetDate(new Date()),
   };
   await appendRow(CRM_PIPELINE_SHEETS.STAGES, STAGE_HEADERS, stage);
+  invalidateCrmStagesCache(pipelineId);
   return stage;
 }
 
@@ -533,6 +574,7 @@ export async function updateCrmPipelineStage(
   }
 
   await updateRowById(CRM_PIPELINE_SHEETS.STAGES, stageId, patch);
+  invalidateCrmStagesCache(String(existing.pipeline_id));
   return { ...existing, id: String(stageId), ...patch };
 }
 
@@ -543,6 +585,41 @@ export async function deleteCrmPipelineStage(stageId: string, pipelineId: string
     throw new Error('Move or close opportunities in this stage before deleting');
   }
   await updateCrmPipelineStage(stageId, { active: 'N' });
+  invalidateCrmStagesCache(pipelineId);
+}
+
+export async function getCrmBoardBundle(
+  pipelineId: string,
+  options?: { outcome?: string; mine?: string },
+  opts?: { forceRefresh?: boolean }
+): Promise<{ opportunities: any[]; openActivitiesByOpp: Record<string, any> }> {
+  const outcome = options?.outcome ?? 'open';
+  const mineKey = options?.mine?.trim() ? String(options.mine).trim() : '';
+  const key = `${String(pipelineId)}|${outcome}|${mineKey}`;
+  const now = Date.now();
+  if (!opts?.forceRefresh) {
+    const hit = boardCache.get(key);
+    if (hit && now - hit.at < BOARD_CACHE_MS) {
+      return {
+        opportunities: hit.opportunities,
+        openActivitiesByOpp: hit.openActivitiesByOpp,
+      };
+    }
+  }
+  const [opportunities, openRows] = await Promise.all([
+    getCrmOpportunities(pipelineId, { outcome, mine: mineKey || undefined }),
+    getOpenActivitiesForPipeline(pipelineId),
+  ]);
+  const openActivitiesByOpp: Record<string, any> = {};
+  const parseActTime = (a: { created_at?: string }) =>
+    new Date(String(a.created_at || 0)).getTime() || 0;
+  for (const act of openRows) {
+    const oid = String(act.opportunity_id);
+    const prev = openActivitiesByOpp[oid];
+    if (!prev || parseActTime(act) >= parseActTime(prev)) openActivitiesByOpp[oid] = act;
+  }
+  boardCache.set(key, { at: now, opportunities, openActivitiesByOpp });
+  return { opportunities, openActivitiesByOpp };
 }
 
 export async function getCrmOpportunities(
@@ -641,6 +718,7 @@ export async function createCrmOpportunity(
     user_id: user?.id ?? '',
     user_name: userLabel(user),
   });
+  invalidateCrmBoardCache(String(data.pipeline_id));
   return opp;
 }
 
@@ -722,6 +800,7 @@ export async function updateCrmOpportunity(
   }
 
   await updateRowById(CRM_PIPELINE_SHEETS.OPPORTUNITIES, id, merged);
+  invalidateCrmBoardCache(String(existing.pipeline_id));
   return { id, ...merged };
 }
 
@@ -764,6 +843,7 @@ export async function batchUpdateCrmOpportunityFields(
     user_name: userLabel(user),
   });
 
+  invalidateCrmBoardCache(String(existing.pipeline_id));
   return merged;
 }
 
@@ -819,7 +899,7 @@ export async function createCrmScheduledActivity(
     due_date: data.due_date ?? '',
     assigned_to: data.assigned_to ?? userLabel(user),
   };
-  return appendCrmPipelineLog({
+  const row = await appendCrmPipelineLog({
     opportunity_id: opportunityId,
     pipeline_id: opp.pipeline_id,
     event_type: 'activity',
@@ -832,6 +912,8 @@ export async function createCrmScheduledActivity(
     user_id: user?.id ?? '',
     user_name: userLabel(user),
   });
+  invalidateCrmBoardCache(String(opp.pipeline_id));
+  return row;
 }
 
 export async function updateCrmScheduledActivity(
@@ -888,6 +970,8 @@ export async function updateCrmScheduledActivity(
     body: JSON.stringify(payload),
   });
 
+  invalidateCrmBoardCache(String(activity.pipeline_id));
+
   return {
     id: activityId,
     activity_type: activityType,
@@ -917,6 +1001,7 @@ export async function markCrmActivityDone(activityId: string, user?: CrmPipeline
     user_id: user?.id ?? '',
     user_name: userLabel(user),
   });
+  invalidateCrmBoardCache(String(activity.pipeline_id));
   return { id: activityId, is_done: 'Y', done_at: doneAt };
 }
 

@@ -4,7 +4,11 @@ import {
   createCrmPipelineStage,
   updateCrmPipelineStage,
   deleteCrmPipelineStage,
+  isSheetsQuotaError,
 } from '@/lib/crmPipelineSheets';
+
+const SHEETS_RATE_LIMIT_MSG =
+  'Google Sheets rate limit reached. Wait about a minute, then refresh the page.';
 
 export async function GET(request: NextRequest) {
   try {
@@ -16,6 +20,9 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ stages });
   } catch (error) {
     console.error('CRM pipeline GET stages:', error);
+    if (isSheetsQuotaError(error)) {
+      return NextResponse.json({ error: SHEETS_RATE_LIMIT_MSG }, { status: 503 });
+    }
     return NextResponse.json({ error: 'Failed to fetch stages' }, { status: 500 });
   }
 }

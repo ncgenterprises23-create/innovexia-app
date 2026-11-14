@@ -3,6 +3,7 @@ import {
   getCrmPipelines,
   createCrmPipeline,
   filterCrmPipelinesForUser,
+  isSheetsQuotaError,
 } from '@/lib/crmPipelineSheets';
 
 function isPipelineAdmin(role?: string): boolean {
@@ -19,8 +20,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ pipelines });
   } catch (error: unknown) {
     console.error('CRM pipeline GET pipelines:', error);
-    const err = error as { code?: number; response?: { status?: number }; message?: string };
-    if (err?.code === 429 || err?.response?.status === 429) {
+    if (isSheetsQuotaError(error)) {
       return NextResponse.json(
         {
           error:

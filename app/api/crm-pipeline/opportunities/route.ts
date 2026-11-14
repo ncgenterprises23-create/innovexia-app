@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import {
-  getCrmOpportunities,
+  getCrmBoardBundle,
   createCrmOpportunity,
   updateCrmOpportunity,
   batchUpdateCrmOpportunityFields,
-  getOpenActivitiesForPipeline,
+  isSheetsQuotaError,
 } from '@/lib/crmPipelineSheets';
+
+const SHEETS_RATE_LIMIT_MSG =
+  'Google Sheets rate limit reached. Wait about a minute, then refresh the page.';
 
 export async function GET(request: NextRequest) {
   try {
@@ -15,20 +18,16 @@ export async function GET(request: NextRequest) {
     }
     const mine = request.nextUrl.searchParams.get('mine') || undefined;
     const outcome = request.nextUrl.searchParams.get('outcome') || 'open';
-    const opportunities = await getCrmOpportunities(pipelineId, { outcome, mine });
-    const openActivities = await getOpenActivitiesForPipeline(pipelineId);
-    /** Keep the most recently created open activity per opportunity (sheet order may be mixed). */
-    const activityByOpp: Record<string, any> = {};
-    const parseActTime = (a: { created_at?: string }) =>
-      new Date(String(a.created_at || 0)).getTime() || 0;
-    for (const act of openActivities) {
-      const oid = String(act.opportunity_id);
-      const prev = activityByOpp[oid];
-      if (!prev || parseActTime(act) >= parseActTime(prev)) activityByOpp[oid] = act;
-    }
-    return NextResponse.json({ opportunities, openActivities: activityByOpp });
+    const { opportunities, openActivitiesByOpp } = await getCrmBoardBundle(pipelineId, {
+      outcome,
+      mine,
+    });
+    return NextResponse.json({ opportunities, openActivities: openActivitiesByOpp });
   } catch (error) {
     console.error('CRM pipeline GET opportunities:', error);
+    if (isSheetsQuotaError(error)) {
+      return NextResponse.json({ error: SHEETS_RATE_LIMIT_MSG }, { status: 503 });
+    }
     return NextResponse.json({ error: 'Failed to fetch opportunities' }, { status: 500 });
   }
 }

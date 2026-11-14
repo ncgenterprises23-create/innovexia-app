@@ -71,6 +71,9 @@ const PIPELINE_ICON = 'w-4 h-4 shrink-0 text-[var(--theme-primary)] opacity-90';
 const BTN_SPINNER = 'w-4 h-4 animate-spin shrink-0';
 const LEAD_CARD =
   'p-2.5 pt-2 rounded-md border shadow-sm cursor-grab active:cursor-grabbing hover:shadow-md transition-shadow overflow-hidden';
+/** Scrollable lead list inside each stage column */
+const STAGE_LEAD_SCROLL =
+  'crm-stage-lead-scroll flex-1 min-h-0 overflow-y-auto scroll-smooth overscroll-y-contain';
 const QUICK_ADD_CARD =
   'rounded-md border border-slate-200/90 dark:border-slate-600/50 shadow-sm bg-white dark:bg-slate-800 cursor-default shrink-0';
 const GHOST_BTN =
@@ -419,9 +422,52 @@ function InlineSpinner({ className }: { className?: string }) {
   return <Loader2 className={className ?? BTN_SPINNER} aria-hidden />;
 }
 
+const STAGE_LEAD_BATCH = 15;
+
+async function fetchCrmApi(url: string, init?: RequestInit): Promise<Response> {
+  let last: Response | null = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const res = await fetch(url, init);
+    last = res;
+    if (res.status !== 503 || attempt === 2) return res;
+    await new Promise((r) => setTimeout(r, 1200 * (attempt + 1)));
+  }
+  return last!;
+}
+
+function StageLeadScrollSentinel({
+  stageId,
+  hasMore,
+  onLoadMore,
+}: {
+  stageId: string;
+  hasMore: boolean;
+  onLoadMore: (stageId: string) => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!hasMore) return;
+    const el = ref.current;
+    const root = el?.closest('[data-stage-lead-scroll]') as HTMLElement | null;
+    if (!el || !root) return;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) onLoadMore(stageId);
+      },
+      { root, rootMargin: '200px 0px 80px', threshold: 0 }
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [stageId, hasMore, onLoadMore]);
+  if (!hasMore) return null;
+  return <div ref={ref} className="h-1 w-full shrink-0" aria-hidden />;
+}
+
 export default function CrmPipelinePage() {
   const router = useRouter();
   const toast = useToast();
+  const toastRef = useRef(toast);
+  toastRef.current = toast;
 
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -433,6 +479,7 @@ export default function CrmPipelinePage() {
   const [myOnly, setMyOnly] = useState(false);
   const [filterUnassigned, setFilterUnassigned] = useState(false);
   const [search, setSearch] = useState('');
+  const [stageLeadVisible, setStageLeadVisible] = useState<Record<string, number>>({});
   const [filterPanelOpen, setFilterPanelOpen] = useState(false);
   const [pipelineDropdownOpen, setPipelineDropdownOpen] = useState(false);
   const [stageMenuAnchor, setStageMenuAnchor] = useState<{ top: number; left: number } | null>(null);
@@ -532,7 +579,7 @@ export default function CrmPipelinePage() {
       const qs = new URLSearchParams();
       if (u?.username) qs.set('username', String(u.username));
       if (u?.role_name) qs.set('role', String(u.role_name));
-      const res = await fetch(
+      const res = await fetchCrmApi(
         qs.toString() ? `/api/crm-pipeline/pipelines?${qs}` : '/api/crm-pipeline/pipelines'
       );
       const data = await res.json();
@@ -556,8 +603,8 @@ export default function CrmPipelinePage() {
     if (!pipelineId) return;
     const mine = myOnly && currentUser?.username ? currentUser.username : undefined;
     const [stRes, opRes] = await Promise.all([
-      fetch(`/api/crm-pipeline/stages?pipelineId=${encodeURIComponent(pipelineId)}`),
-      fetch(
+      fetchCrmApi(`/api/crm-pipeline/stages?pipelineId=${encodeURIComponent(pipelineId)}`),
+      fetchCrmApi(
         `/api/crm-pipeline/opportunities?pipelineId=${encodeURIComponent(pipelineId)}&outcome=open${mine ? `&mine=${encodeURIComponent(mine)}` : ''}`
       ),
     ]);
@@ -568,7 +615,15 @@ export default function CrmPipelinePage() {
     setStages(stData.stages || []);
     setOpportunities(opData.opportunities || []);
     setOpenActivities(opData.openActivities || {});
+    setStageLeadVisible({});
   }, [myOnly, currentUser?.username]);
+
+  const loadMoreStageLeads = useCallback((stageId: string) => {
+    setStageLeadVisible((prev) => ({
+      ...prev,
+      [stageId]: (prev[stageId] ?? STAGE_LEAD_BATCH) + STAGE_LEAD_BATCH,
+    }));
+  }, []);
 
   const loadActivities = useCallback(async (oppId: string) => {
     const res = await fetch(`/api/crm-pipeline/activities?opportunityId=${encodeURIComponent(oppId)}`);
@@ -650,26 +705,40 @@ export default function CrmPipelinePage() {
         await loadPipelines(auth.user);
       } catch (e) {
         console.error(e);
-        toast.error('Failed to load CRM Pipeline');
+        toastRef.current.error('Failed to load CRM Pipeline');
       } finally {
         setLoading(false);
       }
     };
     init();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- run once on mount; loadPipelines must not depend on selectedPipelineId
-  }, [router, toast]);
+  }, [router]);
 
   useEffect(() => {
     setStageFollowUpFilters({});
+    setStageLeadVisible({});
   }, [selectedPipelineId]);
 
   useEffect(() => {
+    setStageLeadVisible({});
+  }, [search, myOnly, filterUnassigned, stageFollowUpFilters]);
+
+  useEffect(() => {
     if (!selectedPipelineId) return;
+    let cancelled = false;
     loadBoard(selectedPipelineId).catch((e) => {
+      if (cancelled) return;
       console.error(e);
-      toast.error('Failed to load board');
+      toastRef.current.error(
+        String(e?.message || '').includes('rate limit')
+          ? String(e.message)
+          : 'Failed to load board'
+      );
     });
-  }, [selectedPipelineId, loadBoard, toast]);
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedPipelineId, loadBoard]);
 
   useEffect(() => {
     if (selectedOpp) loadActivities(selectedOpp.id);
@@ -1806,12 +1875,16 @@ export default function CrmPipelinePage() {
                 )}
 
                 <div
-                  className={`flex-1 min-h-0 overflow-y-auto pr-0.5 ${foldedStageIds.has(stage.id) ? 'hidden' : ''}`}
+                  data-stage-lead-scroll
+                  className={`${STAGE_LEAD_SCROLL} ${foldedStageIds.has(stage.id) ? 'hidden' : ''}`}
                 >
                   {(() => {
                     const stageOpps = oppsByStage[stage.id] || [];
                     if (stageOpps.length === 0) return null;
-                    const stack = stageOpps.length > 1;
+                    const visibleCap = stageLeadVisible[stage.id] ?? STAGE_LEAD_BATCH;
+                    const visibleOpps = stageOpps.slice(0, visibleCap);
+                    const hasMoreLeads = visibleCap < stageOpps.length;
+                    const stack = visibleOpps.length > 1;
                     return (
                       <div
                         className={
@@ -1820,7 +1893,7 @@ export default function CrmPipelinePage() {
                             : ''
                         }
                       >
-                        {stageOpps.map((opp) => {
+                        {visibleOpps.map((opp) => {
                     const tags = parseTags(opp.tags);
                     const openAct = openActivities[opp.id];
                     const fuBucket = followUpBucket(openAct?.due_date);
@@ -1931,6 +2004,11 @@ export default function CrmPipelinePage() {
                       </div>
                     );
                         })}
+                        <StageLeadScrollSentinel
+                          stageId={stage.id}
+                          hasMore={hasMoreLeads}
+                          onLoadMore={loadMoreStageLeads}
+                        />
                       </div>
                     );
                   })()}
@@ -2857,6 +2935,60 @@ export default function CrmPipelinePage() {
           </div>
         </div>
       )}
+      <style
+        dangerouslySetInnerHTML={{
+          __html: `
+            .crm-stage-lead-scroll {
+              scrollbar-gutter: stable;
+              scrollbar-width: thin;
+              scrollbar-color: #c58f0a rgba(161, 98, 7, 0.14);
+            }
+            .crm-stage-lead-scroll::-webkit-scrollbar {
+              width: 7px;
+            }
+            .crm-stage-lead-scroll::-webkit-scrollbar-track {
+              background: rgba(161, 98, 7, 0.1);
+              border-radius: 999px;
+              margin: 4px 0;
+            }
+            .crm-stage-lead-scroll::-webkit-scrollbar-thumb {
+              background: linear-gradient(
+                180deg,
+                color-mix(in srgb, var(--theme-secondary, #eab308) 55%, #b45309 45%),
+                color-mix(in srgb, var(--theme-tertiary, #ca8a04) 50%, #92400e 50%)
+              );
+              border-radius: 999px;
+              border: 1px solid rgba(146, 64, 14, 0.35);
+              background-clip: padding-box;
+              min-height: 3.5rem;
+            }
+            .crm-stage-lead-scroll::-webkit-scrollbar-thumb:hover {
+              background: linear-gradient(
+                180deg,
+                color-mix(in srgb, var(--theme-secondary, #eab308) 40%, #92400e 60%),
+                #78350f
+              );
+            }
+            .dark .crm-stage-lead-scroll {
+              scrollbar-color: #fbbf24 rgba(251, 191, 36, 0.12);
+            }
+            .dark .crm-stage-lead-scroll::-webkit-scrollbar-track {
+              background: rgba(251, 191, 36, 0.08);
+            }
+            .dark .crm-stage-lead-scroll::-webkit-scrollbar-thumb {
+              background: linear-gradient(
+                180deg,
+                color-mix(in srgb, var(--theme-primary, #facc15) 70%, #d97706 30%),
+                color-mix(in srgb, var(--theme-primary, #facc15) 45%, #b45309 55%)
+              );
+              border-color: rgba(251, 191, 36, 0.25);
+            }
+            .dark .crm-stage-lead-scroll::-webkit-scrollbar-thumb:hover {
+              background: linear-gradient(180deg, #fbbf24, #d97706);
+            }
+          `,
+        }}
+      />
     </LayoutWrapper>
   );
 }
