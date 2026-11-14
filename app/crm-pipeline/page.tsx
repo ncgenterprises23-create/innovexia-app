@@ -19,8 +19,10 @@ import {
   StickyNote,
   Tag,
   CheckCircle2,
+  Check,
   XCircle,
   Building2,
+  MapPin,
   Percent,
   Calendar,
   RefreshCw,
@@ -44,7 +46,10 @@ import {
 import {
   CRM_PIPELINE_TAG_NAMES,
   getTagClassName,
+  mergeBuiltinAndCustomTags,
   mergeTagNames,
+  persistCustomCrmPipelineTag,
+  readCustomCrmPipelineTags,
   tagsToString,
 } from '@/lib/crmPipelineTags';
 import {
@@ -86,6 +91,9 @@ type Opportunity = {
   email?: string;
   phone?: string;
   company?: string;
+  city?: string;
+  state?: string;
+  country?: string;
   expected_revenue?: number | string;
   recurring_revenue?: number | string;
   revenue_period?: string;
@@ -121,6 +129,9 @@ type OppDraft = {
   email: string;
   phone: string;
   company: string;
+  city: string;
+  state: string;
+  country: string;
   expected_revenue: string;
   recurring_revenue: string;
   revenue_period: string;
@@ -143,6 +154,9 @@ function buildOppDraftFrom(opp: Opportunity): OppDraft {
     email: strField(opp.email),
     phone: strField(opp.phone),
     company: strField(opp.company),
+    city: strField(opp.city),
+    state: strField(opp.state),
+    country: strField(opp.country),
     expected_revenue: numish(opp.expected_revenue),
     recurring_revenue: numish(opp.recurring_revenue),
     revenue_period: strField(opp.revenue_period),
@@ -168,6 +182,54 @@ function parseTags(tags?: string): string[] {
     .split(',')
     .map((t) => t.trim())
     .filter(Boolean);
+}
+
+function digitsOnly(value: unknown): string {
+  return String(value ?? '').replace(/\D/g, '');
+}
+
+/** All searchable text for one lead in the current pipeline board */
+function opportunitySearchText(opp: Opportunity): string {
+  const fields = [
+    opp.id,
+    opp.name,
+    opp.contact_name,
+    opp.company,
+    opp.email,
+    opp.phone,
+    opp.city,
+    opp.state,
+    opp.country,
+    opp.tags,
+    opp.salesperson,
+    opp.notes,
+    opp.extra_info,
+    opp.revenue_period,
+    opp.expected_closing,
+    opp.expected_revenue,
+    opp.recurring_revenue,
+    opp.probability,
+    opp.priority,
+    opp.card_color,
+    opp.outcome,
+  ];
+  return fields
+    .map((v) => (v == null ? '' : String(v)))
+    .join(' ');
+}
+
+function opportunityMatchesSearch(opp: Opportunity, query: string): boolean {
+  const q = query.trim();
+  if (!q) return true;
+  const lower = q.toLowerCase();
+  const haystack = opportunitySearchText(opp).toLowerCase();
+  if (haystack.includes(lower)) return true;
+  const qDigits = digitsOnly(q);
+  if (qDigits.length >= 2) {
+    const digitHaystack = digitsOnly(opportunitySearchText(opp));
+    if (digitHaystack.includes(qDigits)) return true;
+  }
+  return false;
 }
 
 function Stars({
@@ -438,6 +500,7 @@ export default function CrmPipelinePage() {
   const [tagSearch, setTagSearch] = useState('');
   const [tagDropdownOpen, setTagDropdownOpen] = useState(false);
   const [newTagName, setNewTagName] = useState('');
+  const [customTagNames, setCustomTagNames] = useState<string[]>([]);
   const quickAddRef = useRef<HTMLDivElement>(null);
   const tagPickerRef = useRef<HTMLDivElement>(null);
   const drawerRef = useRef<HTMLDivElement>(null);
@@ -512,6 +575,65 @@ export default function CrmPipelinePage() {
     const data = await res.json();
     if (res.ok) setActivities(data.activities || []);
   }, []);
+
+  useEffect(() => {
+    setCustomTagNames(readCustomCrmPipelineTags());
+  }, []);
+
+  const allTagNames = useMemo(
+    () => mergeBuiltinAndCustomTags(customTagNames),
+    [customTagNames]
+  );
+
+  const applyLeadTag = useCallback(
+    (name: string, opts?: { closeModal?: boolean }) => {
+      if (!oppDraft) return;
+      const trimmed = name.trim();
+      if (!trimmed) return;
+      const current = parseTags(oppDraft.tags);
+      if (current.some((t) => t.toLowerCase() === trimmed.toLowerCase())) {
+        toast.info(`"${trimmed}" is already on this lead`);
+        if (opts?.closeModal) {
+          setShowTagModal(false);
+          setTagSearch('');
+        }
+        return;
+      }
+      const next = mergeTagNames(current, trimmed);
+      setOppDraft((d) => d && { ...d, tags: tagsToString(next) });
+      toast.success(`Tag "${trimmed}" added — click Submit to save on the lead`);
+      if (opts?.closeModal) {
+        setShowTagModal(false);
+        setTagSearch('');
+      }
+    },
+    [oppDraft, toast]
+  );
+
+  const createLeadTag = useCallback(() => {
+    const trimmed = newTagName.trim();
+    if (!trimmed || !oppDraft) return;
+    const isNewInCatalog = !allTagNames.some((n) => n.toLowerCase() === trimmed.toLowerCase());
+    const updated = persistCustomCrmPipelineTag(trimmed);
+    setCustomTagNames(updated);
+    setNewTagName('');
+    const current = parseTags(oppDraft.tags);
+    if (current.some((t) => t.toLowerCase() === trimmed.toLowerCase())) {
+      toast.info(`"${trimmed}" is already on this lead`);
+      setShowTagModal(false);
+      setTagSearch('');
+      return;
+    }
+    const next = mergeTagNames(current, trimmed);
+    setOppDraft((d) => d && { ...d, tags: tagsToString(next) });
+    setShowTagModal(false);
+    setTagSearch('');
+    toast.success(
+      isNewInCatalog
+        ? `Tag "${trimmed}" added and saved to your tag list on this browser — click Submit to save on the lead`
+        : `Tag "${trimmed}" added — click Submit to save on the lead`
+    );
+  }, [newTagName, oppDraft, toast, allTagNames]);
 
   useEffect(() => {
     const init = async () => {
@@ -647,14 +769,9 @@ export default function CrmPipelinePage() {
     if (filterUnassigned) {
       list = list.filter((o) => !String(o.salesperson || '').trim());
     }
-    const q = search.trim().toLowerCase();
+    const q = search.trim();
     if (!q) return list;
-    return list.filter((o) =>
-      [o.name, o.contact_name, o.company, o.email, o.tags, o.salesperson]
-        .join(' ')
-        .toLowerCase()
-        .includes(q)
-    );
+    return list.filter((o) => opportunityMatchesSearch(o, q));
   }, [opportunities, search, myOnly, filterUnassigned, currentUser]);
 
   const oppsByStageBase = useMemo(() => {
@@ -938,6 +1055,9 @@ export default function CrmPipelinePage() {
     if (oppDraft.email !== base.email) updates.email = oppDraft.email;
     if (oppDraft.phone !== base.phone) updates.phone = oppDraft.phone;
     if (oppDraft.company !== base.company) updates.company = oppDraft.company;
+    if (oppDraft.city !== base.city) updates.city = oppDraft.city;
+    if (oppDraft.state !== base.state) updates.state = oppDraft.state;
+    if (oppDraft.country !== base.country) updates.country = oppDraft.country;
     if (oppDraft.expected_revenue !== base.expected_revenue) updates.expected_revenue = oppDraft.expected_revenue;
     if (oppDraft.recurring_revenue !== base.recurring_revenue) updates.recurring_revenue = oppDraft.recurring_revenue;
     if (oppDraft.revenue_period !== base.revenue_period) updates.revenue_period = oppDraft.revenue_period;
@@ -1097,10 +1217,10 @@ export default function CrmPipelinePage() {
 
   const filteredCatalogTags = useMemo(() => {
     const q = tagSearch.trim().toLowerCase();
-    const list = CRM_PIPELINE_TAG_NAMES;
+    const list = allTagNames;
     if (!q) return list;
     return list.filter((n) => n.toLowerCase().includes(q));
-  }, [tagSearch]);
+  }, [tagSearch, allTagNames]);
 
   const openActivityInline = (act: Activity, mode: 'reschedule' | 'edit') => {
     const fields = scheduledActivityFromLog(act);
@@ -2066,6 +2186,30 @@ export default function CrmPipelinePage() {
                             onChange={(e) => setOppDraft((d) => d && { ...d, company: e.target.value })}
                           />
                         </OdooFormRow>
+                        <OdooFormRow label="City">
+                          <div className="flex items-center gap-2">
+                            <MapPin className={PIPELINE_ICON} strokeWidth={1.75} />
+                            <input
+                              className={`text-sm py-1 flex-1 ${ODDO_INPUT}`}
+                              value={oppDraft.city}
+                              onChange={(e) => setOppDraft((d) => d && { ...d, city: e.target.value })}
+                            />
+                          </div>
+                        </OdooFormRow>
+                        <OdooFormRow label="State">
+                          <input
+                            className={`text-sm py-1 ${ODDO_INPUT}`}
+                            value={oppDraft.state}
+                            onChange={(e) => setOppDraft((d) => d && { ...d, state: e.target.value })}
+                          />
+                        </OdooFormRow>
+                        <OdooFormRow label="Country">
+                          <input
+                            className={`text-sm py-1 ${ODDO_INPUT}`}
+                            value={oppDraft.country}
+                            onChange={(e) => setOppDraft((d) => d && { ...d, country: e.target.value })}
+                          />
+                        </OdooFormRow>
                         <OdooFormRow label="Expected revenue">
                           <input
                             className={`text-sm py-1 ${ODDO_INPUT}`}
@@ -2142,7 +2286,13 @@ export default function CrmPipelinePage() {
                             </div>
                             {tagDropdownOpen && (
                               <div className="absolute left-0 right-0 top-full mt-1 z-40 max-h-48 overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg py-1 text-sm">
-                                {CRM_PIPELINE_TAG_NAMES.filter((n) => !parseTags(oppDraft.tags).includes(n))
+                                {allTagNames
+                                  .filter(
+                                    (n) =>
+                                      !parseTags(oppDraft.tags).some(
+                                        (t) => t.toLowerCase() === n.toLowerCase()
+                                      )
+                                  )
                                   .slice(0, 12)
                                   .map((n) => (
                                     <button
@@ -2150,8 +2300,7 @@ export default function CrmPipelinePage() {
                                       type="button"
                                       className="block w-full text-left px-3 py-1.5 hover:bg-slate-50"
                                       onClick={() => {
-                                        const next = mergeTagNames(parseTags(oppDraft.tags), n);
-                                        setOppDraft((d) => d && { ...d, tags: tagsToString(next) });
+                                        applyLeadTag(n);
                                         setTagDropdownOpen(false);
                                       }}
                                     >
@@ -2634,7 +2783,7 @@ export default function CrmPipelinePage() {
                 />
               </label>
               <p className="text-[10px] text-slate-500 mt-1">
-                1–{filteredCatalogTags.length} / {CRM_PIPELINE_TAG_NAMES.length}
+                1–{filteredCatalogTags.length} / {allTagNames.length}
               </p>
             </div>
             <div className="flex-1 overflow-y-auto min-h-[200px]">
@@ -2646,21 +2795,40 @@ export default function CrmPipelinePage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredCatalogTags.map((name) => (
-                    <tr
-                      key={name}
-                      className="border-t border-slate-100 hover:bg-slate-50 cursor-pointer"
-                      onClick={() => {
-                        const next = mergeTagNames(parseTags(oppDraft.tags), name);
-                        setOppDraft((d) => d && { ...d, tags: tagsToString(next) });
-                      }}
-                    >
-                      <td className="px-4 py-2">{name}</td>
-                      <td className="px-4 py-2">
-                        <span className={`inline-block w-4 h-4 rounded-full border ${getTagClassName(name)}`} />
-                      </td>
-                    </tr>
-                  ))}
+                  {filteredCatalogTags.map((name) => {
+                    const selected = parseTags(oppDraft.tags).some(
+                      (t) => t.toLowerCase() === name.toLowerCase()
+                    );
+                    const isCustom = customTagNames.some((t) => t.toLowerCase() === name.toLowerCase());
+                    return (
+                      <tr
+                        key={name}
+                        className={`border-t border-slate-100 cursor-pointer transition-colors ${
+                          selected
+                            ? 'bg-violet-50/90 dark:bg-violet-950/30'
+                            : 'hover:bg-slate-50 dark:hover:bg-slate-800/60'
+                        }`}
+                        onClick={() => applyLeadTag(name, { closeModal: true })}
+                      >
+                        <td className="px-4 py-2">
+                          <span className="inline-flex items-center gap-2">
+                            {selected && (
+                              <Check size={14} className="shrink-0 text-violet-600" strokeWidth={3} />
+                            )}
+                            <span className={selected ? 'font-semibold text-violet-900 dark:text-violet-100' : ''}>
+                              {name}
+                            </span>
+                            {isCustom && (
+                              <span className="text-[9px] font-bold uppercase text-slate-400">Custom</span>
+                            )}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2">
+                          <span className={`inline-block w-4 h-4 rounded-full border ${getTagClassName(name)}`} />
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -2674,13 +2842,7 @@ export default function CrmPipelinePage() {
               <button
                 type="button"
                 className="px-3 py-1.5 rounded-lg bg-[var(--theme-primary)] text-xs font-bold text-gray-900"
-                onClick={() => {
-                  if (!newTagName.trim()) return;
-                  const next = mergeTagNames(parseTags(oppDraft.tags), newTagName.trim());
-                  setOppDraft((d) => d && { ...d, tags: tagsToString(next) });
-                  setNewTagName('');
-                  toast.success('Tag added');
-                }}
+                onClick={() => createLeadTag()}
               >
                 Create New
               </button>

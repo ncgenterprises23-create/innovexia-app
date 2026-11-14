@@ -20,11 +20,18 @@ export const useToast = () => {
   return ctx;
 };
 
+let toastIdSeq = 0;
+
+function nextToastId(): string {
+  toastIdSeq += 1;
+  return `${Date.now()}-${toastIdSeq}`;
+}
+
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
 
   const addToast = (message: string, type: ToastType = 'info') => {
-    const id = String(Date.now());
+    const id = nextToastId();
     setToasts((t) => [{ id, message, type }, ...t]);
     setTimeout(() => {
       setToasts((t) => t.filter((x) => x.id !== id));

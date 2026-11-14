@@ -62,6 +62,51 @@ const FALLBACK_CLASSES = [
 
 export const CRM_PIPELINE_TAG_NAMES = Object.keys(TAG_STYLE);
 
+const CUSTOM_TAGS_STORAGE_KEY = 'crm_pipeline_custom_tags_v1';
+
+export function readCustomCrmPipelineTags(): string[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = window.localStorage.getItem(CUSTOM_TAGS_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((t) => (typeof t === 'string' ? t.trim() : ''))
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+/** Save a user-created tag for reuse in Search: Tags (browser localStorage). */
+export function persistCustomCrmPipelineTag(name: string): string[] {
+  const trimmed = name.trim();
+  if (!trimmed || typeof window === 'undefined') return readCustomCrmPipelineTags();
+  const lower = trimmed.toLowerCase();
+  if (CRM_PIPELINE_TAG_NAMES.some((n) => n.toLowerCase() === lower)) {
+    return readCustomCrmPipelineTags();
+  }
+  const existing = readCustomCrmPipelineTags();
+  if (existing.some((t) => t.toLowerCase() === lower)) return existing;
+  const next = [...existing, trimmed];
+  window.localStorage.setItem(CUSTOM_TAGS_STORAGE_KEY, JSON.stringify(next));
+  return next;
+}
+
+export function mergeBuiltinAndCustomTags(custom: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const n of [...CRM_PIPELINE_TAG_NAMES, ...custom]) {
+    const trimmed = n.trim();
+    const key = trimmed.toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(trimmed);
+  }
+  return out;
+}
+
 export function getTagClassName(tag: string): string {
   const trimmed = tag.trim();
   if (TAG_STYLE[trimmed]) return TAG_STYLE[trimmed];

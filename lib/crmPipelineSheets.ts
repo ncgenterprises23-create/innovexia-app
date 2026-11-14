@@ -25,7 +25,18 @@ const STAGE_HEADERS = ['id', 'pipeline_id', 'name', 'sequence', 'active', 'is_wo
 const OPPORTUNITY_HEADERS = [
   'id', 'pipeline_id', 'stage_id', 'name', 'contact_name', 'email', 'phone', 'company',
   'expected_revenue', 'recurring_revenue', 'revenue_period', 'probability', 'priority', 'tags',
-  'salesperson', 'expected_closing', 'notes', 'extra_info', 'card_color', 'outcome', 'created_at', 'updated_at', 'created_by',
+  'salesperson',
+  'expected_closing',
+  'notes',
+  'extra_info',
+  'city',
+  'state',
+  'country',
+  'card_color',
+  'outcome',
+  'created_at',
+  'updated_at',
+  'created_by',
 ];
 const ACTIVITY_HEADERS = [
   'id', 'opportunity_id', 'pipeline_id', 'event_type', 'summary', 'body', 'activity_type',
@@ -153,27 +164,26 @@ async function ensurePipelineOptionalColumns(sheets: any): Promise<void> {
 }
 
 async function ensureOpportunityOptionalColumns(sheets: any): Promise<void> {
-  if ((global as any).crm_pipeline_opp_extra_cols) return;
+  if ((global as any).crm_pipeline_opp_extra_cols_v3) return;
   const title = CRM_PIPELINE_SHEETS.OPPORTUNITIES;
   const headerRes = await sheets.spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_ID,
     range: `'${title}'!A1:ZZ1`,
   });
   let headers = (headerRes.data.values?.[0] || []) as string[];
-  const extra = ['card_color', 'extra_info'] as const;
+  const extra = ['card_color', 'extra_info', 'city', 'state', 'country'] as const;
   for (const colName of extra) {
-    if (!headers.includes(colName)) {
-      const col = headers.length;
-      await sheets.spreadsheets.values.update({
-        spreadsheetId: SPREADSHEET_ID,
-        range: `'${title}'!${sheetColLetter(col)}1`,
-        valueInputOption: 'RAW',
-        requestBody: { values: [[colName]] },
-      });
-      headers = [...headers, colName];
-    }
+    if (sheetHeaderColumnIndex(headers, colName) >= 0) continue;
+    const col = headers.length;
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SPREADSHEET_ID,
+      range: `'${title}'!${sheetColLetter(col)}1`,
+      valueInputOption: 'RAW',
+      requestBody: { values: [[colName]] },
+    });
+    headers = [...headers, colName];
   }
-  (global as any).crm_pipeline_opp_extra_cols = true;
+  (global as any).crm_pipeline_opp_extra_cols_v3 = true;
 }
 
 async function seedDefaultPipelineIfEmpty(sheets: any): Promise<void> {
@@ -297,6 +307,29 @@ async function appendRow(sheetName: string, headers: string[], obj: Record<strin
   await appendRowWithClient(sheets, sheetName, headers, obj);
 }
 
+function sheetHeaderColumnIndex(headers: string[], fieldKey: string): number {
+  const exact = headers.indexOf(fieldKey);
+  if (exact >= 0) return exact;
+  const lower = fieldKey.toLowerCase();
+  return headers.findIndex((h) => String(h || '').toLowerCase() === lower);
+}
+
+function normalizeCrmOpportunityRow(row: Record<string, any>): Record<string, any> {
+  const pick = (canonical: string, variants: string[]) => {
+    for (const k of variants) {
+      const v = row[k];
+      if (v != null && String(v).trim() !== '') return String(v);
+    }
+    return '';
+  };
+  return {
+    ...row,
+    city: pick('city', ['city', 'City']),
+    state: pick('state', ['state', 'State']),
+    country: pick('country', ['country', 'Country']),
+  };
+}
+
 async function updateRowById(
   sheetName: string,
   id: string,
@@ -324,7 +357,7 @@ async function updateRowById(
   const data = Object.entries(updates)
     .filter(([, value]) => value !== undefined)
     .map(([key, value]) => {
-      const colIndex = headers.indexOf(key);
+      const colIndex = sheetHeaderColumnIndex(headers, key);
       if (colIndex === -1) return null;
       return {
         range: `'${sheetName}'!${sheetColLetter(colIndex)}${actualRow}`,
@@ -531,19 +564,36 @@ export async function getCrmOpportunities(
       const sp = String(o.salesperson || '').toLowerCase();
       const mine = options.mine.toLowerCase();
       return sp === mine || sp.includes(mine);
-    });
+    })
+    .map((o) => normalizeCrmOpportunityRow({ ...o, id: String(o.id) }));
 }
 
 export async function getCrmOpportunityById(id: string): Promise<any | null> {
   await ensureCrmPipelineSheetsInitialized();
   const { rows } = await readSheetRows(CRM_PIPELINE_SHEETS.OPPORTUNITIES);
-  return rows.find((o) => String(o.id) === String(id)) ?? null;
+  const row = rows.find((o) => String(o.id) === String(id));
+  return row ? normalizeCrmOpportunityRow(row) : null;
 }
 
 const LOGGABLE_FIELDS = [
-  'name', 'contact_name', 'email', 'phone', 'company', 'expected_revenue',
-  'recurring_revenue', 'revenue_period', 'probability', 'priority', 'tags',
-  'salesperson', 'expected_closing', 'notes', 'extra_info',
+  'name',
+  'contact_name',
+  'email',
+  'phone',
+  'company',
+  'city',
+  'state',
+  'country',
+  'expected_revenue',
+  'recurring_revenue',
+  'revenue_period',
+  'probability',
+  'priority',
+  'tags',
+  'salesperson',
+  'expected_closing',
+  'notes',
+  'extra_info',
 ];
 
 export async function createCrmOpportunity(
@@ -562,6 +612,9 @@ export async function createCrmOpportunity(
     email: data.email || '',
     phone: data.phone || '',
     company: data.company || '',
+    city: data.city || '',
+    state: data.state || '',
+    country: data.country || '',
     expected_revenue: data.expected_revenue ?? '',
     recurring_revenue: data.recurring_revenue ?? '',
     revenue_period: data.revenue_period || '',
