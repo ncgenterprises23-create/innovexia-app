@@ -45,6 +45,7 @@ const ACTIVITY_HEADERS = [
 ];
 
 const ensuredKey = 'crm_pipeline_sheets_v2';
+const ensuredCoreKey = 'crm_pipeline_core_v1';
 const spreadsheetMetaKey = 'crm_pipeline_spreadsheet_meta_v1';
 
 type SheetDef = { title: string; headers: string[] };
@@ -57,6 +58,7 @@ const CRM_SHEET_DEFS: SheetDef[] = [
 ];
 
 let ensureInFlight: Promise<void> | null = null;
+let ensureCoreInFlight: Promise<void> | null = null;
 
 const PIPELINES_CACHE_MS = 60_000;
 let pipelinesCache: { at: number; data: any[] } | null = null;
@@ -137,6 +139,38 @@ function gridRowCount(spreadsheet: any, title: string): number {
   return sheet?.properties?.gridProperties?.rowCount ?? 1000;
 }
 
+function gridColumnCount(spreadsheet: any, title: string): number {
+  const sheet = spreadsheet.data.sheets?.find((s: any) => s.properties?.title === title);
+  return sheet?.properties?.gridProperties?.columnCount ?? 26;
+}
+
+async function ensureSheetHasColumnCapacity(
+  sheets: any,
+  sheetTitle: string,
+  minColumns: number
+): Promise<void> {
+  let spreadsheet = await getSpreadsheetMeta(sheets);
+  const current = gridColumnCount(spreadsheet, sheetTitle);
+  if (minColumns <= current) return;
+  const sheetId = sheetIdByTitle(spreadsheet, sheetTitle);
+  if (sheetId == null) return;
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId: SPREADSHEET_ID,
+    requestBody: {
+      requests: [
+        {
+          appendDimension: {
+            sheetId,
+            dimension: 'COLUMNS',
+            length: minColumns - current,
+          },
+        },
+      ],
+    },
+  });
+  await getSpreadsheetMeta(sheets, true);
+}
+
 async function ensureAllCrmPipelineSheets(sheets: any): Promise<void> {
   let spreadsheet = await getSpreadsheetMeta(sheets);
   const titles = new Set(
@@ -147,7 +181,17 @@ async function ensureAllCrmPipelineSheets(sheets: any): Promise<void> {
     await sheets.spreadsheets.batchUpdate({
       spreadsheetId: SPREADSHEET_ID,
       requestBody: {
-        requests: missing.map((d) => ({ addSheet: { properties: { title: d.title } } })),
+        requests: missing.map((d) => ({
+          addSheet: {
+            properties: {
+              title: d.title,
+              gridProperties: {
+                rowCount: 1000,
+                columnCount: Math.max(32, d.headers.length + 4),
+              },
+            },
+          },
+        })),
       },
     });
     spreadsheet = await getSpreadsheetMeta(sheets, true);
@@ -182,9 +226,11 @@ async function ensurePipelineOptionalColumns(sheets: any): Promise<void> {
   });
   let headers = (headerRes.data.values?.[0] || []) as string[];
   if (!headers.includes('owner_username')) {
+    const colIndex = headers.length;
+    await ensureSheetHasColumnCapacity(sheets, title, colIndex + 1);
     await sheets.spreadsheets.values.update({
       spreadsheetId: SPREADSHEET_ID,
-      range: `'${title}'!${sheetColLetter(headers.length)}1`,
+      range: `'${title}'!${sheetColLetter(colIndex)}1`,
       valueInputOption: 'RAW',
       requestBody: { values: [['owner_username']] },
     });
@@ -205,6 +251,7 @@ async function ensureOpportunityOptionalColumns(sheets: any): Promise<void> {
   for (const colName of extra) {
     if (sheetHeaderColumnIndex(headers, colName) >= 0) continue;
     const col = headers.length;
+    await ensureSheetHasColumnCapacity(sheets, title, col + 1);
     await sheets.spreadsheets.values.update({
       spreadsheetId: SPREADSHEET_ID,
       range: `'${title}'!${sheetColLetter(col)}1`,
@@ -245,10 +292,26 @@ async function seedDefaultPipelineIfEmpty(sheets: any): Promise<void> {
   }
 }
 
-async function runEnsureCrmPipelineSheetsInitialized(): Promise<void> {
+async function runEnsureCrmPipelineCore(): Promise<void> {
   const sheets = await getGoogleSheetsClient();
   await ensureAllCrmPipelineSheets(sheets);
   await ensurePipelineOptionalColumns(sheets);
+  (global as any)[ensuredCoreKey] = true;
+}
+
+export async function ensureCrmPipelineCore(): Promise<void> {
+  if ((global as any)[ensuredCoreKey]) return;
+  if (!ensureCoreInFlight) {
+    ensureCoreInFlight = runEnsureCrmPipelineCore().finally(() => {
+      ensureCoreInFlight = null;
+    });
+  }
+  await ensureCoreInFlight;
+}
+
+async function runEnsureCrmPipelineSheetsInitialized(): Promise<void> {
+  await ensureCrmPipelineCore();
+  const sheets = await getGoogleSheetsClient();
   await ensureOpportunityOptionalColumns(sheets);
   await seedDefaultPipelineIfEmpty(sheets);
   (global as any)[ensuredKey] = true;
@@ -430,7 +493,7 @@ export async function appendCrmPipelineLog(entry: Record<string, any>): Promise<
 }
 
 export async function getCrmPipelines(options?: { forceRefresh?: boolean }): Promise<any[]> {
-  await ensureCrmPipelineSheetsInitialized();
+  await ensureCrmPipelineCore();
   const now = Date.now();
   if (!options?.forceRefresh && pipelinesCache && now - pipelinesCache.at < PIPELINES_CACHE_MS) {
     return pipelinesCache.data;
@@ -504,7 +567,7 @@ export async function getCrmPipelineStages(
   pipelineId: string,
   options?: { forceRefresh?: boolean }
 ): Promise<any[]> {
-  await ensureCrmPipelineSheetsInitialized();
+  await ensureCrmPipelineCore();
   const pid = String(pipelineId);
   const now = Date.now();
   if (!options?.forceRefresh) {
