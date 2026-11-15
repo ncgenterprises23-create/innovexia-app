@@ -1,5 +1,5 @@
 import { SPREADSHEET_IDS, getGoogleSheetsClient, rowToObject, objectToRow } from '@/lib/sheets';
-import { formatToSheetDate } from '@/lib/dateUtils';
+import { formatToSheetDate, parseSheetDate } from '@/lib/dateUtils';
 import { sheetColLetter, sheetNewId } from '@/lib/sheetColLetter';
 import { compareBySequenceThenId } from '@/lib/crmPipelineStageSort';
 
@@ -74,6 +74,17 @@ type BoardCacheEntry = {
 };
 const boardCache = new Map<string, BoardCacheEntry>();
 
+const DASHBOARD_CACHE_MS = 60_000;
+type DashboardCacheEntry = {
+  at: number;
+  opportunities: any[];
+  wonDatesByOppId: Record<string, string>;
+};
+const dashboardCache = new Map<string, DashboardCacheEntry>();
+
+const ACTIVITY_LOG_CACHE_MS = 60_000;
+let activityLogCache: { at: number; rows: any[] } | null = null;
+
 function invalidateCrmPipelinesCache(): void {
   pipelinesCache = null;
 }
@@ -89,11 +100,17 @@ export function invalidateCrmStagesCache(pipelineId?: string): void {
 export function invalidateCrmBoardCache(pipelineId?: string): void {
   if (!pipelineId) {
     boardCache.clear();
+    dashboardCache.clear();
+    activityLogCache = null;
     return;
   }
+  activityLogCache = null;
   const prefix = `${String(pipelineId)}|`;
   for (const key of boardCache.keys()) {
     if (key.startsWith(prefix)) boardCache.delete(key);
+  }
+  for (const key of dashboardCache.keys()) {
+    if (key.startsWith(prefix)) dashboardCache.delete(key);
   }
 }
 
@@ -1068,12 +1085,89 @@ export async function markCrmActivityDone(activityId: string, user?: CrmPipeline
   return { id: activityId, is_done: 'Y', done_at: doneAt };
 }
 
-export async function getOpenActivitiesForPipeline(pipelineId: string): Promise<any[]> {
+export async function getCrmActivityLogRows(options?: { forceRefresh?: boolean }): Promise<any[]> {
+  await ensureCrmPipelineSheetsInitialized();
+  const now = Date.now();
+  if (!options?.forceRefresh && activityLogCache && now - activityLogCache.at < ACTIVITY_LOG_CACHE_MS) {
+    return activityLogCache.rows;
+  }
   const { rows } = await readSheetRows(CRM_PIPELINE_SHEETS.ACTIVITY_LOG);
+  activityLogCache = { at: now, rows };
+  return rows;
+}
+
+export async function getCrmActivitiesForPipelines(
+  pipelineIds: string[],
+  options?: { forceRefresh?: boolean }
+): Promise<any[]> {
+  const rows = await getCrmActivityLogRows(options);
+  if (pipelineIds.length === 0) return [];
+  const idSet = new Set(pipelineIds.map((id) => String(id)));
+  return rows.filter((r) => idSet.has(String(r.pipeline_id)));
+}
+
+export async function getOpenActivitiesForPipeline(pipelineId: string): Promise<any[]> {
+  const rows = await getCrmActivityLogRows();
   return rows.filter(
     (r) =>
       String(r.pipeline_id) === String(pipelineId) &&
       r.event_type === 'activity' &&
       String(r.is_done || 'N').toUpperCase() !== 'Y'
   );
+}
+
+export async function getCrmOpportunitiesForDashboard(
+  pipelineId: string,
+  options?: { mine?: string }
+): Promise<any[]> {
+  return getCrmOpportunities(pipelineId, { mine: options?.mine });
+}
+
+async function buildCrmWonDatesByOpportunityId(
+  pipelineId: string,
+  opportunities: any[]
+): Promise<Record<string, string>> {
+  await ensureCrmPipelineSheetsInitialized();
+  const { rows } = await readSheetRows(CRM_PIPELINE_SHEETS.ACTIVITY_LOG);
+  const map: Record<string, string> = {};
+  const parseActTime = (iso: string | null) => (iso ? new Date(iso).getTime() : 0);
+  for (const r of rows) {
+    if (String(r.pipeline_id) !== String(pipelineId)) continue;
+    if (String(r.event_type).toLowerCase() !== 'won') continue;
+    const oid = String(r.opportunity_id);
+    const at = parseSheetDate(r.created_at);
+    if (!at) continue;
+    const prev = map[oid];
+    if (!prev || parseActTime(at) >= parseActTime(prev)) map[oid] = at;
+  }
+  for (const o of opportunities) {
+    if (String(o.outcome || '').toLowerCase() !== 'won') continue;
+    const oid = String(o.id);
+    if (map[oid]) continue;
+    const fb = parseSheetDate(o.updated_at) || parseSheetDate(o.created_at);
+    if (fb) map[oid] = fb;
+  }
+  return map;
+}
+
+export async function getCrmPipelineDashboardData(
+  pipelineId: string,
+  options?: { mine?: string; forceRefresh?: boolean }
+): Promise<{ opportunities: any[]; wonDatesByOppId: Record<string, string> }> {
+  const mineKey = options?.mine?.trim() ? String(options.mine).trim() : '';
+  const key = `${String(pipelineId)}|dash|${mineKey}`;
+  const now = Date.now();
+  if (!options?.forceRefresh) {
+    const hit = dashboardCache.get(key);
+    if (hit && now - hit.at < DASHBOARD_CACHE_MS) {
+      return {
+        opportunities: hit.opportunities,
+        wonDatesByOppId: hit.wonDatesByOppId,
+      };
+    }
+  }
+  const opportunities = await getCrmOpportunitiesForDashboard(pipelineId, { mine: options?.mine });
+  const wonDatesByOppId = await buildCrmWonDatesByOpportunityId(pipelineId, opportunities);
+  dashboardCache.set(key, { at: now, opportunities, wonDatesByOppId });
+  return { opportunities, wonDatesByOppId };
 }

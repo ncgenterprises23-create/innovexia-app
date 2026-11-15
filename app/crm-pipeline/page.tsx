@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import LayoutWrapper from '@/components/LayoutWrapper';
+import CrmPipelineDashboard from '@/components/crm-pipeline/CrmPipelineDashboard';
 import { ensureSessionId } from '@/utils/session';
 import { useToast } from '@/components/ToastProvider';
 import Icon from '@/components/Icon';
@@ -41,6 +42,7 @@ import {
   MessageSquare,
   ListTodo,
   Loader2,
+  LayoutDashboard,
   type LucideIcon,
 } from 'lucide-react';
 import {
@@ -480,6 +482,7 @@ export default function CrmPipelinePage() {
   const [filterUnassigned, setFilterUnassigned] = useState(false);
   const [search, setSearch] = useState('');
   const [stageLeadVisible, setStageLeadVisible] = useState<Record<string, number>>({});
+  const [viewMode, setViewMode] = useState<'board' | 'dashboard'>('board');
   const [filterPanelOpen, setFilterPanelOpen] = useState(false);
   const [pipelineDropdownOpen, setPipelineDropdownOpen] = useState(false);
   const [stageMenuAnchor, setStageMenuAnchor] = useState<{ top: number; left: number } | null>(null);
@@ -724,7 +727,7 @@ export default function CrmPipelinePage() {
   }, [search, myOnly, filterUnassigned, stageFollowUpFilters]);
 
   useEffect(() => {
-    if (!selectedPipelineId) return;
+    if (!selectedPipelineId || viewMode !== 'board') return;
     let cancelled = false;
     loadBoard(selectedPipelineId).catch((e) => {
       if (cancelled) return;
@@ -738,7 +741,7 @@ export default function CrmPipelinePage() {
     return () => {
       cancelled = true;
     };
-  }, [selectedPipelineId, loadBoard]);
+  }, [selectedPipelineId, loadBoard, viewMode]);
 
   useEffect(() => {
     if (selectedOpp) loadActivities(selectedOpp.id);
@@ -1643,8 +1646,26 @@ export default function CrmPipelinePage() {
               </div>
             )}
           </div>
+
+          <button
+            type="button"
+            onClick={() => setViewMode((m) => (m === 'board' ? 'dashboard' : 'board'))}
+            className={`shrink-0 inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-bold ${LIGHT_SURFACE} ${DASH_SHADOW} ${
+              viewMode === 'dashboard' ? 'ring-2 ring-[var(--theme-primary)]/50' : ''
+            }`}
+          >
+            <LayoutDashboard size={18} className="text-[var(--theme-primary)]" />
+            {viewMode === 'dashboard' ? 'Back to Stages' : 'Pipeline Dashboard'}
+          </button>
         </div>
 
+        {viewMode === 'dashboard' ? (
+          <CrmPipelineDashboard
+            pipelines={pipelines}
+            myOnly={myOnly}
+            currentUsername={currentUser?.username}
+          />
+        ) : (
         <div className="flex-1 overflow-x-auto overflow-y-hidden px-4 py-3 min-h-0 bg-[var(--theme-light)] dark:bg-slate-900">
           <div className="flex gap-2 h-full min-h-0 min-w-max pb-2 items-stretch">
             {displayStages.map((stage) => (
@@ -2060,6 +2081,7 @@ export default function CrmPipelinePage() {
             </div>
           </div>
         </div>
+        )}
       </div>
 
       <AnimatePresence>
