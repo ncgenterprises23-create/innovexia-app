@@ -111,6 +111,8 @@ type Opportunity = {
   extra_info?: string;
   card_color?: string;
   outcome?: string;
+  created_at?: string;
+  updated_at?: string;
 };
 type Activity = {
   id: string;
@@ -302,6 +304,26 @@ function TagPills({ tags, max = 4 }: { tags: string[]; max?: number }) {
       ))}
     </div>
   );
+}
+
+function opportunityRecencyMs(opp: Pick<Opportunity, 'created_at' | 'updated_at' | 'id'>): number {
+  const created = parseSheetDate(opp.created_at);
+  if (created) {
+    const t = new Date(created).getTime();
+    if (Number.isFinite(t)) return t;
+  }
+  const updated = parseSheetDate(opp.updated_at);
+  if (updated) {
+    const t = new Date(updated).getTime();
+    if (Number.isFinite(t)) return t;
+  }
+  return 0;
+}
+
+function compareOpportunitiesNewestFirst(a: Opportunity, b: Opportunity): number {
+  const diff = opportunityRecencyMs(b) - opportunityRecencyMs(a);
+  if (diff !== 0) return diff;
+  return String(b.id).localeCompare(String(a.id));
 }
 
 /** CRM display: `19 Nov 26` */
@@ -851,6 +873,9 @@ export default function CrmPipelinePage() {
     for (const s of stages) map[s.id] = [];
     for (const o of baseFilteredOpps) {
       if (map[o.stage_id]) map[o.stage_id].push(o);
+    }
+    for (const sid of Object.keys(map)) {
+      map[sid].sort(compareOpportunitiesNewestFirst);
     }
     return map;
   }, [stages, baseFilteredOpps]);

@@ -22,22 +22,35 @@ const PIPELINE_HEADERS = [
   'owner_username',
 ];
 const STAGE_HEADERS = ['id', 'pipeline_id', 'name', 'sequence', 'active', 'is_won', 'is_lost', 'created_at'];
-const OPPORTUNITY_HEADERS = [
-  'id', 'pipeline_id', 'stage_id', 'name', 'contact_name', 'email', 'phone', 'company',
-  'expected_revenue', 'recurring_revenue', 'revenue_period', 'probability', 'priority', 'tags',
+/** Must match CRM Opportunities sheet row 1 (manual edits use City/State/Country). */
+export const OPPORTUNITY_HEADERS = [
+  'id',
+  'pipeline_id',
+  'stage_id',
+  'name',
+  'contact_name',
+  'email',
+  'phone',
+  'company',
+  'expected_revenue',
+  'recurring_revenue',
+  'revenue_period',
+  'probability',
+  'priority',
+  'tags',
   'salesperson',
   'expected_closing',
   'notes',
-  'extra_info',
-  'city',
-  'state',
-  'country',
-  'card_color',
   'outcome',
   'created_at',
   'updated_at',
   'created_by',
-];
+  'extra_info',
+  'City',
+  'State',
+  'Country',
+  'card_color',
+] as const;
 const ACTIVITY_HEADERS = [
   'id', 'opportunity_id', 'pipeline_id', 'event_type', 'summary', 'body', 'activity_type',
   'due_date', 'assigned_to', 'is_done', 'done_at', 'field_name', 'old_value', 'new_value',
@@ -53,7 +66,7 @@ type SheetDef = { title: string; headers: string[] };
 const CRM_SHEET_DEFS: SheetDef[] = [
   { title: CRM_PIPELINE_SHEETS.PIPELINES, headers: PIPELINE_HEADERS },
   { title: CRM_PIPELINE_SHEETS.STAGES, headers: STAGE_HEADERS },
-  { title: CRM_PIPELINE_SHEETS.OPPORTUNITIES, headers: OPPORTUNITY_HEADERS },
+  { title: CRM_PIPELINE_SHEETS.OPPORTUNITIES, headers: [...OPPORTUNITY_HEADERS] },
   { title: CRM_PIPELINE_SHEETS.ACTIVITY_LOG, headers: ACTIVITY_HEADERS },
 ];
 
@@ -264,7 +277,7 @@ async function ensureOpportunityOptionalColumns(sheets: any): Promise<void> {
     range: `'${title}'!A1:ZZ1`,
   });
   let headers = (headerRes.data.values?.[0] || []) as string[];
-  const extra = ['card_color', 'extra_info', 'city', 'state', 'country'] as const;
+  const extra = ['outcome', 'extra_info', 'City', 'State', 'Country', 'card_color'] as const;
   for (const colName of extra) {
     if (sheetHeaderColumnIndex(headers, colName) >= 0) continue;
     const col = headers.length;
@@ -404,11 +417,16 @@ async function appendRowWithClient(
     await getSpreadsheetMeta(sheets, true);
   }
 
+  const rowValues =
+    sheetName === CRM_PIPELINE_SHEETS.OPPORTUNITIES
+      ? objectToRowForSheetHeaders(headers, obj)
+      : objectToRow(headers, obj);
+
   await sheets.spreadsheets.values.update({
     spreadsheetId: SPREADSHEET_ID,
     range: `'${sheetName}'!A${startRow}:${endCol}${endRow}`,
     valueInputOption: 'USER_ENTERED',
-    requestBody: { values: [objectToRow(headers, obj)] },
+    requestBody: { values: [rowValues] },
   });
 }
 
@@ -422,6 +440,30 @@ function sheetHeaderColumnIndex(headers: string[], fieldKey: string): number {
   if (exact >= 0) return exact;
   const lower = fieldKey.toLowerCase();
   return headers.findIndex((h) => String(h || '').toLowerCase() === lower);
+}
+
+/** Map opportunity fields onto the live sheet header row (case-insensitive keys). */
+function objectToRowForSheetHeaders(headers: string[], obj: Record<string, any>): any[] {
+  return headers.map((header) => {
+    let value = obj[header];
+    if (value === undefined || value === null) {
+      const lower = String(header || '').toLowerCase();
+      value = obj[lower];
+    }
+    if (typeof value === 'object' && value !== null) return JSON.stringify(value);
+    if (value === null || value === undefined) return '';
+    return value;
+  });
+}
+
+async function getCrmOpportunitySheetHeaders(sheets: any): Promise<string[]> {
+  await ensureOpportunityOptionalColumns(sheets);
+  const headerRes = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `'${CRM_PIPELINE_SHEETS.OPPORTUNITIES}'!A1:ZZ1`,
+  });
+  const headers = (headerRes.data.values?.[0] || []) as string[];
+  return headers.length ? headers : [...OPPORTUNITY_HEADERS];
 }
 
 function normalizeCrmOpportunityRow(row: Record<string, any>): Record<string, any> {
@@ -788,7 +830,9 @@ export async function createCrmOpportunity(
     updated_at: now,
     created_by: user?.username || '',
   };
-  await appendRow(CRM_PIPELINE_SHEETS.OPPORTUNITIES, OPPORTUNITY_HEADERS, opp);
+  const sheets = await getGoogleSheetsClient();
+  const sheetHeaders = await getCrmOpportunitySheetHeaders(sheets);
+  await appendRowWithClient(sheets, CRM_PIPELINE_SHEETS.OPPORTUNITIES, sheetHeaders, opp);
   await appendCrmPipelineLog({
     opportunity_id: id,
     pipeline_id: data.pipeline_id,
