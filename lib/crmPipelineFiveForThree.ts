@@ -72,10 +72,14 @@ function activityDoneAt(act: any): string | null {
   return parseSheetDate(act.done_at) || parseSheetDate(act.created_at);
 }
 
-function isCompletedMeeting(act: any): boolean {
+/** CRM follow-ups: todo, email, call, and meeting all count as a unique “meeting” for 5 For 3 when marked done. */
+const FOLLOW_UP_ACTIVITY_TYPES = new Set(['todo', 'email', 'call', 'meeting']);
+
+function isCompletedFollowUp(act: any): boolean {
   if (String(act.event_type || '').toLowerCase() !== 'activity') return false;
-  if (String(act.activity_type || '').toLowerCase() !== 'meeting') return false;
-  return String(act.is_done || 'N').toUpperCase() === 'Y';
+  if (String(act.is_done || 'N').toUpperCase() !== 'Y') return false;
+  const type = String(act.activity_type || '').toLowerCase();
+  return FOLLOW_UP_ACTIVITY_TYPES.has(type);
 }
 
 function weekdayShort(year: number, monthIndex: number, day: number): string {
@@ -217,7 +221,7 @@ export function buildCrmPipelineFiveForThree(params: BuildFiveForThreeParams): F
       }
 
       for (const act of activities) {
-        if (!isCompletedMeeting(act)) continue;
+        if (!isCompletedFollowUp(act)) continue;
         const at = activityDoneAt(act);
         if (!crmInRange(at, def.start, def.end)) continue;
         const opp = oppById.get(String(act.opportunity_id));

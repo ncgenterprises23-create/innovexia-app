@@ -11,7 +11,8 @@ import {
   type TimeColumn,
   presetRangeLabel,
 } from '@/lib/crmPipelineDashboard';
-import { FileDown, Loader2 } from 'lucide-react';
+import { FileDown, Info, Loader2 } from 'lucide-react';
+import CrmPipelineDashboardInfoSidebar from '@/components/crm-pipeline/CrmPipelineDashboardInfoSidebar';
 import { exportCrmPipelineDashboardPdf } from '@/lib/crmPipelineDashboardPdf';
 import type { FiveForThreeMonth } from '@/lib/crmPipelineFiveForThree';
 import { exportCrmPipelineFiveForThreePdf } from '@/lib/crmPipelineFiveForThreePdf';
@@ -164,6 +165,7 @@ export default function CrmPipelineDashboard({
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<DashboardPayload | null>(null);
   const [pdfBusy, setPdfBusy] = useState(false);
+  const [infoOpen, setInfoOpen] = useState(false);
 
   const effectiveGranularity = reportMode === 'fiveFor3' ? 'month' : granularity;
 
@@ -285,12 +287,29 @@ export default function CrmPipelineDashboard({
     'w-full rounded-md border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 px-2 py-2 text-sm';
 
   return (
+  <>
+    <CrmPipelineDashboardInfoSidebar
+      open={infoOpen}
+      onClose={() => setInfoOpen(false)}
+      activeReport={reportMode}
+    />
     <div className="flex flex-1 min-h-0 gap-4 px-4 py-3 overflow-hidden">
       <aside
         className={`w-[14.5rem] shrink-0 flex flex-col gap-4 p-3 rounded-lg max-h-[calc(100vh-8.5rem)] overflow-y-auto custom-scrollbar ${LIGHT_SURFACE} ${DASH_SHADOW}`}
       >
-        <div className="text-xs font-black uppercase tracking-wide text-slate-700 dark:text-slate-200">
-          Filters
+        <div className="flex items-center justify-between gap-2 -mt-0.5">
+          <div className="text-xs font-black uppercase tracking-wide text-slate-700 dark:text-slate-200">
+            Filters
+          </div>
+          <button
+            type="button"
+            onClick={() => setInfoOpen(true)}
+            className="p-1.5 rounded-lg text-amber-700 dark:text-amber-400 hover:bg-amber-100/80 dark:hover:bg-amber-950/40 border border-transparent hover:border-amber-300/60 dark:hover:border-amber-700/50 transition-colors"
+            title="How dashboard numbers are calculated"
+            aria-label="Open calculation details"
+          >
+            <Info className="w-4 h-4" aria-hidden />
+          </button>
         </div>
         <div className="text-[10px] font-bold uppercase tracking-wide text-slate-600 dark:text-slate-400 mb-1">
           Report
@@ -491,5 +510,6 @@ export default function CrmPipelineDashboard({
         )}
       </div>
     </div>
+  </>
   );
 }

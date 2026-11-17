@@ -84,7 +84,13 @@ export async function PATCH(request: NextRequest) {
       );
       return NextResponse.json({ activity: result });
     }
-    const result = await markCrmActivityDone(activityId, user);
+    const remark =
+      typeof body.remark === 'string'
+        ? body.remark
+        : typeof updates?.remark === 'string'
+          ? updates.remark
+          : '';
+    const result = await markCrmActivityDone(activityId, user, { remark });
     return NextResponse.json({ activity: result });
   } catch (error: any) {
     console.error('CRM pipeline PATCH activity:', error);

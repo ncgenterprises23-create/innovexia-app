@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import LayoutWrapper from '@/components/LayoutWrapper';
 import CrmPipelineDashboard from '@/components/crm-pipeline/CrmPipelineDashboard';
+import CrmO2dWonModal from '@/components/crm-pipeline/CrmO2dWonModal';
 import { ensureSessionId } from '@/utils/session';
 import { useToast } from '@/components/ToastProvider';
 import Icon from '@/components/Icon';
@@ -423,6 +424,9 @@ function formatActivityBodyDisplay(act: Activity): { title?: string; lines: stri
         if (dueRaw) lines.push(`Due: ${formatCrmDisplayDate(String(dueRaw))}`);
         return { lines };
       }
+      if (parsed.kind === 'activity_done' && parsed.remark) {
+        return { title: 'Completion note', lines: [String(parsed.remark)] };
+      }
       if (parsed.kind === 'lead_fields' && parsed.changes && typeof parsed.changes === 'object') {
         const lines = Object.entries(parsed.changes).map(
           ([k, v]: [string, any]) =>
@@ -533,9 +537,15 @@ export default function CrmPipelinePage() {
   const [movingOppId, setMovingOppId] = useState<string | null>(null);
   const [movingToStageId, setMovingToStageId] = useState<string | null>(null);
   const [settingOutcome, setSettingOutcome] = useState<'won' | 'lost' | null>(null);
+  const [o2dWonModalOpen, setO2dWonModalOpen] = useState(false);
   const [submittingNote, setSubmittingNote] = useState(false);
   const [schedulingActivity, setSchedulingActivity] = useState(false);
   const [markingActivityId, setMarkingActivityId] = useState<string | null>(null);
+  const [activityMarkDoneId, setActivityMarkDoneId] = useState<string | null>(null);
+  const [markDoneRemark, setMarkDoneRemark] = useState('');
+  const [markDoneNextDate, setMarkDoneNextDate] = useState('');
+  const [markDoneShowNextDate, setMarkDoneShowNextDate] = useState(false);
+  const [markDoneNextType, setMarkDoneNextType] = useState<'todo' | 'email' | 'call' | 'meeting'>('call');
   const [updatingActivityId, setUpdatingActivityId] = useState<string | null>(null);
   const [activityInlineId, setActivityInlineId] = useState<string | null>(null);
   const [activityInlineMode, setActivityInlineMode] = useState<'reschedule' | 'edit'>('edit');
@@ -1229,15 +1239,41 @@ export default function CrmPipelinePage() {
     closeStageMenu();
   };
 
+  const openWonO2dFlow = () => {
+    if (!selectedOpp || settingOutcome) return;
+    setO2dWonModalOpen(true);
+  };
+
+  const completeWonAfterO2d = async (): Promise<boolean> => {
+    if (!selectedOpp) return false;
+    setSettingOutcome('won');
+    try {
+      const ok = await patchLead(
+        selectedOpp.id,
+        { outcome: 'won' } as Partial<Opportunity>,
+        selectedOpp,
+        { successToast: 'Marked as Won — O2D started' }
+      );
+      if (ok) setSelectedOpp(null);
+      return ok;
+    } finally {
+      setSettingOutcome(null);
+    }
+  };
+
   const setOutcome = async (outcome: 'won' | 'lost') => {
     if (!selectedOpp || settingOutcome) return;
+    if (outcome === 'won') {
+      openWonO2dFlow();
+      return;
+    }
     setSettingOutcome(outcome);
     try {
       const ok = await patchLead(
         selectedOpp.id,
         { outcome } as Partial<Opportunity>,
         selectedOpp,
-        { successToast: outcome === 'won' ? 'Marked as Won' : 'Marked as Lost' }
+        { successToast: 'Marked as Lost' }
       );
       if (ok) setSelectedOpp(null);
     } finally {
@@ -1310,6 +1346,11 @@ export default function CrmPipelinePage() {
     setTagDropdownOpen(false);
     setTagSearch('');
     setActivityInlineId(null);
+    setActivityMarkDoneId(null);
+    setMarkDoneRemark('');
+    setMarkDoneNextDate('');
+    setMarkDoneShowNextDate(false);
+    setMarkDoneNextType('call');
   };
 
   const filteredCatalogTags = useMemo(() => {
@@ -1321,9 +1362,67 @@ export default function CrmPipelinePage() {
 
   const openActivityInline = (act: Activity, mode: 'reschedule' | 'edit') => {
     const fields = scheduledActivityFromLog(act);
+    setActivityMarkDoneId(null);
+    setMarkDoneRemark('');
+    setMarkDoneShowNextDate(false);
+    setMarkDoneNextDate('');
     setActivityInlineId(act.id);
     setActivityInlineMode(mode);
     setActivityInlineDraft(fields);
+  };
+
+  const openMarkDonePanel = (act: Activity) => {
+    setActivityInlineId(null);
+    setActivityMarkDoneId(act.id);
+    setMarkDoneRemark('');
+    setMarkDoneNextDate('');
+    setMarkDoneShowNextDate(false);
+    setMarkDoneNextType('call');
+  };
+
+  const discardMarkDone = () => {
+    setActivityMarkDoneId(null);
+    setMarkDoneRemark('');
+    setMarkDoneNextDate('');
+    setMarkDoneShowNextDate(false);
+    setMarkDoneNextType('call');
+  };
+
+  const onDoneAndScheduleNextClick = (act: Activity) => {
+    if (!markDoneShowNextDate) {
+      const fields = scheduledActivityFromLog(act);
+      setMarkDoneNextType(fields.activity_type);
+      setMarkDoneShowNextDate(true);
+      return;
+    }
+    void markActivityDone(act.id, act, { scheduleNext: true });
+  };
+
+  const scheduleNextActivityAfterDone = async (
+    dueDate: string,
+    activityType: 'todo' | 'email' | 'call' | 'meeting',
+    details: string
+  ) => {
+    if (!selectedOpp) return;
+    const type = activityType;
+    const summary = type.charAt(0).toUpperCase() + type.slice(1);
+    const res = await fetch('/api/crm-pipeline/activities', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        opportunityId: selectedOpp.id,
+        type: 'activity',
+        payload: {
+          activity_type: type,
+          summary,
+          due_date: dueDate,
+          body: details,
+          assigned_to: userPayload?.full_name || userPayload?.username || '',
+        },
+        user: userPayload,
+      }),
+    });
+    if (!res.ok) throw new Error('Failed to schedule next follow-up');
   };
 
   const saveActivityInline = async () => {
@@ -1360,22 +1459,42 @@ export default function CrmPipelinePage() {
     }
   };
 
-  const markActivityDone = async (activityId: string) => {
+  const markActivityDone = async (
+    activityId: string,
+    act: Activity,
+    opts: { scheduleNext: boolean }
+  ) => {
     if (markingActivityId) return;
+    const remark = markDoneRemark.trim();
+    const nextDate = markDoneNextDate.trim();
+    if (opts.scheduleNext && !nextDate) {
+      toast.error('Choose a date for the next follow-up');
+      return;
+    }
     setMarkingActivityId(activityId);
     try {
       const res = await fetch('/api/crm-pipeline/activities', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ activityId, user: userPayload }),
+        body: JSON.stringify({ activityId, user: userPayload, remark }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error || 'Failed');
       }
+      if (opts.scheduleNext) {
+        await scheduleNextActivityAfterDone(nextDate, markDoneNextType, '');
+      }
+      setActivityMarkDoneId(null);
+      setMarkDoneRemark('');
+      setMarkDoneNextDate('');
+      setMarkDoneShowNextDate(false);
+      setMarkDoneNextType('call');
+      toast.success(
+        opts.scheduleNext ? 'Completed and next follow-up scheduled' : 'Activity completed'
+      );
       if (selectedOpp) void loadActivities(selectedOpp.id);
       void loadBoard(selectedPipelineId);
-      toast.success('Activity completed');
     } catch (e: any) {
       toast.error(e.message || 'Failed to mark done');
     } finally {
@@ -2205,7 +2324,7 @@ export default function CrmPipelinePage() {
                   <button
                     type="button"
                     disabled={settingOutcome !== null}
-                    onClick={() => void setOutcome('won')}
+                    onClick={() => openWonO2dFlow()}
                     className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-bold inline-flex items-center gap-1.5 disabled:opacity-60"
                   >
                     {settingOutcome === 'won' && <InlineSpinner className="w-3.5 h-3.5 text-white" />}
@@ -2633,36 +2752,124 @@ export default function CrmPipelinePage() {
                           )}
                           {act.event_type === 'activity' && String(act.is_done).toUpperCase() !== 'Y' && (
                             <>
-                              <div className="mt-2 flex flex-wrap gap-1">
-                                <button
-                                  type="button"
-                                  disabled={markingActivityId !== null || updatingActivityId !== null}
-                                  onClick={() => void markActivityDone(act.id)}
-                                  className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400 px-2 py-1 rounded-md bg-emerald-100/80 dark:bg-emerald-900/40 hover:bg-emerald-200/80 inline-flex items-center gap-1 disabled:opacity-60"
-                                >
-                                  {markingActivityId === act.id && <InlineSpinner className="w-3 h-3" />}
-                                  Mark done
-                                </button>
-                                <button
-                                  type="button"
-                                  disabled={markingActivityId !== null || updatingActivityId !== null}
-                                  onClick={() => openActivityInline(act, 'reschedule')}
-                                  className="text-[10px] font-bold text-sky-700 dark:text-sky-300 px-2 py-1 rounded-md bg-sky-100/80 dark:bg-sky-900/40 hover:bg-sky-200/80 disabled:opacity-60"
-                                >
-                                  Reschedule
-                                </button>
-                                <button
-                                  type="button"
-                                  disabled={markingActivityId !== null || updatingActivityId !== null}
-                                  onClick={() => openActivityInline(act, 'edit')}
-                                  className="text-[10px] font-bold text-violet-700 dark:text-violet-300 px-2 py-1 rounded-md bg-violet-100/80 dark:bg-violet-900/40 hover:bg-violet-200/80 disabled:opacity-60"
-                                >
-                                  Edit
-                                </button>
-                              </div>
+                              {activityMarkDoneId !== act.id && (
+                                <div className="mt-2 flex flex-wrap gap-1">
+                                  <button
+                                    type="button"
+                                    disabled={markingActivityId !== null || updatingActivityId !== null}
+                                    onClick={() => openMarkDonePanel(act)}
+                                    className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400 px-2 py-1 rounded-md bg-emerald-100/80 dark:bg-emerald-900/40 hover:bg-emerald-200/80 inline-flex items-center gap-1 disabled:opacity-60"
+                                  >
+                                    Mark done
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={markingActivityId !== null || updatingActivityId !== null}
+                                    onClick={() => openActivityInline(act, 'reschedule')}
+                                    className="text-[10px] font-bold text-sky-700 dark:text-sky-300 px-2 py-1 rounded-md bg-sky-100/80 dark:bg-sky-900/40 hover:bg-sky-200/80 disabled:opacity-60"
+                                  >
+                                    Reschedule
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={markingActivityId !== null || updatingActivityId !== null}
+                                    onClick={() => openActivityInline(act, 'edit')}
+                                    className="text-[10px] font-bold text-violet-700 dark:text-violet-300 px-2 py-1 rounded-md bg-violet-100/80 dark:bg-violet-900/40 hover:bg-violet-200/80 disabled:opacity-60"
+                                  >
+                                    Edit
+                                  </button>
+                                </div>
+                              )}
+                              {activityMarkDoneId === act.id && (
+                                <div className="mt-2 p-2 rounded-lg border border-emerald-200/90 dark:border-emerald-800 bg-emerald-50/50 dark:bg-emerald-950/20 space-y-2">
+                                  <label className="block text-[10px] font-bold uppercase tracking-wide text-emerald-800 dark:text-emerald-200">
+                                    Completion remark
+                                  </label>
+                                  <textarea
+                                    className="w-full text-xs rounded-lg border border-slate-200 dark:border-slate-600 p-2 min-h-[56px] bg-white dark:bg-slate-900 placeholder:text-slate-400"
+                                    placeholder="Add a note about what was done…"
+                                    value={markDoneRemark}
+                                    onChange={(e) => setMarkDoneRemark(e.target.value)}
+                                    autoFocus
+                                  />
+                                  {markDoneShowNextDate ? (
+                                    <div className="space-y-2">
+                                      <div>
+                                        <label className="block text-[10px] font-semibold text-slate-600 dark:text-slate-300 mb-1">
+                                          Next follow-up type
+                                        </label>
+                                        <div className="flex flex-wrap gap-1">
+                                          {(['todo', 'email', 'call', 'meeting'] as const).map((t) => (
+                                            <button
+                                              key={t}
+                                              type="button"
+                                              onClick={() => setMarkDoneNextType(t)}
+                                              className={`px-2 py-0.5 rounded-md text-[9px] font-bold capitalize ${
+                                                markDoneNextType === t
+                                                  ? 'bg-[var(--theme-primary)] text-gray-900'
+                                                  : 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300'
+                                              }`}
+                                            >
+                                              {t === 'todo' ? 'To do' : t.charAt(0).toUpperCase() + t.slice(1)}
+                                            </button>
+                                          ))}
+                                        </div>
+                                      </div>
+                                      <div>
+                                        <label className="block text-[10px] font-semibold text-slate-600 dark:text-slate-300 mb-1">
+                                          Next follow-up date
+                                        </label>
+                                        <div className="relative">
+                                          <Calendar className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
+                                          <input
+                                            type="date"
+                                            className="w-full text-xs rounded-lg border border-slate-200 dark:border-slate-600 pl-7 pr-2 py-1.5 bg-white dark:bg-slate-900"
+                                            value={markDoneNextDate}
+                                            onChange={(e) => setMarkDoneNextDate(e.target.value)}
+                                          />
+                                        </div>
+                                        <p className="text-[9px] text-slate-500 mt-0.5">
+                                          Pick type and date, then tap Done and Schedule next again.
+                                        </p>
+                                      </div>
+                                    </div>
+                                  ) : null}
+                                  <div className="flex flex-row flex-wrap gap-1">
+                                    <button
+                                      type="button"
+                                      disabled={markingActivityId === act.id}
+                                      onClick={() => onDoneAndScheduleNextClick(act)}
+                                      className="flex-1 min-w-0 py-1.5 px-1 rounded-md bg-[var(--theme-primary)] text-[9px] font-black text-gray-900 disabled:opacity-60 inline-flex items-center justify-center gap-0.5 leading-tight text-center"
+                                    >
+                                      {markingActivityId === act.id && <InlineSpinner className="w-3 h-3 shrink-0" />}
+                                      Done and Schedule next
+                                    </button>
+                                    <button
+                                      type="button"
+                                      disabled={markingActivityId === act.id}
+                                      onClick={() => void markActivityDone(act.id, act, { scheduleNext: false })}
+                                      className="shrink-0 py-1.5 px-2.5 rounded-md bg-emerald-600 text-[10px] font-bold text-white disabled:opacity-60 inline-flex items-center justify-center gap-1"
+                                    >
+                                      {markingActivityId === act.id && <InlineSpinner className="w-3 h-3" />}
+                                      Done
+                                    </button>
+                                    <button
+                                      type="button"
+                                      disabled={markingActivityId === act.id}
+                                      onClick={discardMarkDone}
+                                      className="shrink-0 py-1.5 px-2 rounded-md text-[10px] font-bold text-slate-600 bg-slate-100 dark:bg-slate-700 dark:text-slate-200"
+                                    >
+                                      Discard
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
                               {activityInlineId === act.id && (
                                 <div className="mt-2 p-2 rounded-lg border border-slate-200 dark:border-slate-600 bg-white/90 dark:bg-slate-800/90 space-y-2">
-                                  {activityInlineMode === 'edit' && (
+                                  <div>
+                                    <label className="block text-[10px] font-semibold text-slate-600 dark:text-slate-300 mb-1">
+                                      {activityInlineMode === 'reschedule' ? 'Follow-up type' : 'Activity type'}
+                                    </label>
                                     <div className="flex flex-wrap gap-1">
                                       {(['todo', 'email', 'call', 'meeting'] as const).map((t) => (
                                         <button
@@ -2674,14 +2881,14 @@ export default function CrmPipelinePage() {
                                           className={`px-2 py-0.5 rounded-md text-[9px] font-bold capitalize ${
                                             activityInlineDraft.activity_type === t
                                               ? 'bg-[var(--theme-primary)] text-gray-900'
-                                              : 'bg-slate-100 dark:bg-slate-700 text-slate-600'
+                                              : 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300'
                                           }`}
                                         >
-                                          {t}
+                                          {t === 'todo' ? 'To do' : t.charAt(0).toUpperCase() + t.slice(1)}
                                         </button>
                                       ))}
                                     </div>
-                                  )}
+                                  </div>
                                   <div className="relative">
                                     <Calendar className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
                                     <input
@@ -2884,6 +3091,13 @@ export default function CrmPipelinePage() {
           </div>
         </>
       )}
+
+      <CrmO2dWonModal
+        open={o2dWonModalOpen}
+        opportunity={selectedOpp}
+        onClose={() => setO2dWonModalOpen(false)}
+        onO2dCreated={completeWonAfterO2d}
+      />
 
       {showTagModal && selectedOpp && oppDraft && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4" onClick={() => setShowTagModal(false)}>

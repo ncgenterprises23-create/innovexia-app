@@ -1106,27 +1106,40 @@ export async function updateCrmScheduledActivity(
   };
 }
 
-export async function markCrmActivityDone(activityId: string, user?: CrmPipelineUser): Promise<any> {
+export async function markCrmActivityDone(
+  activityId: string,
+  user?: CrmPipelineUser,
+  options?: { remark?: string }
+): Promise<any> {
   await ensureCrmPipelineSheetsInitialized();
   const { rows } = await readSheetRows(CRM_PIPELINE_SHEETS.ACTIVITY_LOG);
   const activity = rows.find((r) => String(r.id) === String(activityId));
   if (!activity) throw new Error('Activity not found');
   const doneAt = formatToSheetDate(new Date());
+  const remark = String(options?.remark || '').trim();
   await updateRowById(CRM_PIPELINE_SHEETS.ACTIVITY_LOG, activityId, {
     is_done: 'Y',
     done_at: doneAt,
   });
+  const doneBody = remark
+    ? JSON.stringify({
+        kind: 'activity_done',
+        remark,
+        activity_body: activity.body || '',
+      })
+    : String(activity.body || '');
+  const baseSummary = activity.summary || activity.activity_type || 'activity';
   await appendCrmPipelineLog({
     opportunity_id: activity.opportunity_id,
     pipeline_id: activity.pipeline_id,
     event_type: 'activity_done',
-    summary: `Done: ${activity.summary || activity.activity_type}`,
-    body: activity.body || '',
+    summary: remark ? `Done: ${baseSummary}` : `Done: ${baseSummary}`,
+    body: doneBody,
     user_id: user?.id ?? '',
     user_name: userLabel(user),
   });
   invalidateCrmBoardCache(String(activity.pipeline_id));
-  return { id: activityId, is_done: 'Y', done_at: doneAt };
+  return { id: activityId, is_done: 'Y', done_at: doneAt, remark };
 }
 
 export async function getCrmActivityLogRows(options?: { forceRefresh?: boolean }): Promise<any[]> {
