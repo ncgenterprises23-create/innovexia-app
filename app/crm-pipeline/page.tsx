@@ -389,6 +389,24 @@ function scheduledActivityFromLog(act: Activity): {
   return { activity_type, body, due_date };
 }
 
+function isOpenCrmScheduledActivity(act: Activity): boolean {
+  if (String(act.event_type || '').toLowerCase() !== 'activity') return false;
+  return String(act.is_done || 'N').toUpperCase() !== 'Y';
+}
+
+function activityTimelineSortTime(act: Activity): number {
+  const iso = parseSheetDate(act.created_at);
+  const t = iso ? new Date(iso).getTime() : 0;
+  return Number.isFinite(t) ? t : 0;
+}
+
+function activityDueSortTime(act: Activity): number {
+  const iso = parseSheetDate(act.due_date);
+  if (!iso) return Number.MAX_SAFE_INTEGER;
+  const t = new Date(iso).getTime();
+  return Number.isFinite(t) ? t : Number.MAX_SAFE_INTEGER;
+}
+
 function formatActivityDetailLine(line: string): string {
   const m = line.match(/^Due:\s*(.+)$/i);
   if (m) return `Due: ${formatCrmDisplayDate(m[1].trim())}`;
@@ -543,8 +561,10 @@ export default function CrmPipelinePage() {
   const [markingActivityId, setMarkingActivityId] = useState<string | null>(null);
   const [activityMarkDoneId, setActivityMarkDoneId] = useState<string | null>(null);
   const [markDoneRemark, setMarkDoneRemark] = useState('');
+  const [markDoneNextRemark, setMarkDoneNextRemark] = useState('');
   const [markDoneNextDate, setMarkDoneNextDate] = useState('');
-  const [markDoneShowNextDate, setMarkDoneShowNextDate] = useState(false);
+  const [markDoneStep, setMarkDoneStep] = useState<'choose' | 'form'>('choose');
+  const [markDoneIntent, setMarkDoneIntent] = useState<'done' | 'schedule_next' | null>(null);
   const [markDoneNextType, setMarkDoneNextType] = useState<'todo' | 'email' | 'call' | 'meeting'>('call');
   const [updatingActivityId, setUpdatingActivityId] = useState<string | null>(null);
   const [activityInlineId, setActivityInlineId] = useState<string | null>(null);
@@ -778,6 +798,22 @@ export default function CrmPipelinePage() {
   useEffect(() => {
     if (selectedOpp) loadActivities(selectedOpp.id);
   }, [selectedOpp, loadActivities]);
+
+  const timelineActivities = useMemo(() => {
+    const open: Activity[] = [];
+    const rest: Activity[] = [];
+    for (const act of activities) {
+      if (isOpenCrmScheduledActivity(act)) open.push(act);
+      else rest.push(act);
+    }
+    open.sort((a, b) => {
+      const dueDiff = activityDueSortTime(a) - activityDueSortTime(b);
+      if (dueDiff !== 0) return dueDiff;
+      return activityTimelineSortTime(b) - activityTimelineSortTime(a);
+    });
+    rest.sort((a, b) => activityTimelineSortTime(b) - activityTimelineSortTime(a));
+    return [...open, ...rest];
+  }, [activities]);
 
   useEffect(() => {
     if (selectedOpp) {
@@ -1348,8 +1384,10 @@ export default function CrmPipelinePage() {
     setActivityInlineId(null);
     setActivityMarkDoneId(null);
     setMarkDoneRemark('');
+    setMarkDoneNextRemark('');
     setMarkDoneNextDate('');
-    setMarkDoneShowNextDate(false);
+    setMarkDoneStep('choose');
+    setMarkDoneIntent(null);
     setMarkDoneNextType('call');
   };
 
@@ -1364,7 +1402,9 @@ export default function CrmPipelinePage() {
     const fields = scheduledActivityFromLog(act);
     setActivityMarkDoneId(null);
     setMarkDoneRemark('');
-    setMarkDoneShowNextDate(false);
+    setMarkDoneNextRemark('');
+    setMarkDoneStep('choose');
+    setMarkDoneIntent(null);
     setMarkDoneNextDate('');
     setActivityInlineId(act.id);
     setActivityInlineMode(mode);
@@ -1375,27 +1415,33 @@ export default function CrmPipelinePage() {
     setActivityInlineId(null);
     setActivityMarkDoneId(act.id);
     setMarkDoneRemark('');
+    setMarkDoneNextRemark('');
     setMarkDoneNextDate('');
-    setMarkDoneShowNextDate(false);
+    setMarkDoneStep('choose');
+    setMarkDoneIntent(null);
     setMarkDoneNextType('call');
   };
 
   const discardMarkDone = () => {
     setActivityMarkDoneId(null);
     setMarkDoneRemark('');
+    setMarkDoneNextRemark('');
     setMarkDoneNextDate('');
-    setMarkDoneShowNextDate(false);
+    setMarkDoneStep('choose');
+    setMarkDoneIntent(null);
     setMarkDoneNextType('call');
   };
 
-  const onDoneAndScheduleNextClick = (act: Activity) => {
-    if (!markDoneShowNextDate) {
+  const beginMarkDoneForm = (act: Activity, intent: 'done' | 'schedule_next') => {
+    setMarkDoneIntent(intent);
+    setMarkDoneStep('form');
+    setMarkDoneRemark('');
+    setMarkDoneNextRemark('');
+    if (intent === 'schedule_next') {
       const fields = scheduledActivityFromLog(act);
       setMarkDoneNextType(fields.activity_type);
-      setMarkDoneShowNextDate(true);
-      return;
+      setMarkDoneNextDate('');
     }
-    void markActivityDone(act.id, act, { scheduleNext: true });
   };
 
   const scheduleNextActivityAfterDone = async (
@@ -1483,12 +1529,18 @@ export default function CrmPipelinePage() {
         throw new Error(err.error || 'Failed');
       }
       if (opts.scheduleNext) {
-        await scheduleNextActivityAfterDone(nextDate, markDoneNextType, '');
+        await scheduleNextActivityAfterDone(
+          nextDate,
+          markDoneNextType,
+          markDoneNextRemark.trim()
+        );
       }
       setActivityMarkDoneId(null);
       setMarkDoneRemark('');
+      setMarkDoneNextRemark('');
       setMarkDoneNextDate('');
-      setMarkDoneShowNextDate(false);
+      setMarkDoneStep('choose');
+      setMarkDoneIntent(null);
       setMarkDoneNextType('call');
       toast.success(
         opts.scheduleNext ? 'Completed and next follow-up scheduled' : 'Activity completed'
@@ -2702,7 +2754,7 @@ export default function CrmPipelinePage() {
                   </div>
                   <div className="flex-1 overflow-y-auto p-3 space-y-2.5">
                     <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400 px-0.5">Timeline</div>
-                    {activities.map((act) => {
+                    {timelineActivities.map((act) => {
                       const isNote = act.event_type === 'note';
                       const isActivity = act.event_type === 'activity';
                       const isStage = act.event_type === 'stage_change';
@@ -2782,86 +2834,132 @@ export default function CrmPipelinePage() {
                               )}
                               {activityMarkDoneId === act.id && (
                                 <div className="mt-2 p-2 rounded-lg border border-emerald-200/90 dark:border-emerald-800 bg-emerald-50/50 dark:bg-emerald-950/20 space-y-2">
-                                  <label className="block text-[10px] font-bold uppercase tracking-wide text-emerald-800 dark:text-emerald-200">
-                                    Completion remark
-                                  </label>
-                                  <textarea
-                                    className="w-full text-xs rounded-lg border border-slate-200 dark:border-slate-600 p-2 min-h-[56px] bg-white dark:bg-slate-900 placeholder:text-slate-400"
-                                    placeholder="Add a note about what was done…"
-                                    value={markDoneRemark}
-                                    onChange={(e) => setMarkDoneRemark(e.target.value)}
-                                    autoFocus
-                                  />
-                                  {markDoneShowNextDate ? (
-                                    <div className="space-y-2">
-                                      <div>
-                                        <label className="block text-[10px] font-semibold text-slate-600 dark:text-slate-300 mb-1">
-                                          Next follow-up type
-                                        </label>
-                                        <div className="flex flex-wrap gap-1">
-                                          {(['todo', 'email', 'call', 'meeting'] as const).map((t) => (
-                                            <button
-                                              key={t}
-                                              type="button"
-                                              onClick={() => setMarkDoneNextType(t)}
-                                              className={`px-2 py-0.5 rounded-md text-[9px] font-bold capitalize ${
-                                                markDoneNextType === t
-                                                  ? 'bg-[var(--theme-primary)] text-gray-900'
-                                                  : 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300'
-                                              }`}
-                                            >
-                                              {t === 'todo' ? 'To do' : t.charAt(0).toUpperCase() + t.slice(1)}
-                                            </button>
-                                          ))}
-                                        </div>
-                                      </div>
-                                      <div>
-                                        <label className="block text-[10px] font-semibold text-slate-600 dark:text-slate-300 mb-1">
-                                          Next follow-up date
-                                        </label>
-                                        <div className="relative">
-                                          <Calendar className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
-                                          <input
-                                            type="date"
-                                            className="w-full text-xs rounded-lg border border-slate-200 dark:border-slate-600 pl-7 pr-2 py-1.5 bg-white dark:bg-slate-900"
-                                            value={markDoneNextDate}
-                                            onChange={(e) => setMarkDoneNextDate(e.target.value)}
-                                          />
-                                        </div>
-                                        <p className="text-[9px] text-slate-500 mt-0.5">
-                                          Pick type and date, then tap Done and Schedule next again.
-                                        </p>
-                                      </div>
+                                  {markDoneStep === 'choose' ? (
+                                    <div className="flex flex-row flex-wrap gap-1">
+                                      <button
+                                        type="button"
+                                        disabled={markingActivityId === act.id}
+                                        onClick={() => beginMarkDoneForm(act, 'schedule_next')}
+                                        className="flex-1 min-w-0 py-1.5 px-1 rounded-md bg-[var(--theme-primary)] text-[9px] font-black text-gray-900 disabled:opacity-60 inline-flex items-center justify-center gap-0.5 leading-tight text-center"
+                                      >
+                                        Done and Schedule next
+                                      </button>
+                                      <button
+                                        type="button"
+                                        disabled={markingActivityId === act.id}
+                                        onClick={() => beginMarkDoneForm(act, 'done')}
+                                        className="shrink-0 py-1.5 px-2.5 rounded-md bg-emerald-600 text-[10px] font-bold text-white disabled:opacity-60"
+                                      >
+                                        Done
+                                      </button>
+                                      <button
+                                        type="button"
+                                        disabled={markingActivityId === act.id}
+                                        onClick={discardMarkDone}
+                                        className="shrink-0 py-1.5 px-2 rounded-md text-[10px] font-bold text-slate-600 bg-slate-100 dark:bg-slate-700 dark:text-slate-200"
+                                      >
+                                        Discard
+                                      </button>
                                     </div>
-                                  ) : null}
-                                  <div className="flex flex-row flex-wrap gap-1">
-                                    <button
-                                      type="button"
-                                      disabled={markingActivityId === act.id}
-                                      onClick={() => onDoneAndScheduleNextClick(act)}
-                                      className="flex-1 min-w-0 py-1.5 px-1 rounded-md bg-[var(--theme-primary)] text-[9px] font-black text-gray-900 disabled:opacity-60 inline-flex items-center justify-center gap-0.5 leading-tight text-center"
-                                    >
-                                      {markingActivityId === act.id && <InlineSpinner className="w-3 h-3 shrink-0" />}
-                                      Done and Schedule next
-                                    </button>
-                                    <button
-                                      type="button"
-                                      disabled={markingActivityId === act.id}
-                                      onClick={() => void markActivityDone(act.id, act, { scheduleNext: false })}
-                                      className="shrink-0 py-1.5 px-2.5 rounded-md bg-emerald-600 text-[10px] font-bold text-white disabled:opacity-60 inline-flex items-center justify-center gap-1"
-                                    >
-                                      {markingActivityId === act.id && <InlineSpinner className="w-3 h-3" />}
-                                      Done
-                                    </button>
-                                    <button
-                                      type="button"
-                                      disabled={markingActivityId === act.id}
-                                      onClick={discardMarkDone}
-                                      className="shrink-0 py-1.5 px-2 rounded-md text-[10px] font-bold text-slate-600 bg-slate-100 dark:bg-slate-700 dark:text-slate-200"
-                                    >
-                                      Discard
-                                    </button>
-                                  </div>
+                                  ) : (
+                                    <>
+                                      <label className="block text-[10px] font-bold uppercase tracking-wide text-emerald-800 dark:text-emerald-200">
+                                        {markDoneIntent === 'schedule_next'
+                                          ? 'Completion remark (this follow-up)'
+                                          : 'Completion remark'}
+                                      </label>
+                                      <textarea
+                                        className="w-full text-xs rounded-lg border border-slate-200 dark:border-slate-600 p-2 min-h-[56px] bg-white dark:bg-slate-900 placeholder:text-slate-400"
+                                        placeholder={
+                                          markDoneIntent === 'schedule_next'
+                                            ? 'What happened when you completed this follow-up…'
+                                            : 'Add a note about what was done…'
+                                        }
+                                        value={markDoneRemark}
+                                        onChange={(e) => setMarkDoneRemark(e.target.value)}
+                                        autoFocus
+                                      />
+                                      {markDoneIntent === 'schedule_next' ? (
+                                        <div className="space-y-2">
+                                          <div>
+                                            <label className="block text-[10px] font-semibold text-slate-600 dark:text-slate-300 mb-1">
+                                              Next follow-up type
+                                            </label>
+                                            <div className="flex flex-wrap gap-1">
+                                              {(['todo', 'email', 'call', 'meeting'] as const).map((t) => (
+                                                <button
+                                                  key={t}
+                                                  type="button"
+                                                  onClick={() => setMarkDoneNextType(t)}
+                                                  className={`px-2 py-0.5 rounded-md text-[9px] font-bold capitalize ${
+                                                    markDoneNextType === t
+                                                      ? 'bg-[var(--theme-primary)] text-gray-900'
+                                                      : 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300'
+                                                  }`}
+                                                >
+                                                  {t === 'todo' ? 'To do' : t.charAt(0).toUpperCase() + t.slice(1)}
+                                                </button>
+                                              ))}
+                                            </div>
+                                          </div>
+                                          <div>
+                                            <label className="block text-[10px] font-semibold text-slate-600 dark:text-slate-300 mb-1">
+                                              Next follow-up date
+                                            </label>
+                                            <div className="relative">
+                                              <Calendar className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
+                                              <input
+                                                type="date"
+                                                className="w-full text-xs rounded-lg border border-slate-200 dark:border-slate-600 pl-7 pr-2 py-1.5 bg-white dark:bg-slate-900"
+                                                value={markDoneNextDate}
+                                                onChange={(e) => setMarkDoneNextDate(e.target.value)}
+                                              />
+                                            </div>
+                                          </div>
+                                          <div>
+                                            <label className="block text-[10px] font-bold uppercase tracking-wide text-sky-800 dark:text-sky-200 mb-1">
+                                              Next follow-up comment
+                                            </label>
+                                            <textarea
+                                              className="w-full text-xs rounded-lg border border-slate-200 dark:border-slate-600 p-2 min-h-[56px] bg-white dark:bg-slate-900 placeholder:text-slate-400"
+                                              placeholder="Notes or agenda for the next follow-up…"
+                                              value={markDoneNextRemark}
+                                              onChange={(e) => setMarkDoneNextRemark(e.target.value)}
+                                            />
+                                          </div>
+                                        </div>
+                                      ) : null}
+                                      <div className="flex flex-row flex-wrap gap-1">
+                                        <button
+                                          type="button"
+                                          disabled={markingActivityId === act.id}
+                                          onClick={() =>
+                                            void markActivityDone(act.id, act, {
+                                              scheduleNext: markDoneIntent === 'schedule_next',
+                                            })
+                                          }
+                                          className="flex-1 min-w-0 py-1.5 px-2 rounded-md bg-emerald-600 text-[10px] font-bold text-white disabled:opacity-60 inline-flex items-center justify-center gap-1"
+                                        >
+                                          {markingActivityId === act.id && <InlineSpinner className="w-3 h-3" />}
+                                          {markDoneIntent === 'schedule_next' ? 'Save & schedule next' : 'Save & mark done'}
+                                        </button>
+                                        <button
+                                          type="button"
+                                          disabled={markingActivityId === act.id}
+                                          onClick={() => {
+                                            setMarkDoneStep('choose');
+                                            setMarkDoneIntent(null);
+                                            setMarkDoneRemark('');
+                                            setMarkDoneNextRemark('');
+                                            setMarkDoneNextDate('');
+                                          }}
+                                          className="shrink-0 py-1.5 px-2 rounded-md text-[10px] font-bold text-slate-600 bg-slate-100 dark:bg-slate-700 dark:text-slate-200"
+                                        >
+                                          Back
+                                        </button>
+                                      </div>
+                                    </>
+                                  )}
                                 </div>
                               )}
                               {activityInlineId === act.id && (
@@ -2900,16 +2998,23 @@ export default function CrmPipelinePage() {
                                       }
                                     />
                                   </div>
-                                  {activityInlineMode === 'edit' && (
+                                  <div>
+                                    <label className="block text-[10px] font-semibold text-slate-600 dark:text-slate-300 mb-1">
+                                      {activityInlineMode === 'reschedule' ? 'Reschedule comment' : 'Details'}
+                                    </label>
                                     <textarea
                                       className="w-full text-xs rounded-lg border border-slate-200 dark:border-slate-600 p-2 min-h-[52px] bg-slate-50 dark:bg-slate-900"
-                                      placeholder="Details…"
+                                      placeholder={
+                                        activityInlineMode === 'reschedule'
+                                          ? 'Note why you rescheduled or what changed…'
+                                          : 'Details…'
+                                      }
                                       value={activityInlineDraft.body}
                                       onChange={(e) =>
                                         setActivityInlineDraft((d) => ({ ...d, body: e.target.value }))
                                       }
                                     />
-                                  )}
+                                  </div>
                                   <div className="flex gap-1">
                                     <button
                                       type="button"
