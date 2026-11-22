@@ -1,11 +1,12 @@
 'use client';
 
-import type { ReactNode, InputHTMLAttributes } from 'react';
+import type { ReactNode, InputHTMLAttributes, Dispatch, SetStateAction } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import LayoutWrapper from '@/components/LayoutWrapper';
 import CrmPipelineDashboard from '@/components/crm-pipeline/CrmPipelineDashboard';
+import CrmPipelineSalesPerformanceDashboard from '@/components/crm-pipeline/CrmPipelineSalesPerformanceDashboard';
 import CrmO2dWonModal from '@/components/crm-pipeline/CrmO2dWonModal';
 import { ensureSessionId } from '@/utils/session';
 import { useToast } from '@/components/ToastProvider';
@@ -35,7 +36,6 @@ import {
   Hand,
   Filter,
   Layers,
-  Star as StarIcon,
   ChevronDown,
   Plus,
   X,
@@ -44,6 +44,8 @@ import {
   ListTodo,
   Loader2,
   LayoutDashboard,
+  LineChart,
+  Users,
   type LucideIcon,
 } from 'lucide-react';
 import {
@@ -65,6 +67,20 @@ import {
 } from '@/lib/crmPipelineFollowUp';
 import { parseSheetDate } from '@/lib/dateUtils';
 import { compareBySequenceThenId } from '@/lib/crmPipelineStageSort';
+import {
+  parsePipelineAccessUsernames,
+  userCanManageCrmPipeline,
+} from '@/lib/crmPipelineAccess';
+import {
+  CRM_BOARD_GROUP_BY,
+  CRM_OPP_FILTER_FIELDS,
+  buildGroupedBoardRows,
+  collectDistinctFilterValues,
+  opportunityMatchesFieldFilters,
+  sortOppsForGroupBy,
+  type CrmBoardGroupBy,
+  type CrmOppFilterField,
+} from '@/lib/crmPipelineBoardFilters';
 
 const DASH_SHADOW = 'shadow-[0_2px_4px_rgba(15,23,42,0.12),0_8px_16px_-2px_rgba(15,23,42,0.22)]';
 const LIGHT_BG = 'bg-[var(--theme-light)] dark:bg-[var(--theme-primary)]/15';
@@ -82,10 +98,56 @@ const QUICK_ADD_CARD =
 const GHOST_BTN =
   'inline-flex items-center justify-center w-7 h-7 rounded-md text-slate-500 hover:text-slate-800 hover:bg-slate-200/60 dark:hover:bg-slate-700/60 transition-colors';
 /** Odoo-style: bottom line only, no focus ring box */
+/** Default 2-line remark fields; user can drag to resize vertically */
+const CRM_REMARK_TEXTAREA =
+  'w-full text-sm rounded-lg border border-slate-200 dark:border-slate-600 p-2.5 resize-y min-h-[3.25rem] leading-snug bg-slate-50/90 dark:bg-slate-800/90 placeholder:text-slate-400 focus:ring-2 focus:ring-[var(--theme-primary)]/35 focus:border-[var(--theme-primary)]/40 outline-none';
+
+type CrmActivityTypeKey = 'todo' | 'email' | 'call' | 'meeting';
+
+const CRM_ACTIVITY_TYPES: {
+  key: CrmActivityTypeKey;
+  label: string;
+  icon: LucideIcon;
+}[] = [
+  { key: 'todo', label: 'Todo', icon: ListTodo },
+  { key: 'email', label: 'Email', icon: Mail },
+  { key: 'call', label: 'Call', icon: Phone },
+  { key: 'meeting', label: 'Meeting', icon: Users },
+];
+
+function crmActivityTypeButtonClass(type: CrmActivityTypeKey, active: boolean): string {
+  const base =
+    'inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] font-bold border transition-all';
+  const map: Record<CrmActivityTypeKey, { on: string; off: string }> = {
+    todo: {
+      on: 'bg-sky-600 text-white border-sky-600 shadow-md ring-2 ring-sky-300/45',
+      off: 'bg-sky-50 text-sky-800 border-sky-200 hover:bg-sky-100 dark:bg-sky-950/45 dark:text-sky-200 dark:border-sky-700 dark:hover:bg-sky-900/60',
+    },
+    email: {
+      on: 'bg-violet-600 text-white border-violet-600 shadow-md ring-2 ring-violet-300/45',
+      off: 'bg-violet-50 text-violet-800 border-violet-200 hover:bg-violet-100 dark:bg-violet-950/45 dark:text-violet-200 dark:border-violet-700 dark:hover:bg-violet-900/60',
+    },
+    call: {
+      on: 'bg-emerald-600 text-white border-emerald-600 shadow-md ring-2 ring-emerald-300/45',
+      off: 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100 dark:bg-emerald-950/45 dark:text-emerald-200 dark:border-emerald-700 dark:hover:bg-emerald-900/60',
+    },
+    meeting: {
+      on: 'bg-amber-500 text-gray-900 border-amber-500 shadow-md ring-2 ring-amber-300/50',
+      off: 'bg-amber-50 text-amber-900 border-amber-200 hover:bg-amber-100 dark:bg-amber-950/45 dark:text-amber-200 dark:border-amber-700 dark:hover:bg-amber-900/60',
+    },
+  };
+  return `${base} ${active ? map[type].on : map[type].off}`;
+}
+
 const ODDO_INPUT =
   'w-full min-w-0 bg-transparent text-slate-800 dark:text-slate-100 placeholder:text-slate-400 border-0 border-b border-slate-300/90 dark:border-slate-600 rounded-none outline-none shadow-none ring-0 focus:outline-none focus:ring-0 focus:shadow-none focus:border-[var(--theme-primary)] appearance-none';
 
-type Pipeline = { id: string; name: string; sequence?: number; owner_username?: string };
+type Pipeline = {
+  id: string;
+  name: string;
+  sequence?: number;
+  owner_username?: string;
+};
 type AppUserOption = { username: string; full_name?: string; role_name?: string };
 type Stage = { id: string; pipeline_id: string; name: string; sequence?: number };
 type Opportunity = {
@@ -101,6 +163,7 @@ type Opportunity = {
   state?: string;
   country?: string;
   expected_revenue?: number | string;
+  costing?: number | string;
   recurring_revenue?: number | string;
   revenue_period?: string;
   probability?: number | string;
@@ -109,7 +172,6 @@ type Opportunity = {
   salesperson?: string;
   expected_closing?: string;
   notes?: string;
-  extra_info?: string;
   card_color?: string;
   outcome?: string;
   created_at?: string;
@@ -141,6 +203,7 @@ type OppDraft = {
   state: string;
   country: string;
   expected_revenue: string;
+  costing: string;
   recurring_revenue: string;
   revenue_period: string;
   probability: string;
@@ -149,7 +212,6 @@ type OppDraft = {
   tags: string;
   priority: number;
   notes: string;
-  extra_info: string;
 };
 
 function buildOppDraftFrom(opp: Opportunity): OppDraft {
@@ -166,6 +228,7 @@ function buildOppDraftFrom(opp: Opportunity): OppDraft {
     state: strField(opp.state),
     country: strField(opp.country),
     expected_revenue: numish(opp.expected_revenue),
+    costing: numish(opp.costing),
     recurring_revenue: numish(opp.recurring_revenue),
     revenue_period: strField(opp.revenue_period),
     probability: numish(opp.probability),
@@ -174,7 +237,6 @@ function buildOppDraftFrom(opp: Opportunity): OppDraft {
     tags: strField(opp.tags),
     priority: Number(opp.priority) || 0,
     notes: strField(opp.notes),
-    extra_info: strField(opp.extra_info),
   };
 }
 
@@ -211,10 +273,10 @@ function opportunitySearchText(opp: Opportunity): string {
     opp.tags,
     opp.salesperson,
     opp.notes,
-    opp.extra_info,
     opp.revenue_period,
     opp.expected_closing,
     opp.expected_revenue,
+    opp.costing,
     opp.recurring_revenue,
     opp.probability,
     opp.priority,
@@ -524,9 +586,13 @@ export default function CrmPipelinePage() {
   const [openActivities, setOpenActivities] = useState<Record<string, Activity>>({});
   const [myOnly, setMyOnly] = useState(false);
   const [filterUnassigned, setFilterUnassigned] = useState(false);
+  const [filterPanelField, setFilterPanelField] = useState<CrmOppFilterField>('salesperson');
+  const [fieldFilters, setFieldFilters] = useState<Partial<Record<CrmOppFilterField, string[]>>>({});
+  const [fieldValueSearch, setFieldValueSearch] = useState('');
+  const [boardGroupBy, setBoardGroupBy] = useState<CrmBoardGroupBy>('none');
   const [search, setSearch] = useState('');
   const [stageLeadVisible, setStageLeadVisible] = useState<Record<string, number>>({});
-  const [viewMode, setViewMode] = useState<'board' | 'dashboard'>('board');
+  const [viewMode, setViewMode] = useState<'board' | 'pipelineDashboard' | 'salesPerformance'>('board');
   const [filterPanelOpen, setFilterPanelOpen] = useState(false);
   const [pipelineDropdownOpen, setPipelineDropdownOpen] = useState(false);
   const [stageMenuAnchor, setStageMenuAnchor] = useState<{ top: number; left: number } | null>(null);
@@ -545,6 +611,7 @@ export default function CrmPipelinePage() {
     email: '',
     phone: '',
     expected_revenue: '',
+    costing: '',
   });
 
   const [selectedOpp, setSelectedOpp] = useState<Opportunity | null>(null);
@@ -579,7 +646,11 @@ export default function CrmPipelinePage() {
   const [deletingStageId, setDeletingStageId] = useState<string | null>(null);
   const [reorderingStages, setReorderingStages] = useState(false);
   const [stageFollowUpFilters, setStageFollowUpFilters] = useState<Record<string, FollowUpFilter>>({});
-  const [newPipelineOwnerUsername, setNewPipelineOwnerUsername] = useState('');
+  const [newPipelineAccessUsernames, setNewPipelineAccessUsernames] = useState<string[]>([]);
+  const [showEditPipeline, setShowEditPipeline] = useState(false);
+  const [editPipelineName, setEditPipelineName] = useState('');
+  const [editPipelineAccessUsernames, setEditPipelineAccessUsernames] = useState<string[]>([]);
+  const [savingPipelineSettings, setSavingPipelineSettings] = useState(false);
   const [pipelineUserOptions, setPipelineUserOptions] = useState<AppUserOption[]>([]);
   const [drawerMotionEntered, setDrawerMotionEntered] = useState(false);
   const [activities, setActivities] = useState<Activity[]>([]);
@@ -776,7 +847,7 @@ export default function CrmPipelinePage() {
 
   useEffect(() => {
     setStageLeadVisible({});
-  }, [search, myOnly, filterUnassigned, stageFollowUpFilters]);
+  }, [search, myOnly, filterUnassigned, fieldFilters, boardGroupBy, stageFollowUpFilters]);
 
   useEffect(() => {
     if (!selectedPipelineId || viewMode !== 'board') return;
@@ -896,6 +967,113 @@ export default function CrmPipelinePage() {
     [pipelines, selectedPipelineId]
   );
 
+  const canManageSelectedPipeline = useMemo(() => {
+    if (!selectedPipeline || !currentUser?.username) return false;
+    return userCanManageCrmPipeline(
+      selectedPipeline,
+      currentUser.username,
+      isPipelineAdmin
+    );
+  }, [selectedPipeline, currentUser?.username, isPipelineAdmin]);
+
+  const toggleUsernameInAccessList = useCallback(
+    (username: string, setter: Dispatch<SetStateAction<string[]>>) => {
+      const key = username.trim().toLowerCase();
+      if (!key) return;
+      setter((prev) => {
+        const has = prev.some((u) => u.toLowerCase() === key);
+        if (has) return prev.filter((u) => u.toLowerCase() !== key);
+        return [...prev, username.trim()];
+      });
+    },
+    []
+  );
+
+  const openPipelineSettings = useCallback(
+    (pipeline?: Pipeline | null) => {
+      const target = pipeline ?? selectedPipeline;
+      if (!target) return;
+      if (
+        !userCanManageCrmPipeline(target, currentUser?.username || '', isPipelineAdmin)
+      ) {
+        return;
+      }
+      setPipelineDropdownOpen(false);
+      if (target.id !== selectedPipelineId) {
+        setSelectedPipelineId(target.id);
+      }
+      setEditPipelineName(target.name);
+      setEditPipelineAccessUsernames(parsePipelineAccessUsernames(target));
+      setShowEditPipeline(true);
+    },
+    [selectedPipeline, selectedPipelineId, currentUser?.username, isPipelineAdmin]
+  );
+
+  const renderPipelineUserAccessPicker = (
+    selected: string[],
+    onToggle: (username: string) => void
+  ) => (
+    <div className="max-h-44 overflow-y-auto rounded-lg border border-slate-200 dark:border-slate-600 divide-y divide-slate-100 dark:divide-slate-700 mb-3 custom-scrollbar">
+      {pipelineUserOptions.length === 0 ? (
+        <p className="px-3 py-2 text-xs text-slate-500">Loading users…</p>
+      ) : (
+        pipelineUserOptions.map((u) => {
+          const checked = selected.some((x) => x.toLowerCase() === u.username.toLowerCase());
+          return (
+            <label
+              key={u.username}
+              className="flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800 text-sm"
+            >
+              <input
+                type="checkbox"
+                checked={checked}
+                onChange={() => onToggle(u.username)}
+                className="rounded border-slate-300"
+              />
+              <span className="truncate">
+                {u.full_name ? `${u.full_name}` : u.username}
+                <span className="text-slate-400 text-xs ml-1">({u.username})</span>
+              </span>
+            </label>
+          );
+        })
+      )}
+    </div>
+  );
+
+  const stageNameById = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const s of stages) map[s.id] = s.name;
+    return map;
+  }, [stages]);
+
+  const hasActiveFieldFilters = useMemo(
+    () => CRM_OPP_FILTER_FIELDS.some((f) => (fieldFilters[f.key]?.length ?? 0) > 0),
+    [fieldFilters]
+  );
+
+  const filterFieldValueOptions = useMemo(() => {
+    if (!filterPanelField) return [];
+    return collectDistinctFilterValues(opportunities, filterPanelField, stageNameById);
+  }, [opportunities, filterPanelField, stageNameById]);
+
+  const filteredFieldValueOptions = useMemo(() => {
+    const q = fieldValueSearch.trim().toLowerCase();
+    if (!q) return filterFieldValueOptions;
+    return filterFieldValueOptions.filter(
+      (o) => o.label.toLowerCase().includes(q) || o.value.toLowerCase().includes(q)
+    );
+  }, [filterFieldValueOptions, fieldValueSearch]);
+
+  const toggleFieldFilterValue = useCallback((field: CrmOppFilterField, value: string) => {
+    setFieldFilters((prev) => {
+      const cur = prev[field] || [];
+      const has = cur.includes(value);
+      const next = has ? cur.filter((v) => v !== value) : [...cur, value];
+      return { ...prev, [field]: next.length ? next : undefined };
+    });
+  }, []);
+
   const baseFilteredOpps = useMemo(() => {
     let list = opportunities;
     if (myOnly && currentUser?.username) {
@@ -909,10 +1087,11 @@ export default function CrmPipelinePage() {
     if (filterUnassigned) {
       list = list.filter((o) => !String(o.salesperson || '').trim());
     }
+    list = list.filter((o) => opportunityMatchesFieldFilters(o, fieldFilters));
     const q = search.trim();
     if (!q) return list;
     return list.filter((o) => opportunityMatchesSearch(o, q));
-  }, [opportunities, search, myOnly, filterUnassigned, currentUser]);
+  }, [opportunities, search, myOnly, filterUnassigned, fieldFilters, currentUser]);
 
   const oppsByStageBase = useMemo(() => {
     const map: Record<string, Opportunity[]> = {};
@@ -954,13 +1133,14 @@ export default function CrmPipelinePage() {
     for (const s of stages) {
       const list = oppsByStageBase[s.id] || [];
       const filter = stageFollowUpFilters[s.id] || 'all';
-      map[s.id] =
+      const followFiltered =
         filter === 'all'
           ? list
           : list.filter((o) => followUpBucket(openActivities[o.id]?.due_date) === filter);
+      map[s.id] = sortOppsForGroupBy(followFiltered, boardGroupBy, stageNameById);
     }
     return map;
-  }, [stages, oppsByStageBase, stageFollowUpFilters, openActivities]);
+  }, [stages, oppsByStageBase, stageFollowUpFilters, openActivities, boardGroupBy, stageNameById]);
 
   const stageTotals = useMemo(() => {
     const totals: Record<string, { revenue: number; mrr: number }> = {};
@@ -981,7 +1161,8 @@ export default function CrmPipelinePage() {
   };
 
   useEffect(() => {
-    if (!showNewPipeline || !isPipelineAdmin) return;
+    if (!showNewPipeline && !showEditPipeline) return;
+    if (showNewPipeline && !isPipelineAdmin) return;
     let cancelled = false;
     (async () => {
       try {
@@ -996,12 +1177,13 @@ export default function CrmPipelinePage() {
           }))
           .filter((u: AppUserOption) => u.username);
         setPipelineUserOptions(list);
-        if (list.length) {
-          setNewPipelineOwnerUsername((prev) =>
-            prev ||
-            list.find((u) => u.username === currentUser?.username)?.username ||
-            list[0].username
-          );
+        if (list.length && showNewPipeline) {
+          setNewPipelineAccessUsernames((prev) => {
+            if (prev.length) return prev;
+            const me = currentUser?.username;
+            if (me && list.some((u) => u.username === me)) return [me];
+            return [list[0].username];
+          });
         }
       } catch {
         /* ignore */
@@ -1010,7 +1192,41 @@ export default function CrmPipelinePage() {
     return () => {
       cancelled = true;
     };
-  }, [showNewPipeline, isPipelineAdmin, currentUser?.username]);
+  }, [showNewPipeline, showEditPipeline, isPipelineAdmin, currentUser?.username]);
+
+  const handleSavePipelineSettings = async () => {
+    if (!selectedPipelineId || !editPipelineName.trim()) {
+      toast.error('Pipeline name is required');
+      return;
+    }
+    if (editPipelineAccessUsernames.length === 0) {
+      toast.error('Select at least one user with access');
+      return;
+    }
+    if (savingPipelineSettings) return;
+    setSavingPipelineSettings(true);
+    try {
+      const res = await fetch('/api/crm-pipeline/pipelines', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: selectedPipelineId,
+          name: editPipelineName.trim(),
+          access_usernames: editPipelineAccessUsernames,
+          user: userPayload,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      toast.success('Pipeline updated');
+      setShowEditPipeline(false);
+      await refreshAll();
+    } catch (e: any) {
+      toast.error(e.message || 'Failed to update pipeline');
+    } finally {
+      setSavingPipelineSettings(false);
+    }
+  };
 
   const handleCreatePipeline = async () => {
     if (!newPipelineName.trim()) return;
@@ -1018,8 +1234,8 @@ export default function CrmPipelinePage() {
       toast.error('Only admins can create pipelines');
       return;
     }
-    if (!newPipelineOwnerUsername.trim()) {
-      toast.error('Select a user for this pipeline');
+    if (newPipelineAccessUsernames.length === 0) {
+      toast.error('Select at least one user with access');
       return;
     }
     if (creatingPipeline) return;
@@ -1031,7 +1247,7 @@ export default function CrmPipelinePage() {
         body: JSON.stringify({
           name: newPipelineName,
           user: userPayload,
-          owner_username: newPipelineOwnerUsername.trim(),
+          access_usernames: newPipelineAccessUsernames,
         }),
       });
       const data = await res.json();
@@ -1039,7 +1255,7 @@ export default function CrmPipelinePage() {
       toast.success('Pipeline created');
       setShowNewPipeline(false);
       setNewPipelineName('');
-      setNewPipelineOwnerUsername('');
+      setNewPipelineAccessUsernames([]);
       setSelectedPipelineId(data.pipeline.id);
       await refreshAll();
     } catch (e: any) {
@@ -1110,7 +1326,7 @@ export default function CrmPipelinePage() {
       if (!res.ok) throw new Error(data.error);
       toast.success('Opportunity added');
       setQuickAddStageId(null);
-      setQuickForm({ contact_name: '', name: '', email: '', phone: '', expected_revenue: '' });
+      setQuickForm({ contact_name: '', name: '', email: '', phone: '', expected_revenue: '', costing: '' });
       await loadBoard(selectedPipelineId);
     } catch (e: any) {
       toast.error(e.message || 'Failed');
@@ -1202,6 +1418,7 @@ export default function CrmPipelinePage() {
     if (oppDraft.state !== base.state) updates.state = oppDraft.state;
     if (oppDraft.country !== base.country) updates.country = oppDraft.country;
     if (oppDraft.expected_revenue !== base.expected_revenue) updates.expected_revenue = oppDraft.expected_revenue;
+    if (oppDraft.costing !== base.costing) updates.costing = oppDraft.costing;
     if (oppDraft.recurring_revenue !== base.recurring_revenue) updates.recurring_revenue = oppDraft.recurring_revenue;
     if (oppDraft.revenue_period !== base.revenue_period) updates.revenue_period = oppDraft.revenue_period;
     if (oppDraft.probability !== base.probability) updates.probability = oppDraft.probability;
@@ -1210,7 +1427,6 @@ export default function CrmPipelinePage() {
     if (oppDraft.tags !== base.tags) updates.tags = oppDraft.tags;
     if (oppDraft.priority !== base.priority) updates.priority = oppDraft.priority;
     if (oppDraft.notes !== base.notes) updates.notes = oppDraft.notes;
-    if (oppDraft.extra_info !== base.extra_info) updates.extra_info = oppDraft.extra_info;
     if (Object.keys(updates).length === 0) {
       toast.info('No changes to save');
       return;
@@ -1672,45 +1888,109 @@ export default function CrmPipelinePage() {
           </h1>
 
           {!isPipelineAdmin && pipelines.length <= 1 ? (
-            <span
-              className={`shrink-0 px-3 py-2 rounded-lg text-sm font-bold ${LIGHT_SURFACE} max-w-[14rem] truncate`}
+            <div
+              className={`flex items-center gap-2 shrink-0 pl-3 pr-2 py-2 rounded-lg text-sm font-bold ${LIGHT_SURFACE} max-w-[16rem]`}
               title={selectedPipeline?.name || 'Pipeline'}
             >
-              {selectedPipeline?.name || 'Pipeline'}
-            </span>
+              <span className="truncate min-w-0 flex-1">{selectedPipeline?.name || 'Pipeline'}</span>
+              {canManageSelectedPipeline && (
+                <button
+                  type="button"
+                  title="Edit pipeline name & access"
+                  onClick={() => openPipelineSettings()}
+                  className="shrink-0 p-0.5 rounded text-slate-500 hover:text-[var(--theme-primary)]"
+                >
+                  <Pencil size={14} />
+                </button>
+              )}
+            </div>
           ) : (
             <div className="relative shrink-0" ref={pipelineDropdownRef}>
               <button
                 type="button"
                 onClick={() => setPipelineDropdownOpen((v) => !v)}
-                className={`flex items-center gap-2 pl-3 pr-2 py-2 rounded-lg text-sm font-bold ${LIGHT_SURFACE} min-w-[8rem]`}
+                className={`flex items-center gap-1.5 pl-3 pr-2 py-2 rounded-lg text-sm font-bold ${LIGHT_SURFACE} min-w-[8rem] max-w-[14rem]`}
               >
-                <span className="truncate max-w-[10rem]">{selectedPipeline?.name || 'Pipeline'}</span>
+                <span className="truncate min-w-0 flex-1 text-left">
+                  {selectedPipeline?.name || 'Pipeline'}
+                </span>
+                {canManageSelectedPipeline && (
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    title="Edit pipeline name & access"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      openPipelineSettings();
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        openPipelineSettings();
+                      }
+                    }}
+                    className="shrink-0 p-0.5 rounded text-slate-500 hover:text-[var(--theme-primary)]"
+                  >
+                    <Pencil size={14} />
+                  </span>
+                )}
                 <ChevronDown size={16} className="text-slate-500 shrink-0" />
               </button>
               {pipelineDropdownOpen && (
-                <div className="absolute left-0 top-full mt-1 z-50 min-w-[12rem] rounded-lg border border-slate-200 bg-white dark:bg-slate-900 shadow-xl py-1 text-sm">
-                  {pipelines.map((p) => (
-                    <button
-                      key={p.id}
-                      type="button"
-                      onClick={() => {
-                        setSelectedPipelineId(p.id);
-                        setPipelineDropdownOpen(false);
-                      }}
-                      className={`flex w-full px-3 py-2 text-left hover:bg-slate-50 dark:hover:bg-slate-800 ${
-                        p.id === selectedPipelineId ? 'font-bold text-[var(--theme-primary)]' : ''
-                      }`}
-                    >
-                      {p.name}
-                    </button>
-                  ))}
+                <div className="absolute left-0 top-full mt-1 z-50 min-w-[14rem] rounded-lg border border-slate-200 bg-white dark:bg-slate-900 shadow-xl py-1 text-sm">
+                  {pipelines.map((p) => {
+                    const canEditRow = userCanManageCrmPipeline(
+                      p,
+                      currentUser?.username || '',
+                      isPipelineAdmin
+                    );
+                    return (
+                      <div
+                        key={p.id}
+                        className={`flex items-center gap-0.5 hover:bg-slate-50 dark:hover:bg-slate-800 ${
+                          p.id === selectedPipelineId ? 'bg-[var(--theme-light)]/40' : ''
+                        }`}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedPipelineId(p.id);
+                            setPipelineDropdownOpen(false);
+                          }}
+                          className={`flex-1 min-w-0 px-3 py-2 text-left truncate ${
+                            p.id === selectedPipelineId
+                              ? 'font-bold text-[var(--theme-primary)]'
+                              : ''
+                          }`}
+                        >
+                          {p.name}
+                        </button>
+                        {canEditRow && (
+                          <button
+                            type="button"
+                            title="Edit pipeline name & access"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openPipelineSettings(p);
+                            }}
+                            className="shrink-0 p-2 mr-0.5 rounded text-slate-500 hover:text-[var(--theme-primary)] hover:bg-white/80 dark:hover:bg-slate-700"
+                          >
+                            <Pencil size={14} />
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
                   {isPipelineAdmin && (
                     <div className="border-t border-slate-100 dark:border-slate-700 mt-1 pt-1">
                       <button
                         type="button"
                         onClick={() => {
                           setPipelineDropdownOpen(false);
+                          setNewPipelineAccessUsernames(
+                            currentUser?.username ? [currentUser.username] : []
+                          );
                           setShowNewPipeline(true);
                         }}
                         className="flex w-full items-center gap-2 px-3 py-2 text-left font-semibold text-slate-700 hover:bg-[var(--theme-light)]"
@@ -1725,7 +2005,8 @@ export default function CrmPipelinePage() {
             </div>
           )}
 
-          <div ref={filterBarRef} className="flex-1 flex min-w-[200px] max-w-3xl relative">
+          {viewMode === 'board' ? (
+          <div ref={filterBarRef} className="flex-1 flex min-w-[140px] max-w-xl relative">
             <div
               className={`flex flex-1 items-center gap-2 px-3 py-2 rounded-lg border border-slate-200/90 dark:border-slate-600 bg-white dark:bg-slate-800 ${DASH_SHADOW} min-h-[2.75rem]`}
             >
@@ -1734,7 +2015,7 @@ export default function CrmPipelinePage() {
                 title="Filters"
                 onClick={() => setFilterPanelOpen((v) => !v)}
                 className={`shrink-0 p-1.5 rounded-md transition-colors ${
-                  filterPanelOpen || myOnly || filterUnassigned
+                  filterPanelOpen || myOnly || filterUnassigned || hasActiveFieldFilters || boardGroupBy !== 'none'
                     ? 'bg-violet-100 text-violet-700'
                     : 'text-slate-500 hover:bg-slate-100'
                 }`}
@@ -1753,6 +2034,22 @@ export default function CrmPipelinePage() {
                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 text-slate-800 text-xs font-semibold shrink-0">
                   Unassigned
                   <button type="button" onClick={() => setFilterUnassigned(false)} className="hover:opacity-70">
+                    <X size={12} />
+                  </button>
+                </span>
+              )}
+              {hasActiveFieldFilters && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-violet-100 text-violet-900 text-xs font-semibold shrink-0">
+                  {CRM_OPP_FILTER_FIELDS.reduce((n, f) => n + (fieldFilters[f.key]?.length ?? 0), 0)} filters
+                  <button type="button" onClick={() => setFieldFilters({})} className="hover:opacity-70" title="Clear column filters">
+                    <X size={12} />
+                  </button>
+                </span>
+              )}
+              {boardGroupBy !== 'none' && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 text-slate-800 text-xs font-semibold shrink-0">
+                  Group: {CRM_BOARD_GROUP_BY.find((g) => g.key === boardGroupBy)?.label || boardGroupBy}
+                  <button type="button" onClick={() => setBoardGroupBy('none')} className="hover:opacity-70">
                     <X size={12} />
                   </button>
                 </span>
@@ -1779,17 +2076,16 @@ export default function CrmPipelinePage() {
             </div>
 
             {filterPanelOpen && (
-              <div className="absolute left-0 right-0 top-full mt-2 z-50 rounded-xl border border-slate-200 bg-white dark:bg-slate-900 shadow-2xl overflow-hidden">
-                <div className="grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-slate-100 dark:divide-slate-700">
-                  <div className="p-4">
-                    <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-slate-500 mb-3">
+              <div className="absolute left-0 right-0 top-full mt-2 z-50 rounded-xl border border-slate-200 bg-white dark:bg-slate-900 shadow-2xl overflow-hidden max-h-[min(28rem,70vh)] flex flex-col">
+                <div className="grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-slate-100 dark:divide-slate-700 min-h-0 flex-1 overflow-hidden">
+                  <div className="p-4 flex flex-col min-h-0 overflow-hidden">
+                    <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-slate-500 mb-2 shrink-0">
                       <Filter size={14} /> Filters
                     </div>
-                    <ul className="space-y-1 text-sm">
+                    <ul className="space-y-1 text-sm shrink-0 mb-3 pb-3 border-b border-slate-100 dark:border-slate-700">
                       {[
                         { id: 'my', label: 'My Pipeline', active: myOnly, toggle: () => setMyOnly((v) => !v) },
                         { id: 'unassigned', label: 'Unassigned', active: filterUnassigned, toggle: () => setFilterUnassigned((v) => !v) },
-                        { id: 'open', label: 'Open Opportunities', active: true, toggle: () => toast.info('Showing open leads only') },
                       ].map((f) => (
                         <li key={f.id}>
                           <button
@@ -1807,59 +2103,176 @@ export default function CrmPipelinePage() {
                         </li>
                       ))}
                     </ul>
-                  </div>
-                  <div className="p-4">
-                    <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-slate-500 mb-3">
-                      <Layers size={14} /> Group By
-                    </div>
-                    <ul className="space-y-1 text-sm text-slate-600">
-                      {['Salesperson', 'Stage', 'Company', 'Expected Closing'].map((label) => (
-                        <li key={label}>
-                          <button
-                            type="button"
-                            className="w-full px-2 py-1.5 rounded-md text-left hover:bg-slate-50 dark:hover:bg-slate-800 opacity-70"
-                            onClick={() => toast.info(`${label} grouping coming soon`)}
-                          >
-                            {label}
-                          </button>
-                        </li>
-                      ))}
+                    <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1 shrink-0">Filter by column</p>
+                    <ul className="space-y-0.5 text-sm overflow-y-auto min-h-0 flex-1 pr-1">
+                      {CRM_OPP_FILTER_FIELDS.map((f) => {
+                        const count = fieldFilters[f.key]?.length ?? 0;
+                        const selected = filterPanelField === f.key;
+                        return (
+                          <li key={f.key}>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setFilterPanelField(f.key);
+                                setFieldValueSearch('');
+                              }}
+                              className={`flex w-full items-center justify-between gap-2 px-2 py-1.5 rounded-md text-left hover:bg-slate-50 dark:hover:bg-slate-800 ${
+                                selected ? 'font-semibold text-violet-800 bg-violet-50/80' : 'text-slate-700 dark:text-slate-200'
+                              }`}
+                            >
+                              <span>{f.label}</span>
+                              {count > 0 ? (
+                                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-violet-600 text-white">{count}</span>
+                              ) : null}
+                            </button>
+                          </li>
+                        );
+                      })}
                     </ul>
                   </div>
-                  <div className="p-4">
-                    <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-slate-500 mb-3">
-                      <StarIcon size={14} /> Favorites
+                  <div className="p-4 flex flex-col min-h-0 overflow-hidden">
+                    <div className="flex items-center justify-between gap-2 mb-2 shrink-0">
+                      <span className="text-xs font-bold uppercase tracking-wide text-slate-500">
+                        {CRM_OPP_FILTER_FIELDS.find((f) => f.key === filterPanelField)?.label || 'Values'}
+                      </span>
+                      {(fieldFilters[filterPanelField]?.length ?? 0) > 0 ? (
+                        <button
+                          type="button"
+                          className="text-[10px] font-semibold text-violet-700 hover:underline"
+                          onClick={() =>
+                            setFieldFilters((prev) => {
+                              const next = { ...prev };
+                              delete next[filterPanelField];
+                              return next;
+                            })
+                          }
+                        >
+                          Clear
+                        </button>
+                      ) : null}
                     </div>
-                    <button
-                      type="button"
-                      className="text-sm text-violet-700 font-semibold hover:underline"
-                      onClick={() => toast.info('Save search — coming soon')}
-                    >
-                      Save current search
-                    </button>
+                    <div className="flex items-center gap-2 px-2 py-1.5 mb-2 rounded-lg border border-slate-200 dark:border-slate-600 bg-slate-50/80 dark:bg-slate-800/80 shrink-0">
+                      <Icon name="search" size={14} className="text-slate-400 shrink-0" />
+                      <input
+                        type="search"
+                        value={fieldValueSearch}
+                        onChange={(e) => setFieldValueSearch(e.target.value)}
+                        placeholder="Search values…"
+                        className="flex-1 min-w-0 bg-transparent text-sm outline-none"
+                      />
+                    </div>
+                    <ul className="space-y-0.5 text-sm overflow-y-auto min-h-0 flex-1 pr-1">
+                      {filteredFieldValueOptions.length === 0 ? (
+                        <li className="px-2 py-3 text-xs text-slate-500 text-center">No values found</li>
+                      ) : (
+                        filteredFieldValueOptions.map((opt) => {
+                          const active = (fieldFilters[filterPanelField] || []).includes(opt.value);
+                          return (
+                            <li key={`${filterPanelField}-${opt.value}`}>
+                              <button
+                                type="button"
+                                onClick={() => toggleFieldFilterValue(filterPanelField, opt.value)}
+                                className={`flex w-full items-center gap-2 px-2 py-1.5 rounded-md text-left hover:bg-slate-50 dark:hover:bg-slate-800 ${
+                                  active ? 'font-semibold text-violet-800 bg-violet-50/80' : ''
+                                }`}
+                              >
+                                <span className={`w-4 h-4 rounded border flex items-center justify-center text-[10px] shrink-0 ${active ? 'bg-violet-600 border-violet-600 text-white' : 'border-slate-300'}`}>
+                                  {active ? '✓' : ''}
+                                </span>
+                                <span className="truncate" title={opt.label}>
+                                  {opt.label}
+                                </span>
+                              </button>
+                            </li>
+                          );
+                        })
+                      )}
+                    </ul>
+                  </div>
+                  <div className="p-4 flex flex-col min-h-0 overflow-hidden">
+                    <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-slate-500 mb-3 shrink-0">
+                      <Layers size={14} /> Group by
+                    </div>
+                    <ul className="space-y-1 text-sm overflow-y-auto min-h-0 flex-1 pr-1">
+                      {CRM_BOARD_GROUP_BY.map((g) => {
+                        const active = boardGroupBy === g.key;
+                        return (
+                          <li key={g.key}>
+                            <button
+                              type="button"
+                              onClick={() => setBoardGroupBy(g.key)}
+                              className={`flex w-full items-center gap-2 px-2 py-1.5 rounded-md text-left hover:bg-slate-50 dark:hover:bg-slate-800 ${
+                                active ? 'font-semibold text-violet-800 bg-violet-50/80' : 'text-slate-700 dark:text-slate-200'
+                              }`}
+                            >
+                              <span className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${active ? 'border-violet-600' : 'border-slate-300'}`}>
+                                {active ? <span className="w-2 h-2 rounded-full bg-violet-600" /> : null}
+                              </span>
+                              {g.label}
+                            </button>
+                          </li>
+                        );
+                      })}
+                    </ul>
                   </div>
                 </div>
               </div>
             )}
           </div>
+          ) : (
+            <div className="flex-1 min-w-0" aria-hidden />
+          )}
 
-          <button
-            type="button"
-            onClick={() => setViewMode((m) => (m === 'board' ? 'dashboard' : 'board'))}
-            className={`shrink-0 inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-bold ${LIGHT_SURFACE} ${DASH_SHADOW} ${
-              viewMode === 'dashboard' ? 'ring-2 ring-[var(--theme-primary)]/50' : ''
-            }`}
-          >
-            <LayoutDashboard size={18} className="text-[var(--theme-primary)]" />
-            {viewMode === 'dashboard' ? 'Back to Stages' : 'Pipeline Dashboard'}
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() =>
+                setViewMode((m) => (m === 'pipelineDashboard' ? 'board' : 'pipelineDashboard'))
+              }
+              className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-bold ${LIGHT_SURFACE} ${DASH_SHADOW} ${
+                viewMode === 'pipelineDashboard' ? 'ring-2 ring-[var(--theme-primary)]/50' : ''
+              }`}
+            >
+              <LayoutDashboard size={18} className="text-[var(--theme-primary)]" />
+              Pipeline Dashboard
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                setViewMode((m) => (m === 'salesPerformance' ? 'board' : 'salesPerformance'))
+              }
+              className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-bold ${LIGHT_SURFACE} ${DASH_SHADOW} ${
+                viewMode === 'salesPerformance' ? 'ring-2 ring-[var(--theme-primary)]/50' : ''
+              }`}
+            >
+              <LineChart size={18} className="text-[var(--theme-primary)]" />
+              Sales Performance
+            </button>
+            {viewMode !== 'board' ? (
+              <button
+                type="button"
+                onClick={() => setViewMode('board')}
+                className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-bold ${LIGHT_SURFACE} ${DASH_SHADOW}`}
+              >
+                Back to Stages
+              </button>
+            ) : null}
+          </div>
         </div>
 
-        {viewMode === 'dashboard' ? (
+        {viewMode === 'pipelineDashboard' ? (
           <CrmPipelineDashboard
             pipelines={pipelines}
             myOnly={myOnly}
             currentUsername={currentUser?.username}
+          />
+        ) : viewMode === 'salesPerformance' ? (
+          <CrmPipelineSalesPerformanceDashboard
+            pipelines={pipelines}
+            myOnly={myOnly}
+            currentUsername={currentUser?.username}
+            canEditPlanned={isPipelineAdmin}
+            currentUserRole={currentUser?.role_name}
           />
         ) : (
         <div className="flex-1 overflow-x-auto overflow-y-hidden px-4 py-3 min-h-0 bg-[var(--theme-light)] dark:bg-slate-900">
@@ -2057,6 +2470,12 @@ export default function CrmPipelinePage() {
                         value={quickForm.expected_revenue}
                         onChange={(e) => setQuickForm({ ...quickForm, expected_revenue: e.target.value })}
                       />
+                      <QuickInputRow
+                        icon={IndianRupee}
+                        placeholder="Costing"
+                        value={quickForm.costing}
+                        onChange={(e) => setQuickForm({ ...quickForm, costing: e.target.value })}
+                      />
                     </div>
                     <div className="shrink-0 flex items-center gap-1 px-2.5 py-2 border-t border-slate-200/90 dark:border-slate-600/60 bg-white dark:bg-slate-800 rounded-b-md">
                       <button
@@ -2081,7 +2500,7 @@ export default function CrmPipelinePage() {
                         title="Discard"
                         onClick={() => {
                           setQuickAddStageId(null);
-                          setQuickForm({ contact_name: '', name: '', email: '', phone: '', expected_revenue: '' });
+                          setQuickForm({ contact_name: '', name: '', email: '', phone: '', expected_revenue: '', costing: '' });
                         }}
                         className={GHOST_BTN}
                       >
@@ -2098,10 +2517,11 @@ export default function CrmPipelinePage() {
                   {(() => {
                     const stageOpps = oppsByStage[stage.id] || [];
                     if (stageOpps.length === 0) return null;
+                    const boardRows = buildGroupedBoardRows(stageOpps, boardGroupBy, stageNameById);
                     const visibleCap = stageLeadVisible[stage.id] ?? STAGE_LEAD_BATCH;
-                    const visibleOpps = stageOpps.slice(0, visibleCap);
-                    const hasMoreLeads = visibleCap < stageOpps.length;
-                    const stack = visibleOpps.length > 1;
+                    const visibleRows = boardRows.slice(0, visibleCap);
+                    const hasMoreLeads = visibleCap < boardRows.length;
+                    const stack = visibleRows.length > 1;
                     return (
                       <div
                         className={
@@ -2110,7 +2530,18 @@ export default function CrmPipelinePage() {
                             : ''
                         }
                       >
-                        {visibleOpps.map((opp) => {
+                        {visibleRows.map((row) => {
+                          if (row.kind === 'header') {
+                            return (
+                              <div
+                                key={row.key}
+                                className="px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wide text-slate-500 bg-slate-50/95 dark:bg-slate-800/90 border-b border-slate-200/60 dark:border-slate-600/40"
+                              >
+                                {row.label}
+                              </div>
+                            );
+                          }
+                          const opp = row.opp;
                     const tags = parseTags(opp.tags);
                     const openAct = openActivities[opp.id];
                     const fuBucket = followUpBucket(openAct?.due_date);
@@ -2118,7 +2549,7 @@ export default function CrmPipelinePage() {
                     const initial = (displayName || opp.name || '?')[0]?.toUpperCase();
                     return (
                       <div
-                        key={opp.id}
+                        key={row.key}
                         draggable
                         onDragStart={(e) => {
                           setDragOppId(opp.id);
@@ -2218,6 +2649,14 @@ export default function CrmPipelinePage() {
                             {formatInr(opp.expected_revenue).replace('₹', '').trim()}
                           </div>
                         )}
+                        {String(opp.costing ?? '').trim() !== '' && (
+                          <div className="text-[10px] font-semibold text-amber-800 dark:text-amber-200 mt-1 flex items-center gap-1">
+                            <IndianRupee size={11} />
+                            {Number(opp.costing) > 0
+                              ? `Cost ${formatInr(opp.costing).replace('₹', '').trim()}`
+                              : `Cost: ${opp.costing}`}
+                          </div>
+                        )}
                       </div>
                     );
                         })}
@@ -2290,22 +2729,12 @@ export default function CrmPipelinePage() {
               onChange={(e) => setNewPipelineName(e.target.value)}
             />
             <label className="block text-xs font-bold uppercase tracking-wide text-slate-500 mb-1">
-              Assign to user
+              Users with access
             </label>
-            <select
-              className="w-full border rounded-lg px-3 py-2 text-sm mb-3 bg-white dark:bg-slate-900"
-              value={newPipelineOwnerUsername}
-              onChange={(e) => setNewPipelineOwnerUsername(e.target.value)}
-            >
-              {pipelineUserOptions.length === 0 && (
-                <option value="">Loading users…</option>
-              )}
-              {pipelineUserOptions.map((u) => (
-                <option key={u.username} value={u.username}>
-                  {u.full_name ? `${u.full_name} (${u.username})` : u.username}
-                </option>
-              ))}
-            </select>
+            {renderPipelineUserAccessPicker(newPipelineAccessUsernames, (username) =>
+              toggleUsernameInAccessList(username, setNewPipelineAccessUsernames)
+            )}
+            <p className="text-[10px] text-slate-500 mb-3 -mt-1">Select one or more users who can use this pipeline.</p>
             <button
               type="button"
               disabled={creatingPipeline}
@@ -2314,6 +2743,43 @@ export default function CrmPipelinePage() {
             >
               {creatingPipeline && <InlineSpinner />}
               {creatingPipeline ? 'Creating…' : 'Create'}
+            </button>
+          </Modal>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showEditPipeline && canManageSelectedPipeline && (
+          <Modal
+            onClose={() => setShowEditPipeline(false)}
+            title="Pipeline settings"
+          >
+            <label className="block text-xs font-bold uppercase tracking-wide text-slate-500 mb-1">
+              Pipeline name
+            </label>
+            <input
+              className="w-full border rounded-lg px-3 py-2 text-sm mb-3"
+              value={editPipelineName}
+              onChange={(e) => setEditPipelineName(e.target.value)}
+            />
+            <label className="block text-xs font-bold uppercase tracking-wide text-slate-500 mb-1">
+              Users with access
+            </label>
+            {renderPipelineUserAccessPicker(editPipelineAccessUsernames, (username) =>
+              toggleUsernameInAccessList(username, setEditPipelineAccessUsernames)
+            )}
+            <p className="text-[10px] text-slate-500 mb-3 -mt-1">
+              Saved in the sheet column <span className="font-mono">owner_username</span> as comma-separated
+              login usernames (values in parentheses).
+            </p>
+            <button
+              type="button"
+              disabled={savingPipelineSettings}
+              onClick={() => void handleSavePipelineSettings()}
+              className="w-full py-2 rounded-xl bg-[var(--theme-primary)] font-bold text-sm inline-flex items-center justify-center gap-2 disabled:opacity-60"
+            >
+              {savingPipelineSettings && <InlineSpinner />}
+              {savingPipelineSettings ? 'Saving…' : 'Save'}
             </button>
           </Modal>
         )}
@@ -2371,29 +2837,37 @@ export default function CrmPipelinePage() {
                 </button>
               </div>
 
-              <div className="flex-1 grid min-h-0 overflow-hidden grid-cols-[minmax(0,1fr)_22rem] grid-rows-[auto_auto_minmax(0,1fr)]">
-                <div className="col-start-1 row-start-1 px-4 py-2 flex flex-wrap gap-2 border-b border-r bg-white dark:bg-slate-900">
+              <div className="flex-1 grid min-h-0 overflow-hidden grid-cols-[minmax(0,1fr)_22rem] grid-rows-[auto_auto_minmax(0,1fr)] divide-x divide-slate-200 dark:divide-slate-700">
+                <div className="col-start-1 row-start-1 px-4 py-2 flex flex-wrap gap-2 border-b bg-white dark:bg-slate-900">
                   <button
                     type="button"
                     disabled={settingOutcome !== null}
                     onClick={() => openWonO2dFlow()}
-                    className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-bold inline-flex items-center gap-1.5 disabled:opacity-60"
+                    className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-bold inline-flex items-center gap-1.5 disabled:opacity-60 shadow-sm"
                   >
-                    {settingOutcome === 'won' && <InlineSpinner className="w-3.5 h-3.5 text-white" />}
+                    {settingOutcome === 'won' ? (
+                      <InlineSpinner className="w-3.5 h-3.5 text-white" />
+                    ) : (
+                      <CheckCircle2 size={15} strokeWidth={2.25} className="shrink-0" aria-hidden />
+                    )}
                     Won
                   </button>
                   <button
                     type="button"
                     disabled={settingOutcome !== null}
                     onClick={() => void setOutcome('lost')}
-                    className="px-3 py-1.5 rounded-lg bg-red-600 text-white text-xs font-bold inline-flex items-center gap-1.5 disabled:opacity-60"
+                    className="px-3 py-1.5 rounded-lg bg-red-600 text-white text-xs font-bold inline-flex items-center gap-1.5 disabled:opacity-60 shadow-sm"
                   >
-                    {settingOutcome === 'lost' && <InlineSpinner className="w-3.5 h-3.5 text-white" />}
+                    {settingOutcome === 'lost' ? (
+                      <InlineSpinner className="w-3.5 h-3.5 text-white" />
+                    ) : (
+                      <XCircle size={15} strokeWidth={2.25} className="shrink-0" aria-hidden />
+                    )}
                     Lost
                   </button>
                 </div>
 
-                <div className="col-start-1 row-start-2 px-4 py-3 border-b border-r space-y-2 bg-slate-50/80 dark:bg-slate-800/40">
+                <div className="col-start-1 row-start-2 px-4 py-3 border-b space-y-2 bg-slate-50/80 dark:bg-slate-800/40">
                   <div className="flex flex-wrap items-center gap-1.5">
                     {stageProgressItems.map(({ stage: s }) => {
                       const cur = String(selectedOpp.stage_id || '');
@@ -2430,90 +2904,147 @@ export default function CrmPipelinePage() {
                   </p>
                 </div>
 
-                <div className="col-start-1 row-start-3 overflow-y-auto p-4 border-r bg-white dark:bg-slate-900 min-h-0">
+                <div className="col-start-1 row-start-3 overflow-y-auto p-4 bg-white dark:bg-slate-900 min-h-0">
                   {oppDraft && (
                     <>
-                      <div className="mb-4 pb-3 border-b border-slate-100">
-                        <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-sm">
-                          <span className="text-slate-500">Expected Revenue</span>
-                          <span className="font-bold text-slate-900">{formatInr(oppDraft.expected_revenue)}</span>
-                          {Number(oppDraft.recurring_revenue) > 0 && (
-                            <span className="text-slate-600">
-                              + {formatInr(oppDraft.recurring_revenue)}{' '}
-                              {oppDraft.revenue_period ? `(${oppDraft.revenue_period})` : ''}
-                            </span>
-                          )}
+                      <div className="mb-4 grid grid-cols-3 gap-2">
+                        <div className="rounded-xl border border-emerald-200/80 bg-emerald-50/60 dark:bg-emerald-950/25 dark:border-emerald-800/50 px-3 py-2.5 shadow-sm">
+                          <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-emerald-800/85 dark:text-emerald-200/90">
+                            <IndianRupee size={12} strokeWidth={2.5} />
+                            Expected Revenue
+                          </div>
+                          <p className="text-sm font-bold text-slate-900 dark:text-slate-100 mt-1 tabular-nums">
+                            {formatInr(oppDraft.expected_revenue)}
+                          </p>
                         </div>
-                        <div className="flex items-center gap-2 mt-1 text-sm text-slate-500">
-                          <Percent size={14} /> Probability{' '}
-                          <span className="font-semibold text-slate-800">
+                        <div className="rounded-xl border border-amber-200/80 bg-amber-50/60 dark:bg-amber-950/25 dark:border-amber-800/50 px-3 py-2.5 shadow-sm">
+                          <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-amber-900/85 dark:text-amber-200/90">
+                            <IndianRupee size={12} strokeWidth={2.5} />
+                            Costing
+                          </div>
+                          <p className="text-sm font-bold text-slate-900 dark:text-slate-100 mt-1 tabular-nums">
+                            {oppDraft.costing !== ''
+                              ? Number(oppDraft.costing) > 0
+                                ? formatInr(oppDraft.costing)
+                                : oppDraft.costing
+                              : '—'}
+                          </p>
+                        </div>
+                        <div className="rounded-xl border border-violet-200/80 bg-violet-50/50 dark:bg-violet-950/25 dark:border-violet-800/50 px-3 py-2.5 shadow-sm">
+                          <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-violet-800/85 dark:text-violet-200/90">
+                            <Percent size={12} strokeWidth={2.5} />
+                            Probability
+                          </div>
+                          <p className="text-sm font-bold text-slate-900 dark:text-slate-100 mt-1">
                             {oppDraft.probability !== '' ? `${oppDraft.probability}%` : '—'}
-                          </span>
+                          </p>
                         </div>
+                        {Number(oppDraft.recurring_revenue) > 0 ? (
+                          <div className="col-span-3 rounded-lg border border-slate-200/80 bg-slate-50/80 dark:bg-slate-800/40 px-3 py-1.5 text-xs text-slate-600 dark:text-slate-300 flex items-center gap-1.5">
+                            <RefreshCw size={12} className="text-slate-400 shrink-0" />
+                            Recurring {formatInr(oppDraft.recurring_revenue)}
+                            {oppDraft.revenue_period ? ` · ${oppDraft.revenue_period}` : ''}
+                          </div>
+                        ) : null}
                       </div>
 
-                      <div className="space-y-0 max-w-xl">
-                        <OdooFormRow label="Contact">
+                      <div className="space-y-0 w-full">
+                        <OdooFormRow label="Contact" icon={User}>
                           <input
                             className={`text-sm py-1 ${ODDO_INPUT}`}
                             value={oppDraft.contact_name}
                             onChange={(e) => setOppDraft((d) => d && { ...d, contact_name: e.target.value })}
                           />
                         </OdooFormRow>
-                        <OdooFormRow label="Email">
-                          <input
-                            className={`text-sm py-1 ${ODDO_INPUT}`}
-                            type="email"
-                            value={oppDraft.email}
-                            onChange={(e) => setOppDraft((d) => d && { ...d, email: e.target.value })}
-                          />
-                        </OdooFormRow>
-                        <OdooFormRow label="Phone">
-                          <input
-                            className={`text-sm py-1 ${ODDO_INPUT}`}
-                            value={oppDraft.phone}
-                            onChange={(e) => setOppDraft((d) => d && { ...d, phone: e.target.value })}
-                          />
-                        </OdooFormRow>
-                        <OdooFormRow label="Company">
+                        <OdooFormSplitRow
+                          left={{
+                            label: 'Email',
+                            icon: Mail,
+                            children: (
+                              <input
+                                className={`text-sm py-1 w-full ${ODDO_INPUT}`}
+                                type="email"
+                                value={oppDraft.email}
+                                onChange={(e) => setOppDraft((d) => d && { ...d, email: e.target.value })}
+                              />
+                            ),
+                          }}
+                          right={{
+                            label: 'Phone',
+                            icon: Phone,
+                            children: (
+                              <input
+                                className={`text-sm py-1 w-full ${ODDO_INPUT}`}
+                                value={oppDraft.phone}
+                                onChange={(e) => setOppDraft((d) => d && { ...d, phone: e.target.value })}
+                              />
+                            ),
+                          }}
+                        />
+                        <OdooFormRow label="Company" icon={Building2}>
                           <input
                             className={`text-sm py-1 ${ODDO_INPUT}`}
                             value={oppDraft.company}
                             onChange={(e) => setOppDraft((d) => d && { ...d, company: e.target.value })}
                           />
                         </OdooFormRow>
-                        <OdooFormRow label="City">
-                          <div className="flex items-center gap-2">
-                            <MapPin className={PIPELINE_ICON} strokeWidth={1.75} />
-                            <input
-                              className={`text-sm py-1 flex-1 ${ODDO_INPUT}`}
-                              value={oppDraft.city}
-                              onChange={(e) => setOppDraft((d) => d && { ...d, city: e.target.value })}
-                            />
-                          </div>
-                        </OdooFormRow>
-                        <OdooFormRow label="State">
-                          <input
-                            className={`text-sm py-1 ${ODDO_INPUT}`}
-                            value={oppDraft.state}
-                            onChange={(e) => setOppDraft((d) => d && { ...d, state: e.target.value })}
-                          />
-                        </OdooFormRow>
-                        <OdooFormRow label="Country">
+                        <OdooFormSplitRow
+                          left={{
+                            label: 'City',
+                            icon: MapPin,
+                            children: (
+                              <input
+                                className={`text-sm py-1 w-full ${ODDO_INPUT}`}
+                                value={oppDraft.city}
+                                onChange={(e) => setOppDraft((d) => d && { ...d, city: e.target.value })}
+                              />
+                            ),
+                          }}
+                          right={{
+                            label: 'State',
+                            icon: MapPin,
+                            children: (
+                              <input
+                                className={`text-sm py-1 w-full ${ODDO_INPUT}`}
+                                value={oppDraft.state}
+                                onChange={(e) => setOppDraft((d) => d && { ...d, state: e.target.value })}
+                              />
+                            ),
+                          }}
+                        />
+                        <OdooFormRow label="Country" icon={MapPin}>
                           <input
                             className={`text-sm py-1 ${ODDO_INPUT}`}
                             value={oppDraft.country}
                             onChange={(e) => setOppDraft((d) => d && { ...d, country: e.target.value })}
                           />
                         </OdooFormRow>
-                        <OdooFormRow label="Expected revenue">
-                          <input
-                            className={`text-sm py-1 ${ODDO_INPUT}`}
-                            value={oppDraft.expected_revenue}
-                            onChange={(e) => setOppDraft((d) => d && { ...d, expected_revenue: e.target.value })}
-                          />
-                        </OdooFormRow>
-                        <OdooFormRow label="Recurring">
+                        <OdooFormSplitRow
+                          left={{
+                            label: 'Revenue',
+                            icon: IndianRupee,
+                            children: (
+                              <input
+                                className={`text-sm py-1 w-full ${ODDO_INPUT}`}
+                                value={oppDraft.expected_revenue}
+                                onChange={(e) => setOppDraft((d) => d && { ...d, expected_revenue: e.target.value })}
+                              />
+                            ),
+                          }}
+                          right={{
+                            label: 'Costing',
+                            icon: IndianRupee,
+                            children: (
+                              <input
+                                className={`text-sm py-1 w-full ${ODDO_INPUT}`}
+                                placeholder="Amount or reference"
+                                value={oppDraft.costing}
+                                onChange={(e) => setOppDraft((d) => d && { ...d, costing: e.target.value })}
+                              />
+                            ),
+                          }}
+                        />
+                        <OdooFormRow label="Recurring" icon={RefreshCw}>
                           <div className="flex gap-2 items-center">
                             <input
                               className={`text-sm py-1 flex-1 ${ODDO_INPUT}`}
@@ -2529,21 +3060,21 @@ export default function CrmPipelinePage() {
                             />
                           </div>
                         </OdooFormRow>
-                        <OdooFormRow label="Probability">
+                        <OdooFormRow label="Probability" icon={Percent}>
                           <input
                             className={`text-sm py-1 ${ODDO_INPUT}`}
                             value={oppDraft.probability}
                             onChange={(e) => setOppDraft((d) => d && { ...d, probability: e.target.value })}
                           />
                         </OdooFormRow>
-                        <OdooFormRow label="Salesperson">
+                        <OdooFormRow label="Salesperson" icon={User}>
                           <input
                             className={`text-sm py-1 ${ODDO_INPUT}`}
                             value={oppDraft.salesperson}
                             onChange={(e) => setOppDraft((d) => d && { ...d, salesperson: e.target.value })}
                           />
                         </OdooFormRow>
-                        <OdooFormRow label="Expected closing">
+                        <OdooFormRow label="Expected closing" icon={Calendar}>
                           <input
                             type="date"
                             className={`text-sm py-1 ${ODDO_INPUT}`}
@@ -2551,7 +3082,7 @@ export default function CrmPipelinePage() {
                             onChange={(e) => setOppDraft((d) => d && { ...d, expected_closing: e.target.value })}
                           />
                         </OdooFormRow>
-                        <OdooFormRow label="Tags">
+                        <OdooFormRow label="Tags" icon={Tag}>
                           <div className="relative" ref={tagPickerRef}>
                             <div
                               className="flex flex-wrap gap-1 min-h-[2rem] items-center cursor-text py-0.5"
@@ -2617,7 +3148,7 @@ export default function CrmPipelinePage() {
                             )}
                           </div>
                         </OdooFormRow>
-                        <OdooFormRow label="Priority">
+                        <OdooFormRow label="Priority" icon={Star}>
                           <Stars
                             value={oppDraft.priority}
                             size={22}
@@ -2626,27 +3157,19 @@ export default function CrmPipelinePage() {
                         </OdooFormRow>
                       </div>
 
-                      <div className="mt-8 max-w-xl space-y-6 border-t border-slate-100 pt-6">
-                        <div>
-                          <h3 className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-2">Notes</h3>
-                          <p className="text-xs text-slate-500 mb-2">Internal description (saved with Submit).</p>
-                          <textarea
-                            className="text-sm min-h-[140px] w-full p-3 rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900"
-                            placeholder="Add a description…"
-                            value={oppDraft.notes}
-                            onChange={(e) => setOppDraft((d) => d && { ...d, notes: e.target.value })}
-                          />
-                        </div>
-                        <div>
-                          <h3 className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-2">Extra info</h3>
-                          <p className="text-xs text-slate-500 mb-2">Extra details, links, or context (saved with Submit).</p>
-                          <textarea
-                            className="text-sm min-h-[140px] w-full p-3 rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900"
-                            placeholder="Extra information…"
-                            value={oppDraft.extra_info}
-                            onChange={(e) => setOppDraft((d) => d && { ...d, extra_info: e.target.value })}
-                          />
-                        </div>
+                      <div className="mt-8 w-full border-t border-slate-100 dark:border-slate-800 pt-6">
+                        <h3 className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-slate-500 mb-2">
+                          <StickyNote size={14} className="text-[var(--theme-primary)]" />
+                          Notes
+                        </h3>
+                        <p className="text-xs text-slate-500 mb-2">Internal description (saved with Submit).</p>
+                        <textarea
+                          rows={2}
+                          className={CRM_REMARK_TEXTAREA}
+                          placeholder="Add a description…"
+                          value={oppDraft.notes}
+                          onChange={(e) => setOppDraft((d) => d && { ...d, notes: e.target.value })}
+                        />
                       </div>
 
                       <div className="mt-6 flex justify-end border-t border-slate-100 pt-4">
@@ -2664,29 +3187,36 @@ export default function CrmPipelinePage() {
                   )}
                 </div>
 
-                <div className="col-start-2 row-start-1 row-span-3 flex flex-col min-h-0 overflow-hidden bg-gradient-to-b from-slate-50 to-slate-100/90 dark:from-slate-900 dark:to-slate-800/90 border-l border-slate-200/80 dark:border-slate-700">
-                  <div className="shrink-0 flex p-1.5 gap-1 border-b border-slate-200/80 dark:border-slate-700 bg-white/60 dark:bg-slate-900/40">
+                <div className="col-start-2 row-start-1 row-span-3 flex flex-col min-h-0 overflow-hidden bg-slate-50/60 dark:bg-slate-900/95 shadow-[-6px_0_16px_-12px_rgba(15,23,42,0.2)]">
+                  <div className="shrink-0 px-2 pt-2 pb-1 border-b border-slate-200/80 dark:border-slate-700 bg-white/70 dark:bg-slate-900/50">
+                    <div className="flex p-1 gap-1 rounded-xl bg-slate-100/90 dark:bg-slate-800/80 border border-slate-200/60 dark:border-slate-700">
                     {(['note', 'activity'] as const).map((tab) => (
                       <button
                         key={tab}
                         type="button"
                         onClick={() => setChatterTab(tab)}
-                        className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-[11px] font-bold uppercase tracking-wide transition-all ${
+                        className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg text-[11px] font-bold uppercase tracking-wide transition-all ${
                           chatterTab === tab
-                            ? 'bg-[var(--theme-primary)] text-gray-900 shadow-sm'
-                            : 'text-slate-500 hover:bg-white/80 dark:hover:bg-slate-800'
+                            ? 'bg-[var(--theme-primary)] text-gray-900 shadow-md ring-2 ring-[var(--theme-primary)]/25'
+                            : 'text-slate-500 hover:bg-white/90 dark:hover:bg-slate-700/80'
                         }`}
                       >
-                        {tab === 'note' ? <MessageSquare size={14} /> : <ListTodo size={14} />}
+                        {tab === 'note' ? <MessageSquare size={15} strokeWidth={2.25} /> : <ListTodo size={15} strokeWidth={2.25} />}
                         {tab === 'note' ? 'Log note' : 'Activity'}
                       </button>
                     ))}
+                    </div>
                   </div>
-                  <div className="shrink-0 p-3 border-b-2 border-slate-200/90 dark:border-slate-600 bg-white/70 dark:bg-slate-900/40 shadow-sm">
+                  <div className="shrink-0 p-3 border-b border-slate-200/90 dark:border-slate-600 bg-white/50 dark:bg-slate-900/30">
                     {chatterTab === 'note' ? (
-                      <div className="rounded-xl border border-slate-200/90 dark:border-slate-600 bg-white dark:bg-slate-900 p-3 shadow-sm">
+                      <div className="rounded-xl border border-violet-200/70 dark:border-violet-800/50 bg-white dark:bg-slate-900 p-3 shadow-sm ring-1 ring-violet-100/50 dark:ring-violet-900/30">
+                        <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-violet-700/90 dark:text-violet-300 mb-2">
+                          <MessageSquare size={12} />
+                          Internal note
+                        </p>
                         <textarea
-                          className="w-full text-sm rounded-lg border-0 bg-slate-50 dark:bg-slate-800 p-2.5 min-h-[56px] placeholder:text-slate-400 focus:ring-2 focus:ring-[var(--theme-primary)]/40"
+                          rows={2}
+                          className={`${CRM_REMARK_TEXTAREA} border-0 bg-slate-50 dark:bg-slate-800`}
                           placeholder="Log an internal note…"
                           value={noteText}
                           onChange={(e) => setNoteText(e.target.value)}
@@ -2705,34 +3235,36 @@ export default function CrmPipelinePage() {
                         </button>
                       </div>
                     ) : (
-                      <div className="rounded-xl border border-slate-200/90 dark:border-slate-600 bg-white dark:bg-slate-900 p-3 shadow-sm space-y-2">
+                      <div className="rounded-xl border border-amber-200/70 dark:border-amber-800/45 bg-white dark:bg-slate-900 p-3 shadow-sm space-y-2.5 ring-1 ring-amber-100/60 dark:ring-amber-900/25">
+                        <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-amber-800/90 dark:text-amber-200 mb-0.5">
+                          <ListTodo size={12} />
+                          Schedule activity
+                        </p>
                         <div className="flex flex-wrap gap-1">
-                          {(['todo', 'email', 'call', 'meeting'] as const).map((t) => (
+                          {CRM_ACTIVITY_TYPES.map(({ key, label, icon: TypeIcon }) => (
                             <button
-                              key={t}
+                              key={key}
                               type="button"
-                              onClick={() => setActivityForm({ ...activityForm, activity_type: t })}
-                              className={`px-2.5 py-1 rounded-md text-[10px] font-bold capitalize transition-colors ${
-                                activityForm.activity_type === t
-                                  ? 'bg-[var(--theme-primary)] text-gray-900 shadow-sm'
-                                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 border border-slate-200/80 dark:border-slate-600'
-                              }`}
+                              onClick={() => setActivityForm({ ...activityForm, activity_type: key })}
+                              className={crmActivityTypeButtonClass(key, activityForm.activity_type === key)}
                             >
-                              {t}
+                              <TypeIcon size={12} strokeWidth={2.25} />
+                              {label}
                             </button>
                           ))}
                         </div>
                         <div className="relative">
-                          <Calendar className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+                          <Calendar className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
                           <input
                             type="date"
-                            className="w-full text-sm rounded-lg border border-slate-200 dark:border-slate-600 pl-8 pr-2 py-2 bg-slate-50/80 dark:bg-slate-800"
+                            className="w-full text-sm rounded-lg border border-slate-200 dark:border-slate-600 pl-8 pr-2 py-2 bg-slate-50/80 dark:bg-slate-800 focus:ring-2 focus:ring-[var(--theme-primary)]/30 outline-none"
                             value={activityForm.due_date}
                             onChange={(e) => setActivityForm({ ...activityForm, due_date: e.target.value })}
                           />
                         </div>
                         <textarea
-                          className="w-full text-sm rounded-lg border border-slate-200 dark:border-slate-600 p-2.5 min-h-[56px] bg-slate-50/80 dark:bg-slate-800 placeholder:text-slate-400"
+                          rows={2}
+                          className={CRM_REMARK_TEXTAREA}
                           placeholder="Details…"
                           value={activityForm.body}
                           onChange={(e) => setActivityForm({ ...activityForm, body: e.target.value })}
@@ -2869,7 +3401,8 @@ export default function CrmPipelinePage() {
                                           : 'Completion remark'}
                                       </label>
                                       <textarea
-                                        className="w-full text-xs rounded-lg border border-slate-200 dark:border-slate-600 p-2 min-h-[56px] bg-white dark:bg-slate-900 placeholder:text-slate-400"
+                                        rows={2}
+                                        className={`${CRM_REMARK_TEXTAREA} text-xs bg-white dark:bg-slate-900`}
                                         placeholder={
                                           markDoneIntent === 'schedule_next'
                                             ? 'What happened when you completed this follow-up…'
@@ -2886,18 +3419,14 @@ export default function CrmPipelinePage() {
                                               Next follow-up type
                                             </label>
                                             <div className="flex flex-wrap gap-1">
-                                              {(['todo', 'email', 'call', 'meeting'] as const).map((t) => (
+                                              {CRM_ACTIVITY_TYPES.map(({ key, label }) => (
                                                 <button
-                                                  key={t}
+                                                  key={key}
                                                   type="button"
-                                                  onClick={() => setMarkDoneNextType(t)}
-                                                  className={`px-2 py-0.5 rounded-md text-[9px] font-bold capitalize ${
-                                                    markDoneNextType === t
-                                                      ? 'bg-[var(--theme-primary)] text-gray-900'
-                                                      : 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300'
-                                                  }`}
+                                                  onClick={() => setMarkDoneNextType(key)}
+                                                  className={crmActivityTypeButtonClass(key, markDoneNextType === key)}
                                                 >
-                                                  {t === 'todo' ? 'To do' : t.charAt(0).toUpperCase() + t.slice(1)}
+                                                  {label}
                                                 </button>
                                               ))}
                                             </div>
@@ -2921,7 +3450,8 @@ export default function CrmPipelinePage() {
                                               Next follow-up comment
                                             </label>
                                             <textarea
-                                              className="w-full text-xs rounded-lg border border-slate-200 dark:border-slate-600 p-2 min-h-[56px] bg-white dark:bg-slate-900 placeholder:text-slate-400"
+                                              rows={2}
+                                              className={`${CRM_REMARK_TEXTAREA} text-xs bg-white dark:bg-slate-900`}
                                               placeholder="Notes or agenda for the next follow-up…"
                                               value={markDoneNextRemark}
                                               onChange={(e) => setMarkDoneNextRemark(e.target.value)}
@@ -2969,20 +3499,19 @@ export default function CrmPipelinePage() {
                                       {activityInlineMode === 'reschedule' ? 'Follow-up type' : 'Activity type'}
                                     </label>
                                     <div className="flex flex-wrap gap-1">
-                                      {(['todo', 'email', 'call', 'meeting'] as const).map((t) => (
+                                      {CRM_ACTIVITY_TYPES.map(({ key, label }) => (
                                         <button
-                                          key={t}
+                                          key={key}
                                           type="button"
                                           onClick={() =>
-                                            setActivityInlineDraft((d) => ({ ...d, activity_type: t }))
+                                            setActivityInlineDraft((d) => ({ ...d, activity_type: key }))
                                           }
-                                          className={`px-2 py-0.5 rounded-md text-[9px] font-bold capitalize ${
-                                            activityInlineDraft.activity_type === t
-                                              ? 'bg-[var(--theme-primary)] text-gray-900'
-                                              : 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300'
-                                          }`}
+                                          className={crmActivityTypeButtonClass(
+                                            key,
+                                            activityInlineDraft.activity_type === key
+                                          )}
                                         >
-                                          {t === 'todo' ? 'To do' : t.charAt(0).toUpperCase() + t.slice(1)}
+                                          {label}
                                         </button>
                                       ))}
                                     </div>
@@ -3003,7 +3532,8 @@ export default function CrmPipelinePage() {
                                       {activityInlineMode === 'reschedule' ? 'Reschedule comment' : 'Details'}
                                     </label>
                                     <textarea
-                                      className="w-full text-xs rounded-lg border border-slate-200 dark:border-slate-600 p-2 min-h-[52px] bg-slate-50 dark:bg-slate-900"
+                                      rows={2}
+                                      className={`${CRM_REMARK_TEXTAREA} text-xs`}
                                       placeholder={
                                         activityInlineMode === 'reschedule'
                                           ? 'Note why you rescheduled or what changed…'
@@ -3359,11 +3889,68 @@ export default function CrmPipelinePage() {
   );
 }
 
-function OdooFormRow({ label, children }: { label: string; children: ReactNode }) {
+function OdooFormLabel({
+  label,
+  icon: IconComponent,
+  wrap,
+}: {
+  label: string;
+  icon?: LucideIcon;
+  wrap?: boolean;
+}) {
+  return (
+    <span
+      className={`flex items-start gap-1.5 text-slate-600 dark:text-slate-400 pt-1 min-w-0 ${
+        wrap ? 'text-xs leading-snug' : 'text-sm items-center'
+      }`}
+    >
+      {IconComponent ? (
+        <IconComponent
+          size={14}
+          strokeWidth={2}
+          className={`shrink-0 text-[var(--theme-primary)] opacity-90 ${wrap ? 'mt-0.5' : ''}`}
+          aria-hidden
+        />
+      ) : null}
+      <span className={wrap ? 'whitespace-normal break-words' : 'truncate'}>{label}</span>
+    </span>
+  );
+}
+
+function OdooFormRow({
+  label,
+  icon: IconComponent,
+  children,
+}: {
+  label: string;
+  icon?: LucideIcon;
+  children: ReactNode;
+}) {
   return (
     <div className="grid grid-cols-[9rem_1fr] gap-x-3 items-start py-2 border-b border-slate-100 dark:border-slate-800">
-      <span className="text-sm text-slate-600 dark:text-slate-400 pt-1">{label}</span>
+      <OdooFormLabel label={label} icon={IconComponent} />
       <div className="min-w-0">{children}</div>
+    </div>
+  );
+}
+
+function OdooFormSplitRow({
+  left,
+  right,
+}: {
+  left: { label: string; icon?: LucideIcon; children: ReactNode };
+  right: { label: string; icon?: LucideIcon; children: ReactNode };
+}) {
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-0 py-2 border-b border-slate-100 dark:border-slate-800">
+      <div className="grid grid-cols-[minmax(4.75rem,6.5rem)_1fr] gap-x-2 items-start min-w-0">
+        <OdooFormLabel label={left.label} icon={left.icon} wrap />
+        <div className="min-w-0">{left.children}</div>
+      </div>
+      <div className="grid grid-cols-[minmax(4.75rem,6.5rem)_1fr] gap-x-2 items-start min-w-0 sm:border-l sm:border-slate-100 sm:dark:border-slate-800 sm:pl-4">
+        <OdooFormLabel label={right.label} icon={right.icon} wrap />
+        <div className="min-w-0">{right.children}</div>
+      </div>
     </div>
   );
 }

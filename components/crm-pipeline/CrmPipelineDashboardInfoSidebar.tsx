@@ -6,7 +6,7 @@ import { Info, X } from 'lucide-react';
 type Props = {
   open: boolean;
   onClose: () => void;
-  activeReport: 'fiveFor5' | 'fiveFor3';
+  activeReport: 'fiveFor5' | 'fiveFor3' | 'salesPerformance';
 };
 
 function SectionBlock({
@@ -62,7 +62,7 @@ export default function CrmPipelineDashboardInfoSidebar({ open, onClose, activeR
                     Dashboard calculations
                   </h2>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    How numbers are built for 5 For 5 and 5 For 3 reports.
+                    How numbers are built for 5 For 5, 5 For 3, and Sales Performance.
                   </p>
                 </div>
               </div>
@@ -85,6 +85,9 @@ export default function CrmPipelineDashboardInfoSidebar({ open, onClose, activeR
                   </li>
                   <li>
                     <strong>Revenue</strong> — numeric <em>Expected revenue</em> on the lead; ignored if missing or ≤ 0.
+                  </li>
+                  <li>
+                    <strong>Costing</strong> — numeric <em>Costing</em> on the lead (Sales Performance view); wins only.
                   </li>
                   <li>
                     <strong>Won date</strong> — from activity log when outcome became Won, else lead <em>updated</em>{' '}
@@ -144,8 +147,9 @@ export default function CrmPipelineDashboardInfoSidebar({ open, onClose, activeR
               <SectionBlock title="5 For 3 report" highlight={activeReport === 'fiveFor3'}>
                 <p>
                   Salesperson weekly scorecard for <strong>one calendar month</strong> (the month that contains the range
-                  end). Rows are salespeople from each lead card; columns are weeks and metrics (Planned is reserved for
-                  future targets — Actual only today).
+                  end). Rows are salespeople from each lead card; columns are weeks and metrics.{' '}
+                  <strong>Planned</strong> for leads and unique meetings is loaded from the{' '}
+                  <em>Sales Performance Planned</em> sheet (same targets as the Sales Performance dashboard).
                 </p>
                 <ul className="list-disc pl-4 space-y-1">
                   <li>
@@ -175,6 +179,36 @@ export default function CrmPipelineDashboardInfoSidebar({ open, onClose, activeR
                   <li>
                     <strong>TOTAL row</strong> — sums leads, revenue, and clients across people; unique meetings in
                     TOTAL dedupe by client only (not per salesperson), so team totals may differ from adding rows.
+                  </li>
+                </ul>
+              </SectionBlock>
+
+              <SectionBlock title="Sales Performance view" highlight={activeReport === 'salesPerformance'}>
+                <p>
+                  Executive-style view for the current month: filter bar, KPI tiles, salesperson table, and a revenue vs
+                  profit chart. 5 For 5 and 5 For 3 reports are unchanged — switch report type in the filter panel.
+                </p>
+                <ul className="list-disc pl-4 space-y-1">
+                  <li>
+                    <strong>Week × salesperson</strong> — same week buckets and salesperson name rules as 5 For 3.
+                  </li>
+                  <li>
+                    <strong>Meetings</strong> — unique meetings (completed todo / email / call / meeting), same as 5 For
+                    3.
+                  </li>
+                  <li>
+                    <strong>Conversion</strong> — clients won ÷ unique meetings in that week.
+                  </li>
+                  <li>
+                    <strong>Profit</strong> — revenue minus costing on wins in the week (not the fixed % used in 5 For
+                    5).
+                  </li>
+                  <li>
+                    <strong>Planned</strong> — shown as “—” until targets are added later.
+                  </li>
+                  <li>
+                    <strong>Status filter</strong> — limits which leads are included (open / won / lost); reloads from
+                    server on Apply.
                   </li>
                 </ul>
               </SectionBlock>

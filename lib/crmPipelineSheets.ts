@@ -2,13 +2,45 @@ import { SPREADSHEET_IDS, getGoogleSheetsClient, rowToObject, objectToRow } from
 import { formatToSheetDate, parseSheetDate } from '@/lib/dateUtils';
 import { sheetColLetter, sheetNewId } from '@/lib/sheetColLetter';
 import { compareBySequenceThenId } from '@/lib/crmPipelineStageSort';
+import {
+  normalizePlannedYearMonth,
+  pickPlannedSheetField,
+  salesPerformancePlannedRowId,
+} from '@/lib/crmPipelineSalesPerformancePlanned';
+import { salespersonLabel } from '@/lib/crmPipelineFiveForThree';
+import {
+  parsePipelineAccessUsernames,
+  pipelineAccessUsernamesToSheet,
+  userCanAccessCrmPipeline,
+  userCanManageCrmPipeline,
+} from '@/lib/crmPipelineAccess';
+
+export {
+  parsePipelineAccessUsernames,
+  pipelineAccessUsernamesToSheet,
+  userCanAccessCrmPipeline,
+  userCanManageCrmPipeline,
+} from '@/lib/crmPipelineAccess';
 
 export const CRM_PIPELINE_SHEETS = {
   PIPELINES: 'CRM Pipelines',
   STAGES: 'CRM Pipeline Stages',
   OPPORTUNITIES: 'CRM Opportunities',
   ACTIVITY_LOG: 'CRM Activity Log',
+  SALES_PERFORMANCE_PLANNED: 'Sales Performance Planned',
 } as const;
+
+export const SALES_PERFORMANCE_PLANNED_HEADERS = [
+  'id',
+  'pipeline_id',
+  'year_month',
+  'week_key',
+  'salesperson',
+  'planned_leads',
+  'planned_meetings',
+  'updated_at',
+  'updated_by',
+];
 
 const SPREADSHEET_ID = SPREADSHEET_IDS.CRM_PIPELINE;
 
@@ -33,6 +65,7 @@ export const OPPORTUNITY_HEADERS = [
   'phone',
   'company',
   'expected_revenue',
+  'costing',
   'recurring_revenue',
   'revenue_period',
   'probability',
@@ -45,7 +78,6 @@ export const OPPORTUNITY_HEADERS = [
   'created_at',
   'updated_at',
   'created_by',
-  'extra_info',
   'City',
   'State',
   'Country',
@@ -68,6 +100,7 @@ const CRM_SHEET_DEFS: SheetDef[] = [
   { title: CRM_PIPELINE_SHEETS.STAGES, headers: STAGE_HEADERS },
   { title: CRM_PIPELINE_SHEETS.OPPORTUNITIES, headers: [...OPPORTUNITY_HEADERS] },
   { title: CRM_PIPELINE_SHEETS.ACTIVITY_LOG, headers: ACTIVITY_HEADERS },
+  { title: CRM_PIPELINE_SHEETS.SALES_PERFORMANCE_PLANNED, headers: SALES_PERFORMANCE_PLANNED_HEADERS },
 ];
 
 let ensureInFlight: Promise<void> | null = null;
@@ -248,14 +281,15 @@ async function ensureAllCrmPipelineSheets(sheets: any): Promise<void> {
 }
 
 async function ensurePipelineOptionalColumns(sheets: any): Promise<void> {
-  if ((global as any).crm_pipeline_pl_extra_cols) return;
   const title = CRM_PIPELINE_SHEETS.PIPELINES;
   const headerRes = await sheets.spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_ID,
     range: `'${title}'!A1:ZZ1`,
   });
   let headers = (headerRes.data.values?.[0] || []) as string[];
-  if (!headers.includes('owner_username')) {
+  const hasCol = (name: string) =>
+    headers.some((h) => String(h || '').toLowerCase() === name.toLowerCase());
+  if (!hasCol('owner_username')) {
     const colIndex = headers.length;
     await ensureSheetHasColumnCapacity(sheets, title, colIndex + 1);
     await sheets.spreadsheets.values.update({
@@ -266,18 +300,17 @@ async function ensurePipelineOptionalColumns(sheets: any): Promise<void> {
     });
     headers = [...headers, 'owner_username'];
   }
-  (global as any).crm_pipeline_pl_extra_cols = true;
 }
 
 async function ensureOpportunityOptionalColumns(sheets: any): Promise<void> {
-  if ((global as any).crm_pipeline_opp_extra_cols_v3) return;
+  if ((global as any).crm_pipeline_opp_extra_cols_v4) return;
   const title = CRM_PIPELINE_SHEETS.OPPORTUNITIES;
   const headerRes = await sheets.spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_ID,
     range: `'${title}'!A1:ZZ1`,
   });
   let headers = (headerRes.data.values?.[0] || []) as string[];
-  const extra = ['outcome', 'extra_info', 'City', 'State', 'Country', 'card_color'] as const;
+  const extra = ['outcome', 'City', 'State', 'Country', 'card_color', 'costing'] as const;
   for (const colName of extra) {
     if (sheetHeaderColumnIndex(headers, colName) >= 0) continue;
     const col = headers.length;
@@ -290,7 +323,7 @@ async function ensureOpportunityOptionalColumns(sheets: any): Promise<void> {
     });
     headers = [...headers, colName];
   }
-  (global as any).crm_pipeline_opp_extra_cols_v3 = true;
+  (global as any).crm_pipeline_opp_extra_cols_v4 = true;
 }
 
 async function seedDefaultPipelineIfEmpty(sheets: any): Promise<void> {
@@ -518,7 +551,14 @@ async function updateRowById(
     })
     .filter(Boolean);
 
-  if (data.length === 0) return;
+  if (data.length === 0) {
+    const keys = Object.keys(updates).join(', ');
+    throw new Error(
+      keys
+        ? `No matching columns on sheet for update fields: ${keys}. Refresh and try again.`
+        : 'Nothing to update'
+    );
+  }
 
   await sheets.spreadsheets.values.batchUpdate({
     spreadsheetId: SPREADSHEET_ID,
@@ -574,24 +614,26 @@ export function filterCrmPipelinesForUser(
   if (isAdmin) return pipelines;
   const mine = String(username || '').trim().toLowerCase();
   if (!mine) return [];
-  return pipelines.filter((p) => {
-    const owner = String(p.owner_username || p.created_by || '').trim().toLowerCase();
-    return owner === mine;
-  });
+  return pipelines.filter((p) => userCanAccessCrmPipeline(p, username, false));
 }
 
 export async function createCrmPipeline(
   name: string,
   user?: CrmPipelineUser,
   withDefaultStages = true,
-  ownerUsername?: string
+  accessUsernames?: string[]
 ): Promise<any> {
   await ensureCrmPipelineSheetsInitialized();
   const { rows } = await readSheetRows(CRM_PIPELINE_SHEETS.PIPELINES);
   const now = formatToSheetDate(new Date());
   const id = sheetNewId('pl');
-  const owner =
-    String(ownerUsername || '').trim() || String(user?.username || '').trim() || 'user';
+  const accessList =
+    accessUsernames?.map((u) => String(u).trim()).filter(Boolean) ||
+    [];
+  const fallback = String(user?.username || '').trim() || 'user';
+  const resolvedAccess =
+    accessList.length > 0 ? parsePipelineAccessUsernames({ owner_username: accessList.join(',') }) : [fallback];
+  const owner_username = pipelineAccessUsernamesToSheet(resolvedAccess);
   const pipeline = {
     id,
     name,
@@ -599,7 +641,7 @@ export async function createCrmPipeline(
     active: 'Y',
     created_at: now,
     created_by: user?.username || 'user',
-    owner_username: owner,
+    owner_username,
   };
   await appendRow(CRM_PIPELINE_SHEETS.PIPELINES, PIPELINE_HEADERS, pipeline);
   invalidateCrmPipelinesCache();
@@ -620,6 +662,30 @@ export async function createCrmPipeline(
     }
   }
   return pipeline;
+}
+
+export async function updateCrmPipeline(
+  pipelineId: string,
+  updates: { name?: string; owner_username?: string }
+): Promise<any> {
+  await ensureCrmPipelineSheetsInitialized();
+  const sheets = await getGoogleSheetsClient();
+  await ensurePipelineOptionalColumns(sheets);
+  const { rows } = await readSheetRows(CRM_PIPELINE_SHEETS.PIPELINES);
+  const existing = rows.find((r) => String(r.id) === String(pipelineId));
+  if (!existing) throw new Error('Pipeline not found');
+  const patch: Record<string, string> = {};
+  if (updates.name !== undefined) patch.name = String(updates.name).trim();
+  if (updates.owner_username !== undefined) {
+    const accessSheet = pipelineAccessUsernamesToSheet(
+      parsePipelineAccessUsernames({ owner_username: updates.owner_username })
+    );
+    if (!accessSheet) throw new Error('At least one user with access is required');
+    patch.owner_username = accessSheet;
+  }
+  await updateRowById(CRM_PIPELINE_SHEETS.PIPELINES, pipelineId, patch);
+  invalidateCrmPipelinesCache();
+  return { ...existing, ...patch, id: String(existing.id) };
 }
 
 export async function getCrmPipelineStages(
@@ -784,6 +850,7 @@ const LOGGABLE_FIELDS = [
   'state',
   'country',
   'expected_revenue',
+  'costing',
   'recurring_revenue',
   'revenue_period',
   'probability',
@@ -792,7 +859,6 @@ const LOGGABLE_FIELDS = [
   'salesperson',
   'expected_closing',
   'notes',
-  'extra_info',
 ];
 
 export async function createCrmOpportunity(
@@ -815,6 +881,7 @@ export async function createCrmOpportunity(
     state: data.state || '',
     country: data.country || '',
     expected_revenue: data.expected_revenue ?? '',
+    costing: data.costing ?? '',
     recurring_revenue: data.recurring_revenue ?? '',
     revenue_period: data.revenue_period || '',
     probability: data.probability ?? '',
@@ -823,7 +890,6 @@ export async function createCrmOpportunity(
     salesperson: data.salesperson || userLabel(user),
     expected_closing: data.expected_closing || '',
     notes: data.notes || '',
-    extra_info: String(data.extra_info ?? ''),
     card_color: data.card_color || '',
     outcome: 'open',
     created_at: now,
@@ -1227,4 +1293,105 @@ export async function getCrmPipelineDashboardData(
   const wonDatesByOppId = await buildCrmWonDatesByOpportunityId(pipelineId, opportunities);
   dashboardCache.set(key, { at: now, opportunities, wonDatesByOppId });
   return { opportunities, wonDatesByOppId };
+}
+
+export async function getSalesPerformancePlannedRows(
+  pipelineId: string,
+  yearMonth: string
+): Promise<any[]> {
+  await ensureCrmPipelineSheetsInitialized();
+  const rows = await readSalesPerformancePlannedSheetRows();
+  const pid = String(pipelineId).trim().toLowerCase();
+  const ym = String(yearMonth).trim();
+  return rows.filter((r) => {
+    const rowPid = String(pickPlannedSheetField(r as Record<string, unknown>, 'pipeline_id') ?? '')
+      .trim()
+      .toLowerCase();
+    const rowYm = normalizePlannedYearMonth(
+      pickPlannedSheetField(r as Record<string, unknown>, 'year_month')
+    );
+    return rowPid === pid && rowYm === ym;
+  });
+}
+
+async function readSalesPerformancePlannedSheetRows(): Promise<any[]> {
+  const sheets = await getGoogleSheetsClient();
+  const title = CRM_PIPELINE_SHEETS.SALES_PERFORMANCE_PLANNED;
+  const response = await withSheetsRetry(() =>
+    sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_ID,
+      range: `'${title}'!A:ZZ`,
+      valueRenderOption: 'FORMATTED_VALUE',
+    })
+  );
+  const all = response.data.values ?? [];
+  if (all.length === 0) return [];
+  const headers = (all[0] as string[]).map((h) => String(h || '').trim());
+  return all
+    .slice(1)
+    .map((row: unknown[]) => rowToObject(headers, row))
+    .filter((r: { id?: unknown }) => {
+      const id = r?.id;
+      return id != null && String(id).trim() !== '';
+    });
+}
+
+export type SaveSalesPerformancePlannedInput = {
+  pipelineId: string;
+  yearMonth: string;
+  records: {
+    weekKey: string;
+    salesperson: string;
+    plannedLeads: number | null;
+    plannedMeetings: number | null;
+  }[];
+  updatedBy?: string;
+};
+
+export async function saveSalesPerformancePlannedBatch(
+  input: SaveSalesPerformancePlannedInput
+): Promise<void> {
+  await ensureCrmPipelineSheetsInitialized();
+  const sheets = await getGoogleSheetsClient();
+  const { rows } = await readSheetRows(CRM_PIPELINE_SHEETS.SALES_PERFORMANCE_PLANNED);
+  const now = formatToSheetDate(new Date());
+  const byUser = input.updatedBy?.trim() || '';
+
+  const indexById = new Map<string, any>();
+  for (const r of rows) {
+    if (r.id) indexById.set(String(r.id), r);
+  }
+
+  for (const rec of input.records) {
+    const id = salesPerformancePlannedRowId(
+      input.pipelineId,
+      input.yearMonth,
+      rec.weekKey,
+      rec.salesperson
+    );
+    const existing = indexById.get(id);
+    const payload = {
+      id,
+      pipeline_id: input.pipelineId,
+      year_month: input.yearMonth,
+      week_key: rec.weekKey,
+      salesperson: salespersonLabel(rec.salesperson),
+      planned_leads: rec.plannedLeads ?? '',
+      planned_meetings: rec.plannedMeetings ?? '',
+      updated_at: now,
+      updated_by: byUser,
+    };
+
+    if (existing) {
+      await updateRowById(CRM_PIPELINE_SHEETS.SALES_PERFORMANCE_PLANNED, id, {
+        planned_leads: payload.planned_leads,
+        planned_meetings: payload.planned_meetings,
+        updated_at: payload.updated_at,
+        updated_by: payload.updated_by,
+      });
+    } else {
+      await appendRow(CRM_PIPELINE_SHEETS.SALES_PERFORMANCE_PLANNED, SALES_PERFORMANCE_PLANNED_HEADERS, payload);
+      indexById.set(id, payload);
+    }
+  }
 }

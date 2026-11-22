@@ -9,10 +9,58 @@ import {
   type FiveForThreeMonth,
   type FiveForThreeMetricKey,
 } from '@/lib/crmPipelineFiveForThree';
+import { actualVsPlannedHighlightClass } from '@/lib/crmPlannedActualHighlight';
 
 const DASH_SHADOW = 'shadow-[0_2px_4px_rgba(15,23,42,0.12),0_8px_16px_-2px_rgba(15,23,42,0.22)]';
 const LIGHT_SURFACE =
   'bg-[var(--theme-light)] dark:bg-[var(--theme-primary)]/15 border border-[var(--theme-primary)]/25';
+
+function conversionBadgeClass(value: number): string {
+  if (value >= 30) return 'bg-emerald-100 text-emerald-800 ring-1 ring-emerald-400/80';
+  if (value >= 15) return 'bg-amber-100 text-amber-900 ring-1 ring-amber-400/80';
+  return 'bg-sky-100 text-sky-900 ring-1 ring-sky-300/80';
+}
+
+function renderFiveForThreeActual(
+  metricKey: FiveForThreeMetricKey,
+  cell: { planned: number | null; actual: number | null },
+  totalRow: boolean
+) {
+  const raw = formatFiveForThreeActual(metricKey, cell.actual);
+  if (raw === '—') return <span className="text-slate-400">—</span>;
+
+  if (metricKey === 'conversion_ratio') {
+    const v = typeof cell.actual === 'number' ? cell.actual : 0;
+    return (
+      <span
+        className={`inline-flex items-center justify-center min-w-[3.25rem] px-2 py-0.5 rounded-full text-[11px] font-bold tabular-nums ${conversionBadgeClass(v)}`}
+      >
+        {raw}
+      </span>
+    );
+  }
+
+  if (metricKey === 'revenue' || metricKey === 'avg_sale') {
+    const n = cell.actual ?? 0;
+    const formatted =
+      n >= 1_00_000
+        ? `₹${(n / 1_00_000).toFixed(2)}L`
+        : `₹${n.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
+    return (
+      <span
+        className={
+          totalRow ? 'font-bold text-amber-950 dark:text-amber-50' : 'text-slate-800 dark:text-slate-100'
+        }
+      >
+        {formatted}
+      </span>
+    );
+  }
+
+  return (
+    <span className={totalRow ? 'font-bold text-amber-950 dark:text-amber-50' : ''}>{raw}</span>
+  );
+}
 
 function SubHeaderCells() {
   return (
@@ -37,7 +85,7 @@ function MonthTable({ month }: { month: FiveForThreeMonth }) {
       <h3 className="text-center text-sm font-bold text-slate-800 dark:text-slate-100 py-2 border-b border-amber-300/70 bg-amber-50/50 dark:bg-amber-950/20">
         {month.label}
       </h3>
-      <div className="overflow-x-auto custom-scrollbar max-h-[calc(100vh-12rem)] overflow-y-auto">
+      <div className="overflow-x-auto custom-scrollbar max-h-[min(32rem,calc(100vh-14rem))] overflow-y-auto pb-6 scroll-pb-6">
         <table className="w-full text-xs border-collapse min-w-[980px]">
           <thead className="sticky top-0 z-30">
             <tr className="bg-amber-200/90 dark:bg-amber-900/55 border-b border-amber-400/80">
@@ -108,11 +156,11 @@ function MonthTable({ month }: { month: FiveForThreeMonth }) {
                             {formatFiveForThreePlanned(metricKey, cell.planned)}
                           </td>
                           <td
-                            className={`px-1.5 py-1.5 text-right tabular-nums border-r border-amber-200/60 ${
-                              totalRow ? 'font-bold text-amber-950 dark:text-amber-50' : 'text-slate-800 dark:text-slate-100'
-                            }`}
+                            className={`px-1.5 py-1.5 tabular-nums border-r border-amber-200/60 ${
+                              metricKey === 'conversion_ratio' ? 'text-center' : 'text-right'
+                            } ${actualVsPlannedHighlightClass(cell.planned, cell.actual)}`}
                           >
-                            {formatFiveForThreeActual(metricKey, cell.actual)}
+                            {renderFiveForThreeActual(metricKey, cell, totalRow)}
                           </td>
                         </Fragment>
                       );

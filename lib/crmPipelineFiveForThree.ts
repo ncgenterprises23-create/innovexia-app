@@ -1,4 +1,5 @@
 import { parseSheetDate } from '@/lib/dateUtils';
+import { plannedCellKey, type SalesPerformancePlannedMap } from '@/lib/crmPipelineSalesPerformancePlanned';
 import {
   DASHBOARD_SECTION_TOTAL_LABEL,
   crmClientKey,
@@ -63,9 +64,27 @@ export type FiveForThreeBuildResult = {
 
 const UNASSIGNED = '(Unassigned)';
 
+/** Collapse spaces and lowercase — used to merge "Akas Das" / "Akas das" / "Akas  Das". */
+export function salespersonNormalizeKey(raw: unknown): string {
+  const s = String(raw ?? '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toLowerCase();
+  return s || UNASSIGNED.toLowerCase();
+}
+
+function salespersonDisplayName(normalizedKey: string): string {
+  if (normalizedKey === UNASSIGNED.toLowerCase()) return UNASSIGNED;
+  return normalizedKey
+    .split(' ')
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+/** Canonical salesperson label for grouping rows (case- and spacing-insensitive). */
 export function salespersonLabel(raw: unknown): string {
-  const s = String(raw ?? '').trim();
-  return s || UNASSIGNED;
+  return salespersonDisplayName(salespersonNormalizeKey(raw));
 }
 
 function activityDoneAt(act: any): string | null {
@@ -272,4 +291,69 @@ export function formatFiveForThreeActual(metric: FiveForThreeMetricKey, value: n
 export function formatFiveForThreePlanned(metric: FiveForThreeMetricKey, value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) return '—';
   return formatFiveForThreeActual(metric, value);
+}
+
+export function fiveForThreeWeekKeyFromLabel(label: string, fallbackIndex = 0): string {
+  const m = label.match(/^Week\s+(\d+)/i);
+  return m ? `w${m[1]}` : `w${fallbackIndex + 1}`;
+}
+
+export function applyPlannedMapToFiveForThree(
+  result: FiveForThreeBuildResult,
+  planned: SalesPerformancePlannedMap
+): FiveForThreeBuildResult {
+  const months = result.months.map((month) => ({
+    ...month,
+    weeks: month.weeks.map((week, wi) => {
+      const weekKey = fiveForThreeWeekKeyFromLabel(week.label, wi);
+      let sumLeads = 0;
+      let sumMeetings = 0;
+      let hasLeads = false;
+      let hasMeetings = false;
+
+      const rows = week.rows.map((row) => {
+        if (row.isTotal) return row;
+        const key = plannedCellKey(weekKey, row.salesperson);
+        const p = planned[key];
+        const leadsPlanned = p?.leads ?? null;
+        const meetingsPlanned = p?.meetings ?? null;
+        if (leadsPlanned != null) {
+          sumLeads += leadsPlanned;
+          hasLeads = true;
+        }
+        if (meetingsPlanned != null) {
+          sumMeetings += meetingsPlanned;
+          hasMeetings = true;
+        }
+        return {
+          ...row,
+          metrics: {
+            ...row.metrics,
+            leads: { ...row.metrics.leads, planned: leadsPlanned },
+            unique_meetings: { ...row.metrics.unique_meetings, planned: meetingsPlanned },
+          },
+        };
+      });
+
+      const totalIdx = rows.findIndex((r) => r.isTotal);
+      if (totalIdx >= 0) {
+        const total = rows[totalIdx];
+        rows[totalIdx] = {
+          ...total,
+          metrics: {
+            ...total.metrics,
+            leads: { ...total.metrics.leads, planned: hasLeads ? sumLeads : null },
+            unique_meetings: {
+              ...total.metrics.unique_meetings,
+              planned: hasMeetings ? sumMeetings : null,
+            },
+          },
+        };
+      }
+
+      return { ...week, rows };
+    }),
+  }));
+
+  return { months };
 }

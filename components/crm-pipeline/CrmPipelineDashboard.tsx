@@ -70,7 +70,7 @@ function SectionTable({
       <div
         className={`flex-1 min-h-0 rounded-lg ${LIGHT_SURFACE} ${DASH_SHADOW} flex flex-col overflow-hidden`}
       >
-        <div className="flex-1 min-h-0 overflow-auto custom-scrollbar crm-stage-lead-scroll max-h-[calc(100vh-10.5rem)]">
+        <div className="flex-1 min-h-0 overflow-auto custom-scrollbar crm-stage-lead-scroll max-h-[calc(100vh-10.5rem)] pb-6 scroll-pb-6">
           <table className="w-full text-xs border-collapse min-w-[720px]">
             <thead className="sticky top-0 z-30">
               <tr className="bg-amber-200/90 dark:bg-amber-900/55 border-b-2 border-amber-500/80 dark:border-amber-600 shadow-[0_1px_0_rgba(180,140,50,0.25)]">
@@ -210,8 +210,9 @@ export default function CrmPipelineDashboard({
       const res = await fetchDash(`/api/crm-pipeline/dashboard?${qs}`);
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Failed to load dashboard');
+      const report: DashboardReportMode = json.report === 'fiveFor3' ? 'fiveFor3' : 'fiveFor5';
       setData({
-        report: json.report === 'fiveFor3' ? 'fiveFor3' : 'fiveFor5',
+        report,
         columns: json.columns || [],
         sections: json.sections || [],
         months: json.months || [],
@@ -279,9 +280,7 @@ export default function CrmPipelineDashboard({
   };
 
   const pdfDisabled =
-    reportMode === 'fiveFor3'
-      ? !data?.months?.length
-      : !data?.sections?.[0] || !data?.columns?.length;
+    reportMode === 'fiveFor3' ? !data?.months?.length : !data?.sections?.[0] || !data?.columns?.length;
 
   const fieldClass =
     'w-full rounded-md border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 px-2 py-2 text-sm';
@@ -320,10 +319,8 @@ export default function CrmPipelineDashboard({
           aria-label="Report type"
         >
           <span
-            className={`absolute top-1 bottom-1 rounded-full bg-[var(--theme-primary)] shadow-md transition-all duration-200 ease-out ${
-              reportMode === 'fiveFor5'
-                ? 'left-1 right-[calc(50%+2px)]'
-                : 'left-[calc(50%+2px)] right-1'
+            className={`absolute top-1 bottom-1 w-[calc(50%-4px)] rounded-full bg-[var(--theme-primary)] shadow-md transition-all duration-200 ease-out ${
+              reportMode === 'fiveFor5' ? 'left-1' : 'left-1/2'
             }`}
             aria-hidden
           />
@@ -333,7 +330,7 @@ export default function CrmPipelineDashboard({
               setReportMode('fiveFor5');
               if (compare) setCompare(false);
             }}
-            className={`relative z-10 flex-1 rounded-full text-xs font-bold transition-colors ${
+            className={`relative z-10 flex-1 rounded-full text-[10px] font-bold transition-colors ${
               reportMode === 'fiveFor5' ? 'text-gray-900' : 'text-slate-600 dark:text-slate-300'
             }`}
           >
@@ -345,7 +342,7 @@ export default function CrmPipelineDashboard({
               setReportMode('fiveFor3');
               setCompare(false);
             }}
-            className={`relative z-10 flex-1 rounded-full text-xs font-bold transition-colors ${
+            className={`relative z-10 flex-1 rounded-full text-[10px] font-bold transition-colors ${
               reportMode === 'fiveFor3' ? 'text-gray-900' : 'text-slate-600 dark:text-slate-300'
             }`}
           >

@@ -5,7 +5,17 @@ import {
   getCrmActivitiesForPipelines,
   isSheetsQuotaError,
 } from '@/lib/crmPipelineSheets';
-import { buildCrmPipelineFiveForThree } from '@/lib/crmPipelineFiveForThree';
+import { applyPlannedMapToFiveForThree, buildCrmPipelineFiveForThree } from '@/lib/crmPipelineFiveForThree';
+import {
+  buildCrmPipelineSalesPerformance,
+  type SalesPerformanceStatusFilter,
+} from '@/lib/crmPipelineSalesPerformance';
+import {
+  applyPlannedMapToSalesPerformance,
+  plannedRowsToMap,
+  yearMonthFromDate,
+} from '@/lib/crmPipelineSalesPerformancePlanned';
+import { getSalesPerformancePlannedRows } from '@/lib/crmPipelineSheets';
 import {
   buildCrmPipelineDashboard,
   buildPipelineComparison,
@@ -35,12 +45,23 @@ export async function GET(request: NextRequest) {
     const pipelineIdsParam = searchParams.get('pipelineIds') || searchParams.get('pipelineId') || 'all';
     const mine = searchParams.get('mine') || undefined;
     const reportRaw = String(searchParams.get('report') || 'fiveFor5').toLowerCase();
-    const report = reportRaw === 'fivefor3' || reportRaw === 'five_for_3' ? 'fiveFor3' : 'fiveFor5';
+    const report =
+      reportRaw === 'fivefor3' || reportRaw === 'five_for_3'
+        ? 'fiveFor3'
+        : reportRaw === 'salesperformance' ||
+            reportRaw === 'sales_performance' ||
+            reportRaw === 'performance'
+          ? 'salesPerformance'
+          : 'fiveFor5';
 
     const granularity =
-      report === 'fiveFor3' ? 'month' : parseGranularity(searchParams.get('granularity'));
+      report === 'fiveFor3' || report === 'salesPerformance'
+        ? 'month'
+        : parseGranularity(searchParams.get('granularity'));
     const presetCount =
-      report === 'fiveFor3' ? 1 : parsePresetCount(searchParams.get('presetCount') || searchParams.get('presetMonths'));
+      report === 'fiveFor3' || report === 'salesPerformance'
+        ? 1
+        : parsePresetCount(searchParams.get('presetCount') || searchParams.get('presetMonths'));
     const { from, to } = parseDashboardRange(
       searchParams.get('from'),
       searchParams.get('to'),
@@ -82,13 +103,17 @@ export async function GET(request: NextRequest) {
     if (report === 'fiveFor3') {
       const effectiveGranularity = 'month' as const;
       const activities = await getCrmActivitiesForPipelines(ids);
-      const fiveForThree = buildCrmPipelineFiveForThree({
+      let fiveForThree = buildCrmPipelineFiveForThree({
         opportunities,
         activities,
         wonDatesByOppId,
         from,
         to,
       });
+      const yearMonthParam53 = String(searchParams.get('yearMonth') || '').trim();
+      const yearMonth53 = yearMonthParam53 || yearMonthFromDate(to);
+      const plannedRows53 = await getSalesPerformancePlannedRows(primaryId, yearMonth53);
+      fiveForThree = applyPlannedMapToFiveForThree(fiveForThree, plannedRowsToMap(plannedRows53));
       return NextResponse.json({
         report: 'fiveFor3',
         pipelineId: primaryId,
@@ -98,6 +123,39 @@ export async function GET(request: NextRequest) {
         to: to.toISOString(),
         granularity: effectiveGranularity,
         months: fiveForThree.months,
+      });
+    }
+
+    if (report === 'salesPerformance') {
+      const statusRaw = String(searchParams.get('status') || 'all').toLowerCase();
+      const statusFilter: SalesPerformanceStatusFilter =
+        statusRaw === 'open' || statusRaw === 'won' || statusRaw === 'lost' ? statusRaw : 'all';
+      const activities = await getCrmActivitiesForPipelines(ids);
+      let performance = buildCrmPipelineSalesPerformance({
+        opportunities,
+        activities,
+        wonDatesByOppId,
+        to,
+        statusFilter,
+      });
+      const yearMonthParam = String(searchParams.get('yearMonth') || '').trim();
+      const yearMonth = yearMonthParam || yearMonthFromDate(to);
+      const plannedRows = await getSalesPerformancePlannedRows(primaryId, yearMonth);
+      performance = applyPlannedMapToSalesPerformance(performance, plannedRowsToMap(plannedRows));
+      performance = {
+        ...performance,
+        plannedContext: { pipelineId: primaryId, yearMonth },
+      };
+      return NextResponse.json({
+        report: 'salesPerformance',
+        pipelineId: primaryId,
+        pipelineName: scopeAll ? 'All pipelines' : nameById.get(primaryId) || primaryId,
+        scopeAll,
+        from: from.toISOString(),
+        to: to.toISOString(),
+        granularity: 'month' as const,
+        statusFilter,
+        salesPerformance: performance,
       });
     }
 
