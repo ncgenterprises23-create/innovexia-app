@@ -19,7 +19,18 @@ import CrmPipelinePerformanceKpiStrip from '@/components/crm-pipeline/CrmPipelin
 import CrmPipelinePerformanceTable from '@/components/crm-pipeline/CrmPipelinePerformanceTable';
 import CrmPipelineRevenueProfitChart from '@/components/crm-pipeline/CrmPipelineRevenueProfitChart';
 import CrmPipelinePerformanceNotes from '@/components/crm-pipeline/CrmPipelinePerformanceNotes';
-import type { SalesPerformanceServerFilters } from '@/components/crm-pipeline/CrmPipelineSalesPerformanceDashboard';
+import {
+  createDefaultSalesPerformanceServerFilters,
+  type SalesPerformanceServerFilters,
+} from '@/components/crm-pipeline/CrmPipelineSalesPerformanceDashboard';
+import CrmPipelineSalesPerformanceInspectSidebar from '@/components/crm-pipeline/CrmPipelineSalesPerformanceInspectSidebar';
+import type { SalesPerformanceInspectCellPayload } from '@/components/crm-pipeline/CrmPipelinePerformanceTable';
+import type { SalesPerformanceInspectResult } from '@/lib/crmPipelineSalesPerformanceInspect';
+import {
+  displayTitleWithClip,
+  monthKeyForClip,
+  resolveSalesPerformanceClip,
+} from '@/lib/crmSalesPerformanceDateRange';
 import { useToast } from '@/components/ToastProvider';
 
 type PipelineOption = { id: string; name: string };
@@ -39,6 +50,7 @@ type Props = {
   canEditPlanned?: boolean;
   currentUserRole?: string;
   onPlannedSaved?: () => void;
+  myOnly?: boolean;
 };
 
 function filtersToDraft(server: SalesPerformanceServerFilters): PerformanceFilterState {
@@ -102,6 +114,7 @@ export default function CrmPipelineSalesPerformanceView({
   canEditPlanned = false,
   currentUserRole,
   onPlannedSaved,
+  myOnly = false,
 }: Props) {
   const toast = useToast();
   const [draft, setDraft] = useState<PerformanceFilterState>(() => filtersToDraft(serverFilters));
@@ -114,6 +127,10 @@ export default function CrmPipelineSalesPerformanceView({
   const [plannedEdits, setPlannedEdits] = useState<PlannedEditsState>({});
   const [savedBaseline, setSavedBaseline] = useState<PlannedEditsState>({});
   const [savingPlanned, setSavingPlanned] = useState(false);
+  const [inspectOpen, setInspectOpen] = useState(false);
+  const [inspectLoading, setInspectLoading] = useState(false);
+  const [inspectError, setInspectError] = useState<string | null>(null);
+  const [inspectData, setInspectData] = useState<SalesPerformanceInspectResult | null>(null);
 
   const plannedContext = data.plannedContext;
 
@@ -227,6 +244,19 @@ export default function CrmPipelineSalesPerformanceView({
     }
   };
 
+  const handleResetFilters = () => {
+    const defaults = createDefaultSalesPerformanceServerFilters();
+    setDraft({
+      pipelineId: defaults.pipelineId,
+      monthKey: defaults.monthKey,
+      weekKey: 'all',
+      salesperson: 'all',
+      status: defaults.status,
+    });
+    setAppliedClient({ weekKey: 'all', salesperson: 'all' });
+    onApplyServerFilters(defaults);
+  };
+
   const handleApply = () => {
     const serverChanged =
       draft.pipelineId !== serverFilters.pipelineId ||
@@ -238,6 +268,9 @@ export default function CrmPipelineSalesPerformanceView({
         pipelineId: draft.pipelineId,
         monthKey: draft.monthKey,
         status: draft.status,
+        datePreset: 'month',
+        customFrom: serverFilters.customFrom,
+        customTo: serverFilters.customTo,
       });
     }
     setAppliedClient({
@@ -246,7 +279,78 @@ export default function CrmPipelineSalesPerformanceView({
     });
   };
 
+  const handleInspectActual = useCallback(
+    async (cell: SalesPerformanceInspectCellPayload) => {
+      setInspectOpen(true);
+      setInspectLoading(true);
+      setInspectError(null);
+      setInspectData(null);
+      try {
+        const clip = resolveSalesPerformanceClip(
+          serverFilters.datePreset,
+          serverFilters.customFrom,
+          serverFilters.customTo
+        );
+        const yearMonth = monthKeyForClip(clip, serverFilters.monthKey);
+        const qs = new URLSearchParams();
+        qs.set('pipelineIds', draft.pipelineId);
+        qs.set('yearMonth', yearMonth);
+        qs.set('weekKey', cell.weekKey);
+        qs.set('salesperson', cell.salesperson);
+        qs.set('metric', cell.metric);
+        if (cell.isTotal) qs.set('isTotal', '1');
+        if (serverFilters.status !== 'all') qs.set('status', serverFilters.status);
+        if (clip) {
+          qs.set('clipFrom', new Date(clip.startMs).toISOString());
+          qs.set('clipTo', new Date(clip.endMs).toISOString());
+          if (clip.label) qs.set('clipLabel', clip.label);
+        }
+        if (myOnly && currentUsername) qs.set('mine', currentUsername);
+        const res = await fetch(`/api/crm-pipeline/sales-performance-inspect?${qs}`);
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error || 'Failed to load details');
+        setInspectData(json.inspect ?? null);
+      } catch (e) {
+        setInspectError(e instanceof Error ? e.message : 'Failed to load details');
+      } finally {
+        setInspectLoading(false);
+      }
+    },
+    [
+      serverFilters,
+      draft.pipelineId,
+      myOnly,
+      currentUsername,
+    ]
+  );
+
+  const handleToggleToday = () => {
+    const nextPreset = serverFilters.datePreset === 'today' ? 'month' : 'today';
+    const clip = resolveSalesPerformanceClip(
+      nextPreset,
+      serverFilters.customFrom,
+      serverFilters.customTo
+    );
+    const monthKey = monthKeyForClip(clip, draft.monthKey);
+    onApplyServerFilters({
+      ...serverFilters,
+      datePreset: nextPreset,
+      monthKey,
+      pipelineId: draft.pipelineId,
+      status: draft.status,
+    });
+    setDraft((d) => ({ ...d, monthKey }));
+  };
+
   return (
+    <>
+      <CrmPipelineSalesPerformanceInspectSidebar
+        open={inspectOpen}
+        onClose={() => setInspectOpen(false)}
+        loading={inspectLoading}
+        error={inspectError}
+        data={inspectData}
+      />
     <div className="flex-1 min-h-0 flex flex-col gap-3 overflow-y-auto overflow-x-hidden custom-scrollbar pr-1 pb-2">
       <CrmPipelinePerformanceFilterBar
         pipelines={pipelineOptions}
@@ -256,6 +360,9 @@ export default function CrmPipelineSalesPerformanceView({
         draft={draft}
         onDraftChange={setDraft}
         onApply={handleApply}
+        onReset={handleResetFilters}
+        todayActive={serverFilters.datePreset === 'today'}
+        onToggleToday={handleToggleToday}
       />
       <CrmPipelinePerformanceKpiStrip summary={viewData.kpiSummary} />
       {plannedContext ? (
@@ -284,10 +391,19 @@ export default function CrmPipelineSalesPerformanceView({
         </div>
       ) : null}
       <CrmPipelinePerformanceTable
-        monthLabel={data.monthLabel}
+        monthLabel={
+          data.rangeLabel
+            ? displayTitleWithClip(data.monthLabel, {
+                startMs: 0,
+                endMs: 0,
+                label: data.rangeLabel,
+              })
+            : data.monthLabel
+        }
         weeks={displayWeeks}
         editablePlanned={Boolean(plannedContext) && canEditPlanned}
         onPlannedChange={handlePlannedChange}
+        onInspectActual={(cell) => void handleInspectActual(cell)}
       />
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 shrink-0 min-h-[20rem]">
         <div className="lg:col-span-2">
@@ -299,5 +415,6 @@ export default function CrmPipelineSalesPerformanceView({
         <CrmPipelinePerformanceNotes />
       </div>
     </div>
+    </>
   );
 }

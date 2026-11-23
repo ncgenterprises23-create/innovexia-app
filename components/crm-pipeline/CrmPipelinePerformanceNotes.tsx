@@ -21,6 +21,18 @@ export default function CrmPipelinePerformanceNotes() {
           Double-click <strong>Planned by us</strong> in the table, then use <strong>Save planned targets</strong>.
           Values are stored on the <em>Sales Performance Planned</em> sheet (pipeline + month + week + salesperson).
         </li>
+        <li>
+          <strong>Today</strong> (next to Reset) limits <em>actual</em> leads, meetings, and revenue to today (IST).
+          <strong> Month</strong> still sets which month’s weeks and planned targets load.
+        </li>
+        <li>
+          Click any <strong>actual</strong>, conversion %, or ₹ amount in the table to open the inspect sidebar and see
+          which rows drove that number. Search or export CSV from the sidebar.
+        </li>
+        <li>
+          Use <strong>Reset</strong> to return to all pipelines, current month, full-month actuals, and all
+          week/salesperson picks.
+        </li>
       </ul>
     </div>
   );

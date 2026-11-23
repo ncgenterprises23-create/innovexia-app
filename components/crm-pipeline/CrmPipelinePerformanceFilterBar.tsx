@@ -1,6 +1,6 @@
 'use client';
 
-import { Filter } from 'lucide-react';
+import { Filter, RotateCcw } from 'lucide-react';
 import type { SalesPerformanceStatusFilter } from '@/lib/crmPipelineSalesPerformance';
 
 export type PerformanceFilterState = {
@@ -21,6 +21,9 @@ type Props = {
   draft: PerformanceFilterState;
   onDraftChange: (next: PerformanceFilterState) => void;
   onApply: () => void;
+  onReset?: () => void;
+  todayActive?: boolean;
+  onToggleToday?: () => void;
 };
 
 export default function CrmPipelinePerformanceFilterBar({
@@ -31,6 +34,9 @@ export default function CrmPipelinePerformanceFilterBar({
   draft,
   onDraftChange,
   onApply,
+  onReset,
+  todayActive = false,
+  onToggleToday,
 }: Props) {
   const fieldClass =
     'rounded-lg border border-[var(--theme-primary)]/25 bg-white dark:bg-slate-900 px-2.5 py-2 text-sm min-w-0';
@@ -89,7 +95,7 @@ export default function CrmPipelinePerformanceFilterBar({
       </div>
       <div className="min-w-[11rem] flex-1">
         <label className="block text-[10px] font-bold uppercase tracking-wide text-slate-600 dark:text-slate-400 mb-1">
-          Date range
+          Month
         </label>
         <select
           className={`${fieldClass} w-full`}
@@ -120,14 +126,41 @@ export default function CrmPipelinePerformanceFilterBar({
           <option value="lost">Lost</option>
         </select>
       </div>
-      <button
-        type="button"
-        onClick={onApply}
-        className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[var(--theme-primary)] text-gray-900 text-sm font-bold shadow-md hover:brightness-105 shrink-0"
-      >
-        <Filter size={16} />
-        Apply filters
-      </button>
+      <div className="flex flex-wrap items-center gap-2 shrink-0">
+        {onToggleToday ? (
+          <button
+            type="button"
+            onClick={onToggleToday}
+            className={`inline-flex items-center justify-center px-4 py-2 rounded-lg text-sm font-bold border shadow-sm transition-colors ${
+              todayActive
+                ? 'bg-[var(--theme-primary)] text-gray-900 border-[var(--theme-primary)]'
+                : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 border-[var(--theme-primary)]/30 hover:bg-amber-50/80'
+            }`}
+            title={todayActive ? 'Showing today only — click to use full month' : 'Filter actuals to today only'}
+          >
+            Today
+          </button>
+        ) : null}
+        {onReset ? (
+          <button
+            type="button"
+            onClick={onReset}
+            className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 text-sm font-semibold hover:bg-slate-50 dark:hover:bg-slate-800"
+            title="Reset filters to defaults"
+          >
+            <RotateCcw size={16} />
+            Reset
+          </button>
+        ) : null}
+        <button
+          type="button"
+          onClick={onApply}
+          className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[var(--theme-primary)] text-gray-900 text-sm font-bold shadow-md hover:brightness-105"
+        >
+          <Filter size={16} />
+          Apply filters
+        </button>
+      </div>
     </div>
   );
 }

@@ -130,13 +130,26 @@ export async function GET(request: NextRequest) {
       const statusRaw = String(searchParams.get('status') || 'all').toLowerCase();
       const statusFilter: SalesPerformanceStatusFilter =
         statusRaw === 'open' || statusRaw === 'won' || statusRaw === 'lost' ? statusRaw : 'all';
+      const clipFrom = String(searchParams.get('clipFrom') || '').trim();
+      const clipTo = String(searchParams.get('clipTo') || '').trim();
+      const clipLabel = String(searchParams.get('clipLabel') || '').trim();
+      let clipRange: { startMs: number; endMs: number; label?: string } | undefined;
+      if (clipFrom && clipTo) {
+        const startMs = Date.parse(clipFrom);
+        const endMs = Date.parse(clipTo);
+        if (Number.isFinite(startMs) && Number.isFinite(endMs) && endMs >= startMs) {
+          clipRange = { startMs, endMs, label: clipLabel || undefined };
+        }
+      }
+      const buildTo = clipRange ? new Date(clipRange.endMs) : to;
       const activities = await getCrmActivitiesForPipelines(ids);
       let performance = buildCrmPipelineSalesPerformance({
         opportunities,
         activities,
         wonDatesByOppId,
-        to,
+        to: buildTo,
         statusFilter,
+        clipRange,
       });
       const yearMonthParam = String(searchParams.get('yearMonth') || '').trim();
       const yearMonth = yearMonthParam || yearMonthFromDate(to);

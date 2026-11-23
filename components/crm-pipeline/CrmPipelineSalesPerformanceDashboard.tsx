@@ -9,6 +9,13 @@ import type {
   SalesPerformanceBuildResult,
   SalesPerformanceStatusFilter,
 } from '@/lib/crmPipelineSalesPerformance';
+import {
+  defaultCustomRange,
+  displayTitleWithClip,
+  monthKeyForClip,
+  resolveSalesPerformanceClip,
+  type SalesPerformanceDatePreset,
+} from '@/lib/crmSalesPerformanceDateRange';
 
 type PipelineOption = { id: string; name: string };
 
@@ -56,7 +63,22 @@ export type SalesPerformanceServerFilters = {
   pipelineId: string;
   monthKey: string;
   status: SalesPerformanceStatusFilter;
+  datePreset: SalesPerformanceDatePreset;
+  customFrom: string;
+  customTo: string;
 };
+
+export function createDefaultSalesPerformanceServerFilters(): SalesPerformanceServerFilters {
+  const custom = defaultCustomRange();
+  return {
+    pipelineId: CRM_DASHBOARD_ALL_PIPELINES,
+    monthKey: currentMonthKey(),
+    status: 'all',
+    datePreset: 'month',
+    customFrom: custom.from,
+    customTo: custom.to,
+  };
+}
 
 export default function CrmPipelineSalesPerformanceDashboard({
   pipelines,
@@ -77,10 +99,14 @@ export default function CrmPipelineSalesPerformanceDashboard({
     [pipelines]
   );
 
+  const defaultCustom = useMemo(() => defaultCustomRange(), []);
   const [serverFilters, setServerFilters] = useState<SalesPerformanceServerFilters>({
     pipelineId: CRM_DASHBOARD_ALL_PIPELINES,
     monthKey: currentMonthKey(),
     status: 'all',
+    datePreset: 'month',
+    customFrom: defaultCustom.from,
+    customTo: defaultCustom.to,
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -97,8 +123,19 @@ export default function CrmPipelineSalesPerformanceDashboard({
       qs.set('presetCount', '1');
       qs.set('granularity', 'month');
       qs.set('report', 'salesPerformance');
-      qs.set('to', monthEndIso(serverFilters.monthKey));
-      qs.set('yearMonth', serverFilters.monthKey);
+      const clip = resolveSalesPerformanceClip(
+        serverFilters.datePreset,
+        serverFilters.customFrom,
+        serverFilters.customTo
+      );
+      const yearMonth = monthKeyForClip(clip, serverFilters.monthKey);
+      qs.set('to', clip ? new Date(clip.endMs).toISOString() : monthEndIso(yearMonth));
+      qs.set('yearMonth', yearMonth);
+      if (clip) {
+        qs.set('clipFrom', new Date(clip.startMs).toISOString());
+        qs.set('clipTo', new Date(clip.endMs).toISOString());
+        qs.set('clipLabel', clip.label);
+      }
       if (serverFilters.status !== 'all') qs.set('status', serverFilters.status);
       if (myOnly && currentUsername) qs.set('mine', currentUsername);
       const res = await fetchDash(`/api/crm-pipeline/dashboard?${qs}`);
@@ -118,7 +155,18 @@ export default function CrmPipelineSalesPerformanceDashboard({
     void load();
   }, [load]);
 
-  const title = `Sales Performance (${salesPerformance?.monthLabel || 'This month'})`;
+  const activeClip = useMemo(
+    () =>
+      resolveSalesPerformanceClip(
+        serverFilters.datePreset,
+        serverFilters.customFrom,
+        serverFilters.customTo
+      ),
+    [serverFilters.datePreset, serverFilters.customFrom, serverFilters.customTo]
+  );
+  const title = salesPerformance
+    ? `Sales Performance (${displayTitleWithClip(salesPerformance.monthLabel, activeClip)})`
+    : 'Sales Performance';
 
   return (
     <>
@@ -162,6 +210,7 @@ export default function CrmPipelineSalesPerformanceDashboard({
             canEditPlanned={canEditPlanned}
             currentUserRole={currentUserRole}
             onPlannedSaved={() => void load()}
+            myOnly={myOnly}
           />
         )}
       </div>

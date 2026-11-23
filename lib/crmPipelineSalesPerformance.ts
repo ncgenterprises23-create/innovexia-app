@@ -71,8 +71,15 @@ export type SalesPerformancePlannedContext = {
   yearMonth: string;
 };
 
+export type SalesPerformanceClipRange = {
+  startMs: number;
+  endMs: number;
+  label?: string;
+};
+
 export type SalesPerformanceBuildResult = {
   monthLabel: string;
+  rangeLabel?: string;
   plannedContext?: SalesPerformancePlannedContext;
   weeks: SalesPerformanceWeek[];
   flatRows: SalesPerformanceRow[];
@@ -290,14 +297,31 @@ export type BuildSalesPerformanceParams = {
   wonDatesByOppId: Record<string, string>;
   to: Date;
   statusFilter?: SalesPerformanceStatusFilter;
+  clipRange?: SalesPerformanceClipRange;
 };
+
+function bucketRangeForClip(
+  bucketStart: number,
+  bucketEnd: number,
+  clip?: SalesPerformanceClipRange
+): { start: number; end: number } | null {
+  if (!clip) return { start: bucketStart, end: bucketEnd };
+  const start = Math.max(bucketStart, clip.startMs);
+  const end = Math.min(bucketEnd, clip.endMs);
+  if (end < start) return null;
+  return { start, end };
+}
+
+function crmInEffectiveRange(iso: string | null | undefined, range: { start: number; end: number }): boolean {
+  return crmInRange(iso ?? null, range.start, range.end);
+}
 
 export function buildCrmPipelineSalesPerformance(
   params: BuildSalesPerformanceParams
 ): SalesPerformanceBuildResult {
   const statusFilter = params.statusFilter ?? 'all';
   const opportunities = filterOpportunitiesByStatus(params.opportunities, statusFilter);
-  const { activities, wonDatesByOppId, to } = params;
+  const { activities, wonDatesByOppId, to, clipRange } = params;
 
   const oppById = new Map<string, any>();
   for (const o of opportunities) oppById.set(String(o.id), o);
@@ -306,17 +330,35 @@ export function buildCrmPipelineSalesPerformance(
   const { year, month } = singleDisplayMonth(to);
   const weekDefs = buildMonthWeekBuckets(year, month);
 
-  const weeks: SalesPerformanceWeek[] = weekDefs.map((def, wi) => {
+  let weeks: SalesPerformanceWeek[] = weekDefs.map((def, wi) => {
     const weekNumMatch = def.label.match(/^Week\s+(\d+)/i);
     const weekKey = weekNumMatch ? `w${weekNumMatch[1]}` : `w${wi + 1}`;
     const perSp = new Map<string, WeekAccum>();
     for (const sp of salespeople) perSp.set(sp, newWeekAccum());
     const totalAcc = newWeekAccum();
+    const effective = bucketRangeForClip(def.start, def.end, clipRange);
+    if (!effective) {
+      const rows: SalesPerformanceRow[] = salespeople.map((sp) => ({
+        weekKey,
+        weekLabel: def.label,
+        salesperson: sp,
+        isTotal: false,
+        metrics: finalizeMetrics(newWeekAccum()),
+      }));
+      rows.push({
+        weekKey,
+        weekLabel: def.label,
+        salesperson: DASHBOARD_SECTION_TOTAL_LABEL,
+        isTotal: true,
+        metrics: finalizeMetrics(newWeekAccum()),
+      });
+      return { weekKey, weekLabel: def.label, start: def.start, end: def.end, rows };
+    }
 
     for (const o of opportunities) {
       const sp = salespersonLabel(o.salesperson);
       const created = crmCreatedIso(o);
-      if (crmInRange(created, def.start, def.end)) {
+      if (crmInEffectiveRange(created, effective)) {
         const acc = perSp.get(sp) || newWeekAccum();
         if (!perSp.has(sp)) perSp.set(sp, acc);
         acc.leads += 1;
@@ -324,7 +366,7 @@ export function buildCrmPipelineSalesPerformance(
       }
 
       const won = crmWonIso(o, wonDatesByOppId);
-      if (String(o.outcome || '').toLowerCase() === 'won' && crmInRange(won, def.start, def.end)) {
+      if (String(o.outcome || '').toLowerCase() === 'won' && crmInEffectiveRange(won, effective)) {
         const key = crmClientKey(o);
         const acc = perSp.get(sp) || newWeekAccum();
         if (!perSp.has(sp)) perSp.set(sp, acc);
@@ -340,7 +382,7 @@ export function buildCrmPipelineSalesPerformance(
     for (const act of activities) {
       if (!isCompletedFollowUp(act)) continue;
       const at = activityDoneAt(act);
-      if (!crmInRange(at, def.start, def.end)) continue;
+      if (!crmInEffectiveRange(at, effective)) continue;
       const opp = oppById.get(String(act.opportunity_id));
       if (!opp) continue;
       if (!oppMatchesStatus(opp, statusFilter)) continue;
@@ -371,6 +413,10 @@ export function buildCrmPipelineSalesPerformance(
     return { weekKey, weekLabel: def.label, start: def.start, end: def.end, rows };
   });
 
+  if (clipRange) {
+    weeks = weeks.filter((w) => w.end > clipRange.startMs && w.start < clipRange.endMs);
+  }
+
   const flatRows = weeks.flatMap((w) => w.rows);
   const kpiSummary = summarizeSalesPerformanceFromWeeks(weeks);
   const chartSeries = chartSeriesFromWeeks(weeks);
@@ -378,6 +424,7 @@ export function buildCrmPipelineSalesPerformance(
 
   return {
     monthLabel: monthLabel(year, month),
+    rangeLabel: clipRange?.label,
     weeks,
     flatRows,
     salespeople,

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import {
   formatSalesPerformanceActual,
   formatSalesPerformanceCurrency,
+  type SalesPerformanceMetricKey,
   type SalesPerformanceRow,
   type SalesPerformanceWeek,
 } from '@/lib/crmPipelineSalesPerformance';
@@ -26,27 +27,139 @@ function conversionBadgeClass(value: number): string {
   return 'bg-sky-100 text-sky-900 ring-1 ring-sky-300/80';
 }
 
-function ConversionBadge({ value }: { value: number | null | undefined }) {
+function ConversionBadge({
+  value,
+  row,
+  weekLabel,
+  onInspect,
+}: {
+  value: number | null | undefined;
+  row: SalesPerformanceRow;
+  weekLabel: string;
+  onInspect?: (payload: SalesPerformanceInspectCellPayload) => void;
+}) {
   const text = formatSalesPerformanceActual('conversion_ratio', value);
   if (text === '—') return <span className="text-slate-400">—</span>;
   const v = typeof value === 'number' && Number.isFinite(value) ? value : 0;
-  return (
+  const inner = (
     <span
       className={`inline-flex items-center justify-center min-w-[3.5rem] px-2.5 py-0.5 rounded-full text-[11px] font-bold tabular-nums ${conversionBadgeClass(v)}`}
     >
       {text}
     </span>
   );
+  if (!onInspect) return inner;
+  return (
+    <button
+      type="button"
+      className="mx-auto block rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/80"
+      title="Inspect meetings and won clients"
+      onClick={() =>
+        onInspect({
+          weekKey: row.weekKey,
+          weekLabel,
+          salesperson: row.salesperson,
+          isTotal: row.isTotal,
+          metric: 'conversion_ratio',
+        })
+      }
+    >
+      {inner}
+    </button>
+  );
 }
 
-function MoneyCell({ value }: { value: number | null | undefined }) {
+export type SalesPerformanceInspectCellPayload = {
+  weekKey: string;
+  weekLabel: string;
+  salesperson: string;
+  isTotal: boolean;
+  metric: SalesPerformanceMetricKey;
+};
+
+const INSPECT_BTN =
+  'w-full min-h-[1.35rem] rounded px-1 text-center tabular-nums font-medium underline-offset-2 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/80 cursor-pointer';
+
+function InspectableActual({
+  metric,
+  value,
+  row,
+  weekLabel,
+  onInspect,
+  className = '',
+}: {
+  metric: SalesPerformanceMetricKey;
+  value: number | null | undefined;
+  row: SalesPerformanceRow;
+  weekLabel: string;
+  onInspect?: (payload: SalesPerformanceInspectCellPayload) => void;
+  className?: string;
+}) {
+  const text = formatSalesPerformanceActual(metric, value);
+  if (text === '—' || !onInspect) {
+    return <span className={`tabular-nums ${className}`}>{text}</span>;
+  }
+  return (
+    <button
+      type="button"
+      className={`${INSPECT_BTN} ${className}`}
+      title="Inspect records behind this number"
+      onClick={() =>
+        onInspect({
+          weekKey: row.weekKey,
+          weekLabel,
+          salesperson: row.salesperson,
+          isTotal: row.isTotal,
+          metric,
+        })
+      }
+    >
+      {text}
+    </button>
+  );
+}
+
+function InspectableMoney({
+  metric,
+  value,
+  row,
+  weekLabel,
+  onInspect,
+}: {
+  metric: 'revenue' | 'costing' | 'profit';
+  value: number | null | undefined;
+  row: SalesPerformanceRow;
+  weekLabel: string;
+  onInspect?: (payload: SalesPerformanceInspectCellPayload) => void;
+}) {
   if (value == null || !Number.isFinite(value)) {
     return <span className="text-slate-400">—</span>;
   }
+  const formatted = formatSalesPerformanceCurrency(value);
+  if (!onInspect) {
+    return (
+      <span className="inline-flex items-center justify-center gap-0.5 tabular-nums font-medium text-slate-800 dark:text-slate-100">
+        {formatted}
+      </span>
+    );
+  }
   return (
-    <span className="inline-flex items-center justify-center gap-0.5 tabular-nums font-medium text-slate-800 dark:text-slate-100">
-      {formatSalesPerformanceCurrency(value)}
-    </span>
+    <button
+      type="button"
+      className={`${INSPECT_BTN} text-slate-800 dark:text-slate-100`}
+      title="Inspect won deals behind this amount"
+      onClick={() =>
+        onInspect({
+          weekKey: row.weekKey,
+          weekLabel,
+          salesperson: row.salesperson,
+          isTotal: row.isTotal,
+          metric,
+        })
+      }
+    >
+      {formatted}
+    </button>
   );
 }
 
@@ -138,6 +251,7 @@ type Props = {
     field: PlannedField,
     value: number | null
   ) => void;
+  onInspectActual?: (payload: SalesPerformanceInspectCellPayload) => void;
 };
 
 export default function CrmPipelinePerformanceTable({
@@ -145,6 +259,7 @@ export default function CrmPipelinePerformanceTable({
   weeks,
   editablePlanned = false,
   onPlannedChange,
+  onInspectActual,
 }: Props) {
   const [editingKey, setEditingKey] = useState<string | null>(null);
   if (weeks.length === 0) {
@@ -281,7 +396,13 @@ export default function CrmPipelinePerformanceTable({
                         row.metrics.leads.actual
                       )}`}
                     >
-                      {formatSalesPerformanceActual('leads', row.metrics.leads.actual)}
+                      <InspectableActual
+                        metric="leads"
+                        value={row.metrics.leads.actual}
+                        row={row}
+                        weekLabel={week.label}
+                        onInspect={onInspectActual}
+                      />
                     </td>
                     <td className="px-1.5 py-1.5 text-center border-r border-amber-100/80">
                       <PlannedEditCell
@@ -307,19 +428,48 @@ export default function CrmPipelinePerformanceTable({
                         row.metrics.meetings.actual
                       )}`}
                     >
-                      {formatSalesPerformanceActual('meetings', row.metrics.meetings.actual)}
+                      <InspectableActual
+                        metric="meetings"
+                        value={row.metrics.meetings.actual}
+                        row={row}
+                        weekLabel={week.label}
+                        onInspect={onInspectActual}
+                      />
                     </td>
                     <td className="px-1.5 py-1.5 text-center border-r border-amber-100/80">
-                      <ConversionBadge value={conv} />
+                      <ConversionBadge
+                        value={conv}
+                        row={row}
+                        weekLabel={week.label}
+                        onInspect={onInspectActual}
+                      />
                     </td>
                     <td className="px-2 py-1.5 text-center border-r border-amber-100/80">
-                      <MoneyCell value={row.metrics.revenue.actual} />
+                      <InspectableMoney
+                        metric="revenue"
+                        value={row.metrics.revenue.actual}
+                        row={row}
+                        weekLabel={week.label}
+                        onInspect={onInspectActual}
+                      />
                     </td>
                     <td className="px-2 py-1.5 text-center border-r border-amber-100/80">
-                      <MoneyCell value={row.metrics.costing.actual} />
+                      <InspectableMoney
+                        metric="costing"
+                        value={row.metrics.costing.actual}
+                        row={row}
+                        weekLabel={week.label}
+                        onInspect={onInspectActual}
+                      />
                     </td>
                     <td className="px-2 py-1.5 text-center font-bold text-amber-900 dark:text-amber-200">
-                      <MoneyCell value={row.metrics.profit.actual} />
+                      <InspectableMoney
+                        metric="profit"
+                        value={row.metrics.profit.actual}
+                        row={row}
+                        weekLabel={week.label}
+                        onInspect={onInspectActual}
+                      />
                     </td>
                   </tr>
                 );
