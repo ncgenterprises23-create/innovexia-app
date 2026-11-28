@@ -173,7 +173,13 @@ function weekDateRangeLabel(label: string): string {
   return m ? m[1].trim() : '';
 }
 
-type PlannedField = 'leads' | 'meetings';
+type PlannedField = 'leads' | 'meetings' | 'revenue';
+
+function formatPlannedCellDisplay(field: PlannedField, value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return '—';
+  if (field === 'revenue') return formatSalesPerformanceCurrency(value);
+  return formatSalesPerformancePlanned(value);
+}
 
 function PlannedEditCell({
   weekKey,
@@ -206,7 +212,7 @@ function PlannedEditCell({
     const hasValue = value != null && Number.isFinite(value);
     return (
       <span className={`tabular-nums ${hasValue ? 'text-slate-800 font-medium' : 'text-slate-400'}`}>
-        {formatSalesPerformancePlanned(value)}
+        {formatPlannedCellDisplay(field, value)}
       </span>
     );
   }
@@ -217,9 +223,15 @@ function PlannedEditCell({
         ref={inputRef}
         type="number"
         min={0}
-        step={1}
-        defaultValue={value != null && Number.isFinite(value) ? String(Math.round(value)) : ''}
-        className="w-14 max-w-full mx-auto block text-center text-xs rounded border border-amber-400 bg-white px-1 py-0.5"
+        step={field === 'revenue' ? 'any' : 1}
+        defaultValue={
+          value != null && Number.isFinite(value)
+            ? field === 'revenue'
+              ? String(value)
+              : String(Math.round(value))
+            : ''
+        }
+        className={`${field === 'revenue' ? 'w-20' : 'w-14'} max-w-full mx-auto block text-center text-xs rounded border border-amber-400 bg-white px-1 py-0.5`}
         onBlur={(e) => onCommit(weekKey, salesperson, field, e.target.value)}
         onKeyDown={(e) => {
           if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
@@ -236,7 +248,7 @@ function PlannedEditCell({
       title="Double-click to edit planned target"
       onDoubleClick={() => onStartEdit(cellId)}
     >
-      {formatSalesPerformancePlanned(value)}
+      {formatPlannedCellDisplay(field, value)}
     </button>
   );
 }
@@ -306,7 +318,7 @@ export default function CrmPipelinePerformanceTable({
                 <br />
                 <span className="font-semibold text-[9px]">(Meetings → Clients)</span>
               </th>
-              <th rowSpan={2} className={`text-center font-bold px-2 py-2 min-w-[6.5rem] ${TH_MAIN}`}>
+              <th colSpan={2} className={`text-center font-bold px-1 py-1.5 text-[10px] leading-snug ${TH_MAIN}`}>
                 Revenue
               </th>
               <th rowSpan={2} className={`text-center font-bold px-2 py-2 min-w-[6rem] ${TH_MAIN}`}>
@@ -330,6 +342,12 @@ export default function CrmPipelinePerformanceTable({
               </th>
               <th className="text-center font-semibold px-1 py-1 text-[10px] border-r border-amber-300/70">
                 Actual no.
+              </th>
+              <th className="text-center font-semibold px-1 py-1 text-[10px] border-r border-amber-300/70">
+                Planned by us
+              </th>
+              <th className="text-center font-semibold px-1 py-1 text-[10px] border-r border-amber-300/70">
+                Actual
               </th>
             </tr>
           </thead>
@@ -444,7 +462,30 @@ export default function CrmPipelinePerformanceTable({
                         onInspect={onInspectActual}
                       />
                     </td>
-                    <td className="px-2 py-1.5 text-center border-r border-amber-100/80">
+                    <td className="px-1.5 py-1.5 text-center border-r border-amber-100/80">
+                      <PlannedEditCell
+                        weekKey={row.weekKey}
+                        salesperson={row.salesperson}
+                        field="revenue"
+                        value={row.metrics.revenue.planned}
+                        editable={editablePlanned && !totalRow}
+                        editingKey={editingKey}
+                        onStartEdit={setEditingKey}
+                        onCommit={(wk, sp, field, raw) => {
+                          setEditingKey(null);
+                          const trimmed = raw.trim();
+                          const next =
+                            trimmed === '' ? null : Number.isFinite(Number(trimmed)) ? Number(trimmed) : null;
+                          onPlannedChange?.(wk, sp, field, next);
+                        }}
+                      />
+                    </td>
+                    <td
+                      className={`px-2 py-1.5 text-center border-r border-amber-100/80 ${actualVsPlannedHighlightClass(
+                        row.metrics.revenue.planned,
+                        row.metrics.revenue.actual
+                      )}`}
+                    >
                       <InspectableMoney
                         metric="revenue"
                         value={row.metrics.revenue.actual}

@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import SearchableDropdown from '@/components/SearchableDropdown';
 import { useToast } from '@/components/ToastProvider';
 import { getNextPlannedTime, O2D_CUSTOMER_TYPES } from '@/lib/o2dPlannedTime';
+import { parseCrmOpportunityCostingItems } from '@/lib/crmOpportunityCosting';
 import { Loader2, X } from 'lucide-react';
 
 export type CrmOpportunityForO2d = {
@@ -18,6 +19,7 @@ export type CrmOpportunityForO2d = {
   state?: string;
   country?: string;
   salesperson?: string;
+  costing_items?: string;
 };
 
 type OrderItemRow = { id: number; item: string; qty: string };
@@ -115,8 +117,32 @@ export default function CrmO2dWonModal({ open, opportunity, onClose, onO2dCreate
       field_person_name: String(opportunity.salesperson || '').trim(),
       status: 'Pending',
     });
-    setOrderItems([{ id: Date.now(), item: '', qty: '' }]);
+    const parsed = parseCrmOpportunityCostingItems(opportunity.costing_items);
+    if (parsed.length > 0) {
+      setOrderItems(
+        parsed.map((line, i) => ({
+          id: Date.now() + i,
+          item: line.item_name,
+          qty: String(line.qty || 1),
+        }))
+      );
+    } else {
+      setOrderItems([{ id: Date.now(), item: '', qty: '' }]);
+    }
   }, [open, opportunity]);
+
+  const itemOptions = useMemo(() => {
+    const names = new Set<string>();
+    for (const n of costingItems) {
+      const t = String(n || '').trim();
+      if (t) names.add(t);
+    }
+    for (const row of orderItems) {
+      const t = String(row.item || '').trim();
+      if (t) names.add(t);
+    }
+    return [...names].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+  }, [costingItems, orderItems]);
 
   const partyOptions = useMemo(
     () => dropdownParties.filter(Boolean).map((name) => ({ id: name, name })),
@@ -328,7 +354,7 @@ export default function CrmO2dWonModal({ open, opportunity, onClose, onO2dCreate
                         className="flex-[2] px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-600 bg-slate-50 dark:bg-slate-800 text-sm"
                       >
                         <option value="">Select item</option>
-                        {costingItems.map((name) => (
+                        {itemOptions.map((name) => (
                           <option key={name} value={name}>
                             {name}
                           </option>

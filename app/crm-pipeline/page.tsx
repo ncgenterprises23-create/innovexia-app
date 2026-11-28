@@ -8,6 +8,12 @@ import LayoutWrapper from '@/components/LayoutWrapper';
 import CrmPipelineDashboard from '@/components/crm-pipeline/CrmPipelineDashboard';
 import CrmPipelineSalesPerformanceDashboard from '@/components/crm-pipeline/CrmPipelineSalesPerformanceDashboard';
 import CrmO2dWonModal from '@/components/crm-pipeline/CrmO2dWonModal';
+import CrmPipelineOpportunityCostingEditor from '@/components/crm-pipeline/CrmPipelineOpportunityCostingEditor';
+import {
+  crmOpportunityCostingTotal,
+  formatCrmCostingItemsForTimeline,
+  formatCrmCostingTotalTimeline,
+} from '@/lib/crmOpportunityCosting';
 import { ensureSessionId } from '@/utils/session';
 import { useToast } from '@/components/ToastProvider';
 import Icon from '@/components/Icon';
@@ -26,7 +32,6 @@ import {
   XCircle,
   Building2,
   MapPin,
-  Percent,
   Calendar,
   RefreshCw,
   Minimize2,
@@ -67,6 +72,7 @@ import {
 } from '@/lib/crmPipelineFollowUp';
 import { parseSheetDate } from '@/lib/dateUtils';
 import { compareBySequenceThenId } from '@/lib/crmPipelineStageSort';
+import { crmExpectedRevenueOf, crmRevenueOf } from '@/lib/crmPipelineDashboard';
 import {
   parsePipelineAccessUsernames,
   userCanManageCrmPipeline,
@@ -163,10 +169,9 @@ type Opportunity = {
   state?: string;
   country?: string;
   expected_revenue?: number | string;
+  revenue?: number | string;
   costing?: number | string;
-  recurring_revenue?: number | string;
-  revenue_period?: string;
-  probability?: number | string;
+  costing_items?: string;
   priority?: number | string;
   tags?: string;
   salesperson?: string;
@@ -203,16 +208,28 @@ type OppDraft = {
   state: string;
   country: string;
   expected_revenue: string;
+  revenue: string;
   costing: string;
-  recurring_revenue: string;
-  revenue_period: string;
-  probability: string;
+  costing_items: string;
   salesperson: string;
   expected_closing: string;
   tags: string;
   priority: number;
   notes: string;
 };
+
+function jsonSheetField(v: unknown): string {
+  if (v == null || v === '') return '';
+  if (typeof v === 'string') return v;
+  if (Array.isArray(v) || (typeof v === 'object' && v !== null)) {
+    try {
+      return JSON.stringify(v);
+    } catch {
+      return '';
+    }
+  }
+  return String(v);
+}
 
 function buildOppDraftFrom(opp: Opportunity): OppDraft {
   const strField = (v: unknown) => (v == null ? '' : String(v));
@@ -228,10 +245,9 @@ function buildOppDraftFrom(opp: Opportunity): OppDraft {
     state: strField(opp.state),
     country: strField(opp.country),
     expected_revenue: numish(opp.expected_revenue),
+    revenue: numish(opp.revenue),
     costing: numish(opp.costing),
-    recurring_revenue: numish(opp.recurring_revenue),
-    revenue_period: strField(opp.revenue_period),
-    probability: numish(opp.probability),
+    costing_items: jsonSheetField(opp.costing_items),
     salesperson: strField(opp.salesperson),
     expected_closing: opp.expected_closing ? strField(opp.expected_closing).slice(0, 10) : '',
     tags: strField(opp.tags),
@@ -273,12 +289,10 @@ function opportunitySearchText(opp: Opportunity): string {
     opp.tags,
     opp.salesperson,
     opp.notes,
-    opp.revenue_period,
     opp.expected_closing,
+    opp.revenue,
     opp.expected_revenue,
     opp.costing,
-    opp.recurring_revenue,
-    opp.probability,
     opp.priority,
     opp.card_color,
     opp.outcome,
@@ -508,10 +522,32 @@ function formatActivityBodyDisplay(act: Activity): { title?: string; lines: stri
         return { title: 'Completion note', lines: [String(parsed.remark)] };
       }
       if (parsed.kind === 'lead_fields' && parsed.changes && typeof parsed.changes === 'object') {
-        const lines = Object.entries(parsed.changes).map(
-          ([k, v]: [string, any]) =>
-            `${k}: "${v?.from ?? ''}" → "${v?.to ?? ''}"`
-        );
+        const changes = parsed.changes as Record<string, { from?: unknown; to?: unknown }>;
+        const hasCostingItems = Object.prototype.hasOwnProperty.call(changes, 'costing_items');
+        const lines: string[] = [];
+        for (const [k, v] of Object.entries(changes)) {
+          if (k === 'costing_items') {
+            const fromRaw = String(v?.from ?? '').trim();
+            if (fromRaw) {
+              lines.push('FG costing (before):');
+              lines.push(...formatCrmCostingItemsForTimeline(v?.from));
+              lines.push('FG costing (after):');
+            } else {
+              lines.push('FG costing:');
+            }
+            lines.push(...formatCrmCostingItemsForTimeline(v?.to));
+            continue;
+          }
+          if (k === 'costing' && hasCostingItems) continue;
+          if (k === 'costing') {
+            lines.push(
+              `Costing total: ${formatCrmCostingTotalTimeline(v?.from)} → ${formatCrmCostingTotalTimeline(v?.to)}`
+            );
+            continue;
+          }
+          const label = k.replace(/_/g, ' ');
+          lines.push(`${label}: "${v?.from ?? ''}" → "${v?.to ?? ''}"`);
+        }
         return { title: 'Updated fields', lines };
       }
       if (parsed.kind === 'stage_change') {
@@ -611,7 +647,9 @@ export default function CrmPipelinePage() {
     email: '',
     phone: '',
     expected_revenue: '',
+    revenue: '',
     costing: '',
+    costing_items: '',
   });
 
   const [selectedOpp, setSelectedOpp] = useState<Opportunity | null>(null);
@@ -1143,12 +1181,11 @@ export default function CrmPipelinePage() {
   }, [stages, oppsByStageBase, stageFollowUpFilters, openActivities, boardGroupBy, stageNameById]);
 
   const stageTotals = useMemo(() => {
-    const totals: Record<string, { revenue: number; mrr: number }> = {};
+    const totals: Record<string, { revenue: number }> = {};
     for (const s of stages) {
       const list = oppsByStage[s.id] || [];
       totals[s.id] = {
-        revenue: list.reduce((sum, o) => sum + (Number(o.expected_revenue) || 0), 0),
-        mrr: list.reduce((sum, o) => sum + (Number(o.recurring_revenue) || 0), 0),
+        revenue: list.reduce((sum, o) => sum + crmExpectedRevenueOf(o), 0),
       };
     }
     return totals;
@@ -1326,13 +1363,37 @@ export default function CrmPipelinePage() {
       if (!res.ok) throw new Error(data.error);
       toast.success('Opportunity added');
       setQuickAddStageId(null);
-      setQuickForm({ contact_name: '', name: '', email: '', phone: '', expected_revenue: '', costing: '' });
+      setQuickForm({
+        contact_name: '',
+        name: '',
+        email: '',
+        phone: '',
+        expected_revenue: '',
+        revenue: '',
+        costing: '',
+        costing_items: '',
+      });
       await loadBoard(selectedPipelineId);
     } catch (e: any) {
       toast.error(e.message || 'Failed');
     } finally {
       setQuickAddingOpp(false);
     }
+  };
+
+  const closeOpportunityDrawer = () => {
+    setSelectedOpp(null);
+    setShowTagModal(false);
+    setTagDropdownOpen(false);
+    setTagSearch('');
+    setActivityInlineId(null);
+    setActivityMarkDoneId(null);
+    setMarkDoneRemark('');
+    setMarkDoneNextRemark('');
+    setMarkDoneNextDate('');
+    setMarkDoneStep('choose');
+    setMarkDoneIntent(null);
+    setMarkDoneNextType('call');
   };
 
   const moveToStage = async (oppId: string, stageId: string) => {
@@ -1351,12 +1412,8 @@ export default function CrmPipelinePage() {
         prev.map((o) => (o.id === oppId ? { ...o, stage_id: stageId, ...(data.opportunity || {}) } : o))
       );
       if (selectedOpp && String(selectedOpp.id) === String(oppId)) {
-        setSelectedOpp((prev) =>
-          prev && String(prev.id) === String(oppId)
-            ? { ...prev, stage_id: stageId, ...(data.opportunity || {}) }
-            : prev
-        );
         void loadActivities(oppId);
+        closeOpportunityDrawer();
       }
     } catch (e: any) {
       toast.error(e.message || 'Failed to move');
@@ -1418,10 +1475,9 @@ export default function CrmPipelinePage() {
     if (oppDraft.state !== base.state) updates.state = oppDraft.state;
     if (oppDraft.country !== base.country) updates.country = oppDraft.country;
     if (oppDraft.expected_revenue !== base.expected_revenue) updates.expected_revenue = oppDraft.expected_revenue;
+    if (oppDraft.revenue !== base.revenue) updates.revenue = oppDraft.revenue;
     if (oppDraft.costing !== base.costing) updates.costing = oppDraft.costing;
-    if (oppDraft.recurring_revenue !== base.recurring_revenue) updates.recurring_revenue = oppDraft.recurring_revenue;
-    if (oppDraft.revenue_period !== base.revenue_period) updates.revenue_period = oppDraft.revenue_period;
-    if (oppDraft.probability !== base.probability) updates.probability = oppDraft.probability;
+    if (oppDraft.costing_items !== base.costing_items) updates.costing_items = oppDraft.costing_items;
     if (oppDraft.salesperson !== base.salesperson) updates.salesperson = oppDraft.salesperson;
     if (oppDraft.expected_closing !== base.expected_closing) updates.expected_closing = oppDraft.expected_closing;
     if (oppDraft.tags !== base.tags) updates.tags = oppDraft.tags;
@@ -1429,6 +1485,21 @@ export default function CrmPipelinePage() {
     if (oppDraft.notes !== base.notes) updates.notes = oppDraft.notes;
     if (Object.keys(updates).length === 0) {
       toast.info('No changes to save');
+      return;
+    }
+    const draftRevenue = Number(oppDraft.revenue);
+    const revenueOk = Number.isFinite(draftRevenue) && draftRevenue > 0;
+    const costingOk =
+      crmOpportunityCostingTotal({
+        costing: oppDraft.costing,
+        costing_items: oppDraft.costing_items,
+      }) > 0;
+    if (!revenueOk) {
+      toast.error('Fill Revenue on this lead before you can Submit.');
+      return;
+    }
+    if (!costingOk) {
+      toast.error('Fill Costing on this lead before you can Submit.');
       return;
     }
     setSubmittingLead(true);
@@ -1446,6 +1517,7 @@ export default function CrmPipelinePage() {
       setOpportunities((prev) => prev.map((o) => (o.id === merged.id ? { ...o, ...merged } : o)));
       void loadActivities(selectedOpp.id);
       toast.success('Lead updated');
+      closeOpportunityDrawer();
     } catch (e: any) {
       toast.error(e.message || 'Update failed');
     } finally {
@@ -1467,7 +1539,7 @@ export default function CrmPipelinePage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       setOpportunities((prev) => prev.filter((o) => o.id !== opp.id));
-      if (selectedOpp?.id === opp.id) setSelectedOpp(null);
+      if (selectedOpp?.id === opp.id) closeOpportunityDrawer();
       toast.success('Lead removed');
     } catch (e: any) {
       toast.error(e.message || 'Delete failed');
@@ -1491,13 +1563,47 @@ export default function CrmPipelinePage() {
     closeStageMenu();
   };
 
+  const revenueFilledForWon = (opp: Opportunity | null, draft: OppDraft | null): boolean => {
+    const draftVal = draft ? Number(draft.revenue) : NaN;
+    if (Number.isFinite(draftVal) && draftVal > 0) return true;
+    const saved = opp ? Number(opp.revenue) : NaN;
+    return Number.isFinite(saved) && saved > 0;
+  };
+
+  const costingFilledForWon = (opp: Opportunity | null, draft: OppDraft | null): boolean => {
+    if (draft) {
+      const fromDraft = crmOpportunityCostingTotal({
+        costing: draft.costing,
+        costing_items: draft.costing_items,
+      });
+      if (fromDraft > 0) return true;
+    }
+    return opp ? crmOpportunityCostingTotal(opp) > 0 : false;
+  };
+
   const openWonO2dFlow = () => {
     if (!selectedOpp || settingOutcome) return;
+    if (!revenueFilledForWon(selectedOpp, oppDraft)) {
+      toast.error('Fill Revenue on this lead before you can mark it Won.');
+      return;
+    }
+    if (!costingFilledForWon(selectedOpp, oppDraft)) {
+      toast.error('Fill Costing on this lead before you can mark it Won.');
+      return;
+    }
     setO2dWonModalOpen(true);
   };
 
   const completeWonAfterO2d = async (): Promise<boolean> => {
     if (!selectedOpp) return false;
+    if (!revenueFilledForWon(selectedOpp, oppDraft)) {
+      toast.error('Fill Revenue on this lead before you can mark it Won.');
+      return false;
+    }
+    if (!costingFilledForWon(selectedOpp, oppDraft)) {
+      toast.error('Fill Costing on this lead before you can mark it Won.');
+      return false;
+    }
     setSettingOutcome('won');
     try {
       const ok = await patchLead(
@@ -1506,7 +1612,7 @@ export default function CrmPipelinePage() {
         selectedOpp,
         { successToast: 'Marked as Won — O2D started' }
       );
-      if (ok) setSelectedOpp(null);
+      if (ok) closeOpportunityDrawer();
       return ok;
     } finally {
       setSettingOutcome(null);
@@ -1527,7 +1633,7 @@ export default function CrmPipelinePage() {
         selectedOpp,
         { successToast: 'Marked as Lost' }
       );
-      if (ok) setSelectedOpp(null);
+      if (ok) closeOpportunityDrawer();
     } finally {
       setSettingOutcome(null);
     }
@@ -1551,6 +1657,7 @@ export default function CrmPipelinePage() {
       setNoteText('');
       void loadActivities(selectedOpp.id);
       toast.success('Note logged');
+      closeOpportunityDrawer();
     } catch {
       toast.error('Failed to log note');
     } finally {
@@ -1585,26 +1692,12 @@ export default function CrmPipelinePage() {
       void loadActivities(selectedOpp.id);
       void loadBoard(selectedPipelineId);
       toast.success('Activity scheduled');
+      closeOpportunityDrawer();
     } catch {
       toast.error('Failed to schedule');
     } finally {
       setSchedulingActivity(false);
     }
-  };
-
-  const closeOpportunityDrawer = () => {
-    setSelectedOpp(null);
-    setShowTagModal(false);
-    setTagDropdownOpen(false);
-    setTagSearch('');
-    setActivityInlineId(null);
-    setActivityMarkDoneId(null);
-    setMarkDoneRemark('');
-    setMarkDoneNextRemark('');
-    setMarkDoneNextDate('');
-    setMarkDoneStep('choose');
-    setMarkDoneIntent(null);
-    setMarkDoneNextType('call');
   };
 
   const filteredCatalogTags = useMemo(() => {
@@ -1714,6 +1807,7 @@ export default function CrmPipelinePage() {
       void loadActivities(selectedOpp.id);
       void loadBoard(selectedPipelineId);
       toast.success(activityInlineMode === 'reschedule' ? 'Rescheduled' : 'Activity updated');
+      closeOpportunityDrawer();
     } catch (e: any) {
       toast.error(e.message || 'Update failed');
     } finally {
@@ -1763,6 +1857,7 @@ export default function CrmPipelinePage() {
       );
       if (selectedOpp) void loadActivities(selectedOpp.id);
       void loadBoard(selectedPipelineId);
+      closeOpportunityDrawer();
     } catch (e: any) {
       toast.error(e.message || 'Failed to mark done');
     } finally {
@@ -2384,19 +2479,9 @@ export default function CrmPipelinePage() {
                   </div>
                   <p
                     className="shrink-0 text-xs font-bold text-[#000000] dark:text-white tabular-nums text-right max-w-[6.5rem] truncate leading-snug"
-                    title={
-                      stageTotals[stage.id]?.mrr
-                        ? `${formatInr(stageTotals[stage.id]?.revenue)} · MRR ${formatInr(stageTotals[stage.id].mrr)}`
-                        : formatInr(stageTotals[stage.id]?.revenue)
-                    }
+                    title={formatInr(stageTotals[stage.id]?.revenue)}
                   >
                     {formatInr(stageTotals[stage.id]?.revenue)}
-                    {stageTotals[stage.id]?.mrr ? (
-                      <span className="font-bold text-[#000000] dark:text-white/90">
-                        {' '}
-                        · {formatInr(stageTotals[stage.id].mrr)}
-                      </span>
-                    ) : null}
                   </p>
                 </div>
                 <div
@@ -2472,9 +2557,9 @@ export default function CrmPipelinePage() {
                       />
                       <QuickInputRow
                         icon={IndianRupee}
-                        placeholder="Costing"
-                        value={quickForm.costing}
-                        onChange={(e) => setQuickForm({ ...quickForm, costing: e.target.value })}
+                        placeholder="Revenue"
+                        value={quickForm.revenue}
+                        onChange={(e) => setQuickForm({ ...quickForm, revenue: e.target.value })}
                       />
                     </div>
                     <div className="shrink-0 flex items-center gap-1 px-2.5 py-2 border-t border-slate-200/90 dark:border-slate-600/60 bg-white dark:bg-slate-800 rounded-b-md">
@@ -2500,7 +2585,16 @@ export default function CrmPipelinePage() {
                         title="Discard"
                         onClick={() => {
                           setQuickAddStageId(null);
-                          setQuickForm({ contact_name: '', name: '', email: '', phone: '', expected_revenue: '', costing: '' });
+                          setQuickForm({
+        contact_name: '',
+        name: '',
+        email: '',
+        phone: '',
+        expected_revenue: '',
+        revenue: '',
+        costing: '',
+        costing_items: '',
+      });
                         }}
                         className={GHOST_BTN}
                       >
@@ -2643,10 +2737,16 @@ export default function CrmPipelinePage() {
                             </span>
                           </div>
                         )}
-                        {Number(opp.expected_revenue) > 0 && (
-                          <div className="text-[10px] font-bold text-emerald-700 mt-1.5 flex items-center gap-1">
+                        {crmExpectedRevenueOf(opp) > 0 && (
+                          <div className="text-[10px] font-bold text-sky-800 dark:text-sky-200 mt-1.5 flex items-center gap-1">
                             <IndianRupee size={11} />
-                            {formatInr(opp.expected_revenue).replace('₹', '').trim()}
+                            Exp {formatInr(crmExpectedRevenueOf(opp)).replace('₹', '').trim()}
+                          </div>
+                        )}
+                        {crmRevenueOf(opp) > 0 && (
+                          <div className="text-[10px] font-bold text-emerald-700 mt-0.5 flex items-center gap-1">
+                            <IndianRupee size={11} />
+                            {formatInr(crmRevenueOf(opp)).replace('₹', '').trim()}
                           </div>
                         )}
                         {String(opp.costing ?? '').trim() !== '' && (
@@ -2908,13 +3008,22 @@ export default function CrmPipelinePage() {
                   {oppDraft && (
                     <>
                       <div className="mb-4 grid grid-cols-3 gap-2">
-                        <div className="rounded-xl border border-emerald-200/80 bg-emerald-50/60 dark:bg-emerald-950/25 dark:border-emerald-800/50 px-3 py-2.5 shadow-sm">
-                          <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-emerald-800/85 dark:text-emerald-200/90">
+                        <div className="rounded-xl border border-sky-200/80 bg-sky-50/60 dark:bg-sky-950/25 dark:border-sky-800/50 px-3 py-2.5 shadow-sm">
+                          <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-sky-900/85 dark:text-sky-200/90">
                             <IndianRupee size={12} strokeWidth={2.5} />
                             Expected Revenue
                           </div>
                           <p className="text-sm font-bold text-slate-900 dark:text-slate-100 mt-1 tabular-nums">
                             {formatInr(oppDraft.expected_revenue)}
+                          </p>
+                        </div>
+                        <div className="rounded-xl border border-emerald-200/80 bg-emerald-50/60 dark:bg-emerald-950/25 dark:border-emerald-800/50 px-3 py-2.5 shadow-sm">
+                          <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-emerald-800/85 dark:text-emerald-200/90">
+                            <IndianRupee size={12} strokeWidth={2.5} />
+                            Revenue
+                          </div>
+                          <p className="text-sm font-bold text-slate-900 dark:text-slate-100 mt-1 tabular-nums">
+                            {formatInr(oppDraft.revenue)}
                           </p>
                         </div>
                         <div className="rounded-xl border border-amber-200/80 bg-amber-50/60 dark:bg-amber-950/25 dark:border-amber-800/50 px-3 py-2.5 shadow-sm">
@@ -2930,22 +3039,6 @@ export default function CrmPipelinePage() {
                               : '—'}
                           </p>
                         </div>
-                        <div className="rounded-xl border border-violet-200/80 bg-violet-50/50 dark:bg-violet-950/25 dark:border-violet-800/50 px-3 py-2.5 shadow-sm">
-                          <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-violet-800/85 dark:text-violet-200/90">
-                            <Percent size={12} strokeWidth={2.5} />
-                            Probability
-                          </div>
-                          <p className="text-sm font-bold text-slate-900 dark:text-slate-100 mt-1">
-                            {oppDraft.probability !== '' ? `${oppDraft.probability}%` : '—'}
-                          </p>
-                        </div>
-                        {Number(oppDraft.recurring_revenue) > 0 ? (
-                          <div className="col-span-3 rounded-lg border border-slate-200/80 bg-slate-50/80 dark:bg-slate-800/40 px-3 py-1.5 text-xs text-slate-600 dark:text-slate-300 flex items-center gap-1.5">
-                            <RefreshCw size={12} className="text-slate-400 shrink-0" />
-                            Recurring {formatInr(oppDraft.recurring_revenue)}
-                            {oppDraft.revenue_period ? ` · ${oppDraft.revenue_period}` : ''}
-                          </div>
-                        ) : null}
                       </div>
 
                       <div className="space-y-0 w-full">
@@ -3021,50 +3114,38 @@ export default function CrmPipelinePage() {
                         </OdooFormRow>
                         <OdooFormSplitRow
                           left={{
-                            label: 'Revenue',
+                            label: 'Expected revenue',
                             icon: IndianRupee,
                             children: (
                               <input
                                 className={`text-sm py-1 w-full ${ODDO_INPUT}`}
                                 value={oppDraft.expected_revenue}
-                                onChange={(e) => setOppDraft((d) => d && { ...d, expected_revenue: e.target.value })}
+                                onChange={(e) =>
+                                  setOppDraft((d) => d && { ...d, expected_revenue: e.target.value })
+                                }
                               />
                             ),
                           }}
                           right={{
-                            label: 'Costing',
+                            label: 'Revenue',
                             icon: IndianRupee,
                             children: (
                               <input
                                 className={`text-sm py-1 w-full ${ODDO_INPUT}`}
-                                placeholder="Amount or reference"
-                                value={oppDraft.costing}
-                                onChange={(e) => setOppDraft((d) => d && { ...d, costing: e.target.value })}
+                                value={oppDraft.revenue}
+                                onChange={(e) => setOppDraft((d) => d && { ...d, revenue: e.target.value })}
                               />
                             ),
                           }}
                         />
-                        <OdooFormRow label="Recurring" icon={RefreshCw}>
-                          <div className="flex gap-2 items-center">
-                            <input
-                              className={`text-sm py-1 flex-1 ${ODDO_INPUT}`}
-                              placeholder="Amount"
-                              value={oppDraft.recurring_revenue}
-                              onChange={(e) => setOppDraft((d) => d && { ...d, recurring_revenue: e.target.value })}
-                            />
-                            <input
-                              className={`text-sm py-1 flex-1 ${ODDO_INPUT}`}
-                              placeholder="e.g. Monthly"
-                              value={oppDraft.revenue_period}
-                              onChange={(e) => setOppDraft((d) => d && { ...d, revenue_period: e.target.value })}
-                            />
-                          </div>
-                        </OdooFormRow>
-                        <OdooFormRow label="Probability" icon={Percent}>
-                          <input
-                            className={`text-sm py-1 ${ODDO_INPUT}`}
-                            value={oppDraft.probability}
-                            onChange={(e) => setOppDraft((d) => d && { ...d, probability: e.target.value })}
+                        <OdooFormRow label="Costing" icon={IndianRupee}>
+                          <CrmPipelineOpportunityCostingEditor
+                            key={selectedOpp?.id ?? 'costing'}
+                            costingItemsJson={oppDraft.costing_items}
+                            costingTotal={oppDraft.costing}
+                            onChange={({ costing_items, costing }) =>
+                              setOppDraft((d) => d && { ...d, costing_items, costing })
+                            }
                           />
                         </OdooFormRow>
                         <OdooFormRow label="Salesperson" icon={User}>
@@ -3729,7 +3810,14 @@ export default function CrmPipelinePage() {
 
       <CrmO2dWonModal
         open={o2dWonModalOpen}
-        opportunity={selectedOpp}
+        opportunity={
+          selectedOpp
+            ? {
+                ...selectedOpp,
+                costing_items: oppDraft?.costing_items || selectedOpp.costing_items || '',
+              }
+            : null
+        }
         onClose={() => setO2dWonModalOpen(false)}
         onO2dCreated={completeWonAfterO2d}
       />

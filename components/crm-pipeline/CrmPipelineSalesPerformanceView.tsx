@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Loader2, Save } from 'lucide-react';
+import { ChevronDown, ChevronUp, Filter, Loader2, RotateCcw, Save } from 'lucide-react';
 import {
   applySalesPerformanceClientFilters,
   type SalesPerformanceBuildResult,
@@ -37,7 +37,7 @@ type PipelineOption = { id: string; name: string };
 
 type PlannedEditsState = Record<
   string,
-  { plannedLeads: number | null; plannedMeetings: number | null }
+  { plannedLeads: number | null; plannedMeetings: number | null; plannedRevenue: number | null }
 >;
 
 type Props = {
@@ -53,6 +53,26 @@ type Props = {
   myOnly?: boolean;
 };
 
+function filtersSummaryLine(
+  draft: PerformanceFilterState,
+  pipelineOptions: { id: string; name: string }[],
+  monthOptions: { value: string; label: string }[]
+): string {
+  const pipe = pipelineOptions.find((p) => p.id === draft.pipelineId)?.name ?? draft.pipelineId;
+  const month = monthOptions.find((m) => m.value === draft.monthKey)?.label ?? draft.monthKey;
+  const parts = [pipe, month];
+  if (draft.weekKey !== 'all') {
+    const wk = draft.weekKey.replace(/^w/i, '');
+    parts.push(`Week ${wk}`);
+  }
+  if (draft.salesperson !== 'all') parts.push(draft.salesperson);
+  if (draft.tag !== 'all') parts.push(draft.tag);
+  if (draft.status !== 'all') {
+    parts.push(draft.status.charAt(0).toUpperCase() + draft.status.slice(1));
+  }
+  return parts.join(' · ');
+}
+
 function filtersToDraft(server: SalesPerformanceServerFilters): PerformanceFilterState {
   return {
     pipelineId: server.pipelineId,
@@ -60,6 +80,7 @@ function filtersToDraft(server: SalesPerformanceServerFilters): PerformanceFilte
     weekKey: 'all',
     salesperson: 'all',
     status: server.status,
+    tag: server.tag,
   };
 }
 
@@ -70,7 +91,13 @@ function editsEqual(a: PlannedEditsState, b: PlannedEditsState): boolean {
     const y = b[key];
     if (!x && !y) continue;
     if (!x || !y) return false;
-    if (x.plannedLeads !== y.plannedLeads || x.plannedMeetings !== y.plannedMeetings) return false;
+    if (
+      x.plannedLeads !== y.plannedLeads ||
+      x.plannedMeetings !== y.plannedMeetings ||
+      x.plannedRevenue !== y.plannedRevenue
+    ) {
+      return false;
+    }
   }
   return true;
 }
@@ -85,11 +112,20 @@ function buildDirtySaveRecords(
     for (const row of week.rows) {
       if (row.isTotal) continue;
       const key = plannedCellKey(week.weekKey, row.salesperson);
-      const cur = edits[key] ?? baseline[key] ?? { plannedLeads: null, plannedMeetings: null };
-      const orig = baseline[key] ?? { plannedLeads: null, plannedMeetings: null };
+      const cur = edits[key] ?? baseline[key] ?? {
+        plannedLeads: null,
+        plannedMeetings: null,
+        plannedRevenue: null,
+      };
+      const orig = baseline[key] ?? {
+        plannedLeads: null,
+        plannedMeetings: null,
+        plannedRevenue: null,
+      };
       if (
         cur.plannedLeads === orig.plannedLeads &&
-        cur.plannedMeetings === orig.plannedMeetings
+        cur.plannedMeetings === orig.plannedMeetings &&
+        cur.plannedRevenue === orig.plannedRevenue
       ) {
         continue;
       }
@@ -98,6 +134,7 @@ function buildDirtySaveRecords(
         salesperson: row.salesperson,
         plannedLeads: cur.plannedLeads,
         plannedMeetings: cur.plannedMeetings,
+        plannedRevenue: cur.plannedRevenue,
       });
     }
   }
@@ -131,8 +168,14 @@ export default function CrmPipelineSalesPerformanceView({
   const [inspectLoading, setInspectLoading] = useState(false);
   const [inspectError, setInspectError] = useState<string | null>(null);
   const [inspectData, setInspectData] = useState<SalesPerformanceInspectResult | null>(null);
+  const [filtersOpen, setFiltersOpen] = useState(false);
 
   const plannedContext = data.plannedContext;
+
+  const activeFiltersSummary = useMemo(
+    () => filtersSummaryLine(draft, pipelineOptions, monthOptions),
+    [draft, pipelineOptions, monthOptions]
+  );
 
   useEffect(() => {
     setDraft((d) => ({
@@ -140,6 +183,7 @@ export default function CrmPipelineSalesPerformanceView({
       weekKey: d.weekKey,
       salesperson: d.salesperson,
       status: serverFilters.status,
+      tag: serverFilters.tag,
     }));
   }, [serverFilters]);
 
@@ -169,15 +213,20 @@ export default function CrmPipelineSalesPerformanceView({
   );
 
   const handlePlannedChange = useCallback(
-    (weekKey: string, salesperson: string, field: 'leads' | 'meetings', value: number | null) => {
+    (weekKey: string, salesperson: string, field: 'leads' | 'meetings' | 'revenue', value: number | null) => {
       const key = plannedCellKey(weekKey, salesperson);
       setPlannedEdits((prev) => {
-        const cur = prev[key] ?? { plannedLeads: null, plannedMeetings: null };
+        const cur = prev[key] ?? {
+          plannedLeads: null,
+          plannedMeetings: null,
+          plannedRevenue: null,
+        };
         return {
           ...prev,
           [key]: {
             plannedLeads: field === 'leads' ? value : cur.plannedLeads,
             plannedMeetings: field === 'meetings' ? value : cur.plannedMeetings,
+            plannedRevenue: field === 'revenue' ? value : cur.plannedRevenue,
           },
         };
       });
@@ -220,6 +269,7 @@ export default function CrmPipelineSalesPerformanceView({
           next[key] = {
             plannedLeads: rec.plannedLeads,
             plannedMeetings: rec.plannedMeetings,
+            plannedRevenue: rec.plannedRevenue,
           };
         }
         return next;
@@ -231,6 +281,7 @@ export default function CrmPipelineSalesPerformanceView({
           next[key] = {
             plannedLeads: rec.plannedLeads,
             plannedMeetings: rec.plannedMeetings,
+            plannedRevenue: rec.plannedRevenue,
           };
         }
         return next;
@@ -252,6 +303,7 @@ export default function CrmPipelineSalesPerformanceView({
       weekKey: 'all',
       salesperson: 'all',
       status: defaults.status,
+      tag: defaults.tag,
     });
     setAppliedClient({ weekKey: 'all', salesperson: 'all' });
     onApplyServerFilters(defaults);
@@ -261,13 +313,15 @@ export default function CrmPipelineSalesPerformanceView({
     const serverChanged =
       draft.pipelineId !== serverFilters.pipelineId ||
       draft.monthKey !== serverFilters.monthKey ||
-      draft.status !== serverFilters.status;
+      draft.status !== serverFilters.status ||
+      draft.tag !== serverFilters.tag;
 
     if (serverChanged) {
       onApplyServerFilters({
         pipelineId: draft.pipelineId,
         monthKey: draft.monthKey,
         status: draft.status,
+        tag: draft.tag,
         datePreset: 'month',
         customFrom: serverFilters.customFrom,
         customTo: serverFilters.customTo,
@@ -300,6 +354,7 @@ export default function CrmPipelineSalesPerformanceView({
         qs.set('metric', cell.metric);
         if (cell.isTotal) qs.set('isTotal', '1');
         if (serverFilters.status !== 'all') qs.set('status', serverFilters.status);
+        if (serverFilters.tag !== 'all') qs.set('tag', serverFilters.tag);
         if (clip) {
           qs.set('clipFrom', new Date(clip.startMs).toISOString());
           qs.set('clipTo', new Date(clip.endMs).toISOString());
@@ -338,6 +393,7 @@ export default function CrmPipelineSalesPerformanceView({
       monthKey,
       pipelineId: draft.pipelineId,
       status: draft.status,
+      tag: draft.tag,
     });
     setDraft((d) => ({ ...d, monthKey }));
   };
@@ -352,18 +408,81 @@ export default function CrmPipelineSalesPerformanceView({
         data={inspectData}
       />
     <div className="flex-1 min-h-0 flex flex-col gap-3 overflow-y-auto overflow-x-hidden custom-scrollbar pr-1 pb-2">
-      <CrmPipelinePerformanceFilterBar
-        pipelines={pipelineOptions}
-        weekOptions={data.weekOptions}
-        salespeople={data.salespeople}
-        monthOptions={monthOptions}
-        draft={draft}
-        onDraftChange={setDraft}
-        onApply={handleApply}
-        onReset={handleResetFilters}
-        todayActive={serverFilters.datePreset === 'today'}
-        onToggleToday={handleToggleToday}
-      />
+      <div className="shrink-0 rounded-xl border border-[var(--theme-primary)]/25 bg-[var(--theme-light)]/80 dark:bg-slate-900/60 px-3 py-2.5">
+        <div className="flex flex-wrap items-center gap-2 gap-y-2">
+          <button
+            type="button"
+            onClick={() => setFiltersOpen((open) => !open)}
+            aria-expanded={filtersOpen}
+            title={filtersOpen ? 'Hide filter fields' : 'Show filter fields'}
+            className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[var(--theme-primary)] text-gray-900 text-sm font-bold shadow-md hover:brightness-105 shrink-0"
+          >
+            <Filter size={16} className="shrink-0" aria-hidden />
+            {filtersOpen ? 'Hide filters' : 'Show filters'}
+            {filtersOpen ? (
+              <ChevronUp size={16} className="opacity-70 shrink-0" aria-hidden />
+            ) : (
+              <ChevronDown size={16} className="opacity-70 shrink-0" aria-hidden />
+            )}
+          </button>
+          {!filtersOpen ? (
+            <p
+              className="text-xs text-slate-600 dark:text-slate-400 truncate min-w-0 max-w-[min(100%,28rem)]"
+              title={activeFiltersSummary}
+            >
+              {activeFiltersSummary}
+            </p>
+          ) : null}
+          <div aria-hidden className="flex-1 min-w-[0.5rem] min-h-px" />
+          <button
+            type="button"
+            onClick={handleToggleToday}
+            className={`inline-flex items-center justify-center px-4 py-2 rounded-lg text-sm font-bold border shadow-sm transition-colors shrink-0 ${
+              serverFilters.datePreset === 'today'
+                ? 'bg-[var(--theme-primary)] text-gray-900 border-[var(--theme-primary)]'
+                : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 border-[var(--theme-primary)]/30 hover:bg-amber-50/80'
+            }`}
+            title={
+              serverFilters.datePreset === 'today'
+                ? 'Showing today only — click to use full month'
+                : 'Filter actuals to today only'
+            }
+          >
+            Today
+          </button>
+          <button
+            type="button"
+            onClick={handleResetFilters}
+            className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 text-sm font-semibold hover:bg-slate-50 dark:hover:bg-slate-800 shrink-0"
+            title="Reset filters to defaults"
+          >
+            <RotateCcw size={16} />
+            Reset
+          </button>
+          <button
+            type="button"
+            onClick={handleApply}
+            className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[var(--theme-primary)] text-gray-900 text-sm font-bold shadow-md hover:brightness-105 shrink-0"
+          >
+            <Filter size={16} />
+            Apply filters
+          </button>
+        </div>
+        {filtersOpen ? (
+          <div className="mt-3 pt-3 border-t border-[var(--theme-primary)]/15">
+            <CrmPipelinePerformanceFilterBar
+              embedded
+              pipelines={pipelineOptions}
+              weekOptions={data.weekOptions}
+              salespeople={data.salespeople}
+              monthOptions={monthOptions}
+              tagOptions={data.tagOptions}
+              draft={draft}
+              onDraftChange={setDraft}
+            />
+          </div>
+        ) : null}
+      </div>
       <CrmPipelinePerformanceKpiStrip summary={viewData.kpiSummary} />
       {plannedContext ? (
         <div className="flex flex-wrap items-center justify-between gap-2 shrink-0 px-0.5">

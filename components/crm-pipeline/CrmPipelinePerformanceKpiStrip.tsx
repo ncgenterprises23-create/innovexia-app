@@ -41,7 +41,7 @@ export default function CrmPipelinePerformanceKpiStrip({ summary }: Props) {
     {
       label: 'Revenue',
       value: formatSalesPerformanceCurrency(summary.revenue),
-      sub: 'Won expected revenue',
+      sub: 'Won revenue column',
       icon: IndianRupee,
       tint: 'bg-amber-500/15 text-amber-950 dark:text-amber-100',
     },

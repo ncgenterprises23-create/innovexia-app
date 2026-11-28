@@ -84,7 +84,8 @@ export default function CrmPipelineDashboardInfoSidebar({ open, onClose, activeR
                     key).
                   </li>
                   <li>
-                    <strong>Revenue</strong> — numeric <em>Expected revenue</em> on the lead; ignored if missing or ≤ 0.
+                    <strong>Revenue</strong> — numeric <em>Revenue</em> column on the lead (not expected revenue); ignored
+                    if missing or ≤ 0.
                   </li>
                   <li>
                     <strong>Costing</strong> — numeric <em>Costing</em> on the lead (Sales Performance view); wins only.
@@ -121,7 +122,7 @@ export default function CrmPipelineDashboardInfoSidebar({ open, onClose, activeR
                     <strong>No of Transaction</strong> — count of won deals in the period.
                   </li>
                   <li>
-                    <strong>Revenue</strong> — sum of expected revenue for wins in the period.
+                    <strong>Revenue</strong> — sum of the <em>Revenue</em> field for wins in the period.
                   </li>
                   <li>
                     <strong>Margin</strong> — revenue × 30% (fixed rate in dashboard API).
@@ -171,7 +172,7 @@ export default function CrmPipelineDashboardInfoSidebar({ open, onClose, activeR
                     <strong>Conversion Ratio</strong> — (clients ÷ unique meetings) × 100 for that week.
                   </li>
                   <li>
-                    <strong>Revenue</strong> — expected revenue for wins in the week.
+                    <strong>Revenue</strong> — <em>Revenue</em> column for wins in the week.
                   </li>
                   <li>
                     <strong>Avg Rs Sales</strong> — revenue ÷ clients for the week (0 if no clients).
@@ -209,6 +210,10 @@ export default function CrmPipelineDashboardInfoSidebar({ open, onClose, activeR
                   <li>
                     <strong>Status filter</strong> — limits which leads are included (open / won / lost); reloads from
                     server on Apply.
+                  </li>
+                  <li>
+                    <strong>Tags filter</strong> — searchable dropdown; only leads carrying that tag count (use{' '}
+                    <em>(Untagged)</em> for leads with no tags). Inspect drill-down uses the same tag.
                   </li>
                 </ul>
               </SectionBlock>

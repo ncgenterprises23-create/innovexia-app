@@ -99,6 +99,7 @@ export default function CrmPipelineSalesPerformanceInspectSidebar({
       meetings: data.metric === 'conversion_ratio' ? filteredMeetings : undefined,
       wonClients: data.metric === 'conversion_ratio' ? filteredWon : undefined,
     });
+    onClose();
   };
 
   return (

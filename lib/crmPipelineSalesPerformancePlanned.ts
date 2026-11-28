@@ -11,6 +11,7 @@ export type SalesPerformancePlannedEdit = {
   salesperson: string;
   plannedLeads: number | null;
   plannedMeetings: number | null;
+  plannedRevenue: number | null;
 };
 
 export function plannedCellKey(weekKey: string, salesperson: string): string {
@@ -63,7 +64,7 @@ function parsePlannedNum(raw: unknown): number | null {
 
 export type SalesPerformancePlannedMap = Record<
   string,
-  { leads: number | null; meetings: number | null }
+  { leads: number | null; meetings: number | null; revenue: number | null }
 >;
 
 /** Legacy sheet rows used 0-based week index (w0 = UI “Week 1”). */
@@ -78,6 +79,7 @@ export function rowToPlannedMapEntry(row: Record<string, unknown>): {
   salesperson: string;
   leads: number | null;
   meetings: number | null;
+  revenue: number | null;
 } | null {
   const weekRaw = pickPlannedSheetField(row, 'week_key');
   const spRaw = pickPlannedSheetField(row, 'salesperson');
@@ -89,6 +91,7 @@ export function rowToPlannedMapEntry(row: Record<string, unknown>): {
     salesperson,
     leads: parsePlannedNum(pickPlannedSheetField(row, 'planned_leads')),
     meetings: parsePlannedNum(pickPlannedSheetField(row, 'planned_meetings')),
+    revenue: parsePlannedNum(pickPlannedSheetField(row, 'planned_revenue')),
   };
 }
 
@@ -101,6 +104,7 @@ export function plannedRowsToMap(rows: any[]): SalesPerformancePlannedMap {
     map[key] = {
       leads: entry.leads,
       meetings: entry.meetings,
+      revenue: entry.revenue,
     };
   }
   return map;
@@ -108,15 +112,27 @@ export function plannedRowsToMap(rows: any[]): SalesPerformancePlannedMap {
 
 export function extractPlannedEditsFromWeeks(weeks: SalesPerformanceWeek[]): Record<
   string,
-  { plannedLeads: number | null; plannedMeetings: number | null }
+  {
+    plannedLeads: number | null;
+    plannedMeetings: number | null;
+    plannedRevenue: number | null;
+  }
 > {
-  const out: Record<string, { plannedLeads: number | null; plannedMeetings: number | null }> = {};
+  const out: Record<
+    string,
+    {
+      plannedLeads: number | null;
+      plannedMeetings: number | null;
+      plannedRevenue: number | null;
+    }
+  > = {};
   for (const week of weeks) {
     for (const row of week.rows) {
       if (row.isTotal) continue;
       out[plannedCellKey(week.weekKey, row.salesperson)] = {
         plannedLeads: row.metrics.leads.planned,
         plannedMeetings: row.metrics.meetings.planned,
+        plannedRevenue: row.metrics.revenue.planned,
       };
     }
   }
@@ -130,14 +146,19 @@ export function applyPlannedMapToSalesPerformance(
   const weeks = result.weeks.map((week) => {
     let sumLeads = 0;
     let sumMeetings = 0;
+    let sumRevenue = 0;
     let hasLeads = false;
     let hasMeetings = false;
+    let hasRevenue = false;
 
     const rows = week.rows.map((row) => {
       if (row.isTotal) return row;
-      const p = planned[plannedCellKey(week.weekKey, row.salesperson)] ?? planned[plannedCellKey(week.weekKey, salespersonLabel(row.salesperson))];
+      const p =
+        planned[plannedCellKey(week.weekKey, row.salesperson)] ??
+        planned[plannedCellKey(week.weekKey, salespersonLabel(row.salesperson))];
       const leadsPlanned = p?.leads ?? null;
       const meetingsPlanned = p?.meetings ?? null;
+      const revenuePlanned = p?.revenue ?? null;
       if (leadsPlanned != null) {
         sumLeads += leadsPlanned;
         hasLeads = true;
@@ -146,12 +167,17 @@ export function applyPlannedMapToSalesPerformance(
         sumMeetings += meetingsPlanned;
         hasMeetings = true;
       }
+      if (revenuePlanned != null) {
+        sumRevenue += revenuePlanned;
+        hasRevenue = true;
+      }
       return {
         ...row,
         metrics: {
           ...row.metrics,
           leads: { ...row.metrics.leads, planned: leadsPlanned },
           meetings: { ...row.metrics.meetings, planned: meetingsPlanned },
+          revenue: { ...row.metrics.revenue, planned: revenuePlanned },
         },
       };
     });
@@ -165,6 +191,7 @@ export function applyPlannedMapToSalesPerformance(
           ...total.metrics,
           leads: { ...total.metrics.leads, planned: hasLeads ? sumLeads : null },
           meetings: { ...total.metrics.meetings, planned: hasMeetings ? sumMeetings : null },
+          revenue: { ...total.metrics.revenue, planned: hasRevenue ? sumRevenue : null },
         },
       };
     }
@@ -181,7 +208,14 @@ export function applyPlannedMapToSalesPerformance(
 
 export function applyPlannedEditsToWeeks(
   weeks: SalesPerformanceWeek[],
-  edits: Record<string, { plannedLeads?: number | null; plannedMeetings?: number | null }>
+  edits: Record<
+    string,
+    {
+      plannedLeads?: number | null;
+      plannedMeetings?: number | null;
+      plannedRevenue?: number | null;
+    }
+  >
 ): SalesPerformanceWeek[] {
   const map: SalesPerformancePlannedMap = {};
   for (const week of weeks) {
@@ -193,6 +227,7 @@ export function applyPlannedEditsToWeeks(
         leads: edit?.plannedLeads !== undefined ? edit.plannedLeads : row.metrics.leads.planned,
         meetings:
           edit?.plannedMeetings !== undefined ? edit.plannedMeetings : row.metrics.meetings.planned,
+        revenue: edit?.plannedRevenue !== undefined ? edit.plannedRevenue : row.metrics.revenue.planned,
       };
     }
   }
@@ -203,6 +238,7 @@ export function applyPlannedEditsToWeeks(
       flatRows: [],
       salespeople: [],
       weekOptions: [],
+      tagOptions: [],
       kpiSummary: {
         leads: 0,
         meetings: 0,

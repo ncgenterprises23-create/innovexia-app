@@ -8,6 +8,7 @@ import {
 import { applyPlannedMapToFiveForThree, buildCrmPipelineFiveForThree } from '@/lib/crmPipelineFiveForThree';
 import {
   buildCrmPipelineSalesPerformance,
+  filterOpportunitiesByStatus,
   type SalesPerformanceStatusFilter,
 } from '@/lib/crmPipelineSalesPerformance';
 import {
@@ -20,6 +21,7 @@ import {
   buildCrmPipelineDashboard,
   buildPipelineComparison,
   buildTimeColumns,
+  collectCrmLeadTagOptions,
   parseDashboardRange,
   type DashboardGranularity,
 } from '@/lib/crmPipelineDashboard';
@@ -130,6 +132,7 @@ export async function GET(request: NextRequest) {
       const statusRaw = String(searchParams.get('status') || 'all').toLowerCase();
       const statusFilter: SalesPerformanceStatusFilter =
         statusRaw === 'open' || statusRaw === 'won' || statusRaw === 'lost' ? statusRaw : 'all';
+      const tagFilter = String(searchParams.get('tag') || 'all').trim() || 'all';
       const clipFrom = String(searchParams.get('clipFrom') || '').trim();
       const clipTo = String(searchParams.get('clipTo') || '').trim();
       const clipLabel = String(searchParams.get('clipLabel') || '').trim();
@@ -143,12 +146,14 @@ export async function GET(request: NextRequest) {
       }
       const buildTo = clipRange ? new Date(clipRange.endMs) : to;
       const activities = await getCrmActivitiesForPipelines(ids);
+      const tagOptions = collectCrmLeadTagOptions(filterOpportunitiesByStatus(opportunities, statusFilter));
       let performance = buildCrmPipelineSalesPerformance({
         opportunities,
         activities,
         wonDatesByOppId,
         to: buildTo,
         statusFilter,
+        tagFilter,
         clipRange,
       });
       const yearMonthParam = String(searchParams.get('yearMonth') || '').trim();
@@ -158,6 +163,7 @@ export async function GET(request: NextRequest) {
       performance = {
         ...performance,
         plannedContext: { pipelineId: primaryId, yearMonth },
+        tagOptions,
       };
       return NextResponse.json({
         report: 'salesPerformance',
@@ -168,6 +174,7 @@ export async function GET(request: NextRequest) {
         to: to.toISOString(),
         granularity: 'month' as const,
         statusFilter,
+        tagFilter,
         salesPerformance: performance,
       });
     }

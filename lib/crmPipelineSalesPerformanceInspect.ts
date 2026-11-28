@@ -10,7 +10,7 @@ import {
 import { buildMonthWeekBuckets, salespersonLabel } from '@/lib/crmPipelineFiveForThree';
 import {
   crmCostingOf,
-  filterOpportunitiesByStatus,
+  filterSalesPerformanceOpportunities,
   type SalesPerformanceClipRange,
   type SalesPerformanceMetricKey,
   type SalesPerformanceStatusFilter,
@@ -180,6 +180,7 @@ export type BuildSalesPerformanceInspectParams = {
   isTotalRow: boolean;
   metric: SalesPerformanceInspectMetric;
   statusFilter?: SalesPerformanceStatusFilter;
+  tagFilter?: string;
   clipRange?: SalesPerformanceClipRange;
 };
 
@@ -187,7 +188,8 @@ export function buildSalesPerformanceInspect(
   params: BuildSalesPerformanceInspectParams
 ): SalesPerformanceInspectResult | null {
   const statusFilter = params.statusFilter ?? 'all';
-  const opportunities = filterOpportunitiesByStatus(params.opportunities, statusFilter);
+  const tagFilter = params.tagFilter ?? 'all';
+  const opportunities = filterSalesPerformanceOpportunities(params.opportunities, statusFilter, tagFilter);
   const { activities, wonDatesByOppId, yearMonth, weekKey, salesperson, isTotalRow, metric, clipRange } =
     params;
 
@@ -333,7 +335,7 @@ export function buildSalesPerformanceInspect(
           : wonItems.reduce((s, i) => s + i.profit, 0);
     const help =
       metric === 'revenue'
-        ? 'Sum of expected_revenue on won opportunities in the window.'
+        ? 'Sum of revenue on won opportunities in the window.'
         : metric === 'costing'
           ? 'Sum of costing field on the same won opportunities.'
           : 'Revenue minus costing for each won row (totals match the table).';

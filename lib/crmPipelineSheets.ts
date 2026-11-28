@@ -38,6 +38,7 @@ export const SALES_PERFORMANCE_PLANNED_HEADERS = [
   'salesperson',
   'planned_leads',
   'planned_meetings',
+  'planned_revenue',
   'updated_at',
   'updated_by',
 ];
@@ -65,10 +66,9 @@ export const OPPORTUNITY_HEADERS = [
   'phone',
   'company',
   'expected_revenue',
+  'revenue',
   'costing',
-  'recurring_revenue',
-  'revenue_period',
-  'probability',
+  'costing_items',
   'priority',
   'tags',
   'salesperson',
@@ -303,14 +303,23 @@ async function ensurePipelineOptionalColumns(sheets: any): Promise<void> {
 }
 
 async function ensureOpportunityOptionalColumns(sheets: any): Promise<void> {
-  if ((global as any).crm_pipeline_opp_extra_cols_v4) return;
+  if ((global as any).crm_pipeline_opp_extra_cols_v6) return;
   const title = CRM_PIPELINE_SHEETS.OPPORTUNITIES;
   const headerRes = await sheets.spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_ID,
     range: `'${title}'!A1:ZZ1`,
   });
   let headers = (headerRes.data.values?.[0] || []) as string[];
-  const extra = ['outcome', 'City', 'State', 'Country', 'card_color', 'costing'] as const;
+  const extra = [
+    'outcome',
+    'City',
+    'State',
+    'Country',
+    'card_color',
+    'costing',
+    'costing_items',
+    'revenue',
+  ] as const;
   for (const colName of extra) {
     if (sheetHeaderColumnIndex(headers, colName) >= 0) continue;
     const col = headers.length;
@@ -323,7 +332,7 @@ async function ensureOpportunityOptionalColumns(sheets: any): Promise<void> {
     });
     headers = [...headers, colName];
   }
-  (global as any).crm_pipeline_opp_extra_cols_v4 = true;
+  (global as any).crm_pipeline_opp_extra_cols_v6 = true;
 }
 
 async function seedDefaultPipelineIfEmpty(sheets: any): Promise<void> {
@@ -499,6 +508,19 @@ async function getCrmOpportunitySheetHeaders(sheets: any): Promise<string[]> {
   return headers.length ? headers : [...OPPORTUNITY_HEADERS];
 }
 
+function sheetCellScalar(value: unknown): string | number | boolean {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'object') return JSON.stringify(value);
+  return value as string | number | boolean;
+}
+
+function normalizeCrmJsonStringField(value: unknown): string {
+  if (value == null || value === '') return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'object') return JSON.stringify(value);
+  return String(value);
+}
+
 function normalizeCrmOpportunityRow(row: Record<string, any>): Record<string, any> {
   const pick = (canonical: string, variants: string[]) => {
     for (const k of variants) {
@@ -512,6 +534,7 @@ function normalizeCrmOpportunityRow(row: Record<string, any>): Record<string, an
     city: pick('city', ['city', 'City']),
     state: pick('state', ['state', 'State']),
     country: pick('country', ['country', 'Country']),
+    costing_items: normalizeCrmJsonStringField(row.costing_items),
   };
 }
 
@@ -546,7 +569,7 @@ async function updateRowById(
       if (colIndex === -1) return null;
       return {
         range: `'${sheetName}'!${sheetColLetter(colIndex)}${actualRow}`,
-        values: [[value ?? '']],
+        values: [[sheetCellScalar(value)]],
       };
     })
     .filter(Boolean);
@@ -850,10 +873,9 @@ const LOGGABLE_FIELDS = [
   'state',
   'country',
   'expected_revenue',
+  'revenue',
   'costing',
-  'recurring_revenue',
-  'revenue_period',
-  'probability',
+  'costing_items',
   'priority',
   'tags',
   'salesperson',
@@ -881,10 +903,9 @@ export async function createCrmOpportunity(
     state: data.state || '',
     country: data.country || '',
     expected_revenue: data.expected_revenue ?? '',
+    revenue: data.revenue ?? '',
     costing: data.costing ?? '',
-    recurring_revenue: data.recurring_revenue ?? '',
-    revenue_period: data.revenue_period || '',
-    probability: data.probability ?? '',
+    costing_items: data.costing_items ?? '',
     priority: data.priority ?? 0,
     tags: data.tags || '',
     salesperson: data.salesperson || userLabel(user),
@@ -991,7 +1012,7 @@ export async function updateCrmOpportunity(
 
   await updateRowById(CRM_PIPELINE_SHEETS.OPPORTUNITIES, id, merged);
   invalidateCrmBoardCache(String(existing.pipeline_id));
-  return { id, ...merged };
+  return normalizeCrmOpportunityRow({ id, ...merged, ...updates });
 }
 
 /** One sheet row + one activity log row for all changed lead fields (JSON payload in log body). */
@@ -1021,7 +1042,11 @@ export async function batchUpdateCrmOpportunityFields(
   }
 
   merged.updated_at = formatToSheetDate(new Date());
-  await updateRowById(CRM_PIPELINE_SHEETS.OPPORTUNITIES, id, merged);
+  const patch: Record<string, unknown> = { updated_at: merged.updated_at };
+  for (const field of Object.keys(changed)) {
+    patch[field] = merged[field];
+  }
+  await updateRowById(CRM_PIPELINE_SHEETS.OPPORTUNITIES, id, patch);
 
   await appendCrmPipelineLog({
     opportunity_id: id,
@@ -1034,7 +1059,7 @@ export async function batchUpdateCrmOpportunityFields(
   });
 
   invalidateCrmBoardCache(String(existing.pipeline_id));
-  return merged;
+  return normalizeCrmOpportunityRow({ id, ...merged });
 }
 
 export async function getCrmActivities(opportunityId: string): Promise<any[]> {
@@ -1344,6 +1369,7 @@ export type SaveSalesPerformancePlannedInput = {
     salesperson: string;
     plannedLeads: number | null;
     plannedMeetings: number | null;
+    plannedRevenue: number | null;
   }[];
   updatedBy?: string;
 };
@@ -1378,6 +1404,7 @@ export async function saveSalesPerformancePlannedBatch(
       salesperson: salespersonLabel(rec.salesperson),
       planned_leads: rec.plannedLeads ?? '',
       planned_meetings: rec.plannedMeetings ?? '',
+      planned_revenue: rec.plannedRevenue ?? '',
       updated_at: now,
       updated_by: byUser,
     };
@@ -1386,6 +1413,7 @@ export async function saveSalesPerformancePlannedBatch(
       await updateRowById(CRM_PIPELINE_SHEETS.SALES_PERFORMANCE_PLANNED, id, {
         planned_leads: payload.planned_leads,
         planned_meetings: payload.planned_meetings,
+        planned_revenue: payload.planned_revenue,
         updated_at: payload.updated_at,
         updated_by: payload.updated_by,
       });

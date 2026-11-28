@@ -34,6 +34,7 @@ export async function POST(request: NextRequest) {
       salesperson?: string;
       plannedLeads?: number | string | null;
       plannedMeetings?: number | string | null;
+      plannedRevenue?: number | string | null;
     };
 
     const normalized = (records as RecordIn[])
@@ -51,6 +52,12 @@ export async function POST(request: NextRequest) {
             ? null
             : Number.isFinite(Number(r.plannedMeetings))
               ? Number(r.plannedMeetings)
+              : null,
+        plannedRevenue:
+          r.plannedRevenue === '' || r.plannedRevenue == null
+            ? null
+            : Number.isFinite(Number(r.plannedRevenue))
+              ? Number(r.plannedRevenue)
               : null,
       }))
       .filter((r) => r.weekKey && r.salesperson);

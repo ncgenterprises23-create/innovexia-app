@@ -184,6 +184,7 @@ export default function Sidebar({ isOpen, setIsOpen }: SidebarProps) {
                               key={child.label}
                               href={child.href || '#'}
                               title={child.label}
+                              onClick={() => setIsOpen(false)}
                               className={`relative flex items-center gap-2 pl-4 pr-2 py-1.5 rounded-lg transition-all duration-200 text-sm min-w-0 ${isActive(child.href)
                                 ? 'bg-[var(--theme-primary)] text-gray-900 shadow-sm font-semibold'
                                 : 'text-gray-600 dark:text-gray-400 hover:bg-[var(--theme-primary)]/20 dark:hover:bg-gray-700'
@@ -216,6 +217,7 @@ export default function Sidebar({ isOpen, setIsOpen }: SidebarProps) {
               <Link
                 key={item.href}
                 href={item.href || '#'}
+                onClick={() => setIsOpen(false)}
                 className={`flex items-center min-w-0 ${isOpen ? 'gap-2.5 px-2.5' : 'justify-center px-0'} py-2 rounded-xl transition-all duration-200 ${isActive(item.href)
                   ? 'bg-[var(--theme-primary)] text-gray-900 shadow-md font-semibold'
                   : 'text-gray-700 dark:text-gray-300 hover:bg-[var(--theme-primary)]/20 dark:hover:bg-gray-700'

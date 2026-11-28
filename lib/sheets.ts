@@ -3286,6 +3286,63 @@ export async function getIMSItemNames(kind: 'rm' | 'fg') {
   return names;
 }
 
+function imsRowItemCode(row: Record<string, any>): string {
+  const keys = ['item_code', 'sku_code', 'Item Code', 'Item_Code', 'SKU', 'SKU Code'];
+  for (const key of keys) {
+    const value = row?.[key];
+    if (value !== undefined && value !== null && String(value).trim() !== '') return String(value).trim();
+  }
+  const wanted = keys.map((k) => String(k).toLowerCase().replace(/[\s._-]+/g, ''));
+  for (const [header, value] of Object.entries(row || {})) {
+    const n = String(header).toLowerCase().replace(/[\s._-]+/g, '');
+    if (wanted.includes(n) && value !== undefined && value !== null && String(value).trim() !== '') {
+      return String(value).trim();
+    }
+  }
+  return '';
+}
+
+export type ImsItemCatalogEntry = {
+  item_name: string;
+  item_code: string;
+  ims_type: 'fg' | 'rm';
+};
+
+/** Unique IMS FG + RM items for dropdowns (name, code, type). */
+function buildImsCatalogFromRows(rows: any[], ims_type: 'fg' | 'rm'): ImsItemCatalogEntry[] {
+  const map = new Map<string, ImsItemCatalogEntry>();
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const item_name = imsRowItemName(row);
+    if (!item_name) continue;
+    const key = item_name.toLowerCase();
+    if (map.has(key)) continue;
+    map.set(key, {
+      item_name,
+      item_code: imsRowItemCode(row),
+      ims_type,
+    });
+  }
+  return Array.from(map.values()).sort((a, b) =>
+    a.item_name.localeCompare(b.item_name, undefined, { numeric: true, sensitivity: 'base' })
+  );
+}
+
+export async function getIMSFGItemCatalog(): Promise<ImsItemCatalogEntry[]> {
+  const fgRows = await getIMSFGData('Finish Goods');
+  return buildImsCatalogFromRows(fgRows, 'fg');
+}
+
+export async function getIMSItemCatalog(): Promise<ImsItemCatalogEntry[]> {
+  const [fgRows, rmRows] = await Promise.all([
+    getIMSFGData('Finish Goods'),
+    getIMSRMData('Raw Material'),
+  ]);
+  return [
+    ...buildImsCatalogFromRows(fgRows, 'fg'),
+    ...buildImsCatalogFromRows(rmRows, 'rm'),
+  ].sort((a, b) => a.item_name.localeCompare(b.item_name, undefined, { numeric: true, sensitivity: 'base' }));
+}
+
 export async function createIMSMasterItem(kind: 'rm' | 'fg', itemName: string) {
   const name = String(itemName || '').trim();
   if (!name) throw new Error('Item name is required');

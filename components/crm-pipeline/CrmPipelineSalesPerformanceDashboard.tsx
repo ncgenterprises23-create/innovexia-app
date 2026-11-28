@@ -63,6 +63,7 @@ export type SalesPerformanceServerFilters = {
   pipelineId: string;
   monthKey: string;
   status: SalesPerformanceStatusFilter;
+  tag: string;
   datePreset: SalesPerformanceDatePreset;
   customFrom: string;
   customTo: string;
@@ -74,6 +75,7 @@ export function createDefaultSalesPerformanceServerFilters(): SalesPerformanceSe
     pipelineId: CRM_DASHBOARD_ALL_PIPELINES,
     monthKey: currentMonthKey(),
     status: 'all',
+    tag: 'all',
     datePreset: 'month',
     customFrom: custom.from,
     customTo: custom.to,
@@ -104,6 +106,7 @@ export default function CrmPipelineSalesPerformanceDashboard({
     pipelineId: CRM_DASHBOARD_ALL_PIPELINES,
     monthKey: currentMonthKey(),
     status: 'all',
+    tag: 'all',
     datePreset: 'month',
     customFrom: defaultCustom.from,
     customTo: defaultCustom.to,
@@ -137,6 +140,7 @@ export default function CrmPipelineSalesPerformanceDashboard({
         qs.set('clipLabel', clip.label);
       }
       if (serverFilters.status !== 'all') qs.set('status', serverFilters.status);
+      if (serverFilters.tag !== 'all') qs.set('tag', serverFilters.tag);
       if (myOnly && currentUsername) qs.set('mine', currentUsername);
       const res = await fetchDash(`/api/crm-pipeline/dashboard?${qs}`);
       const json = await res.json();

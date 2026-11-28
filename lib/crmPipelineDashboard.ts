@@ -1,4 +1,5 @@
 import { parseSheetDate } from '@/lib/dateUtils';
+import { crmOpportunityCostingTotal } from '@/lib/crmOpportunityCosting';
 
 export type DashboardGranularity = 'month' | 'quarter' | 'year';
 export type DashboardSectionKey = 'nbd' | 'crr' | 'total';
@@ -70,7 +71,9 @@ export type DashboardBuildResult = {
   sections: DashboardSectionResult[];
 };
 
-const UNTAGGED = '(Untagged)';
+export const CRM_LEAD_UNTAGGED_LABEL = '(Untagged)';
+export const CRM_TAG_FILTER_ALL = 'all';
+const UNTAGGED = CRM_LEAD_UNTAGGED_LABEL;
 const ALL_TAG = 'All';
 /** Shown in Category / Tags for the pipeline-wide total row (not double-counted by tag). */
 export const DASHBOARD_SECTION_TOTAL_LABEL = 'Total';
@@ -98,7 +101,13 @@ export function crmClientKey(opp: any): string {
   return `id:${String(opp.id)}`;
 }
 
+/** Won-reporting revenue — only the Opportunities sheet `revenue` column (not `expected_revenue`). */
 export function crmRevenueOf(opp: any): number {
+  const n = Number(opp.revenue);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+export function crmExpectedRevenueOf(opp: any): number {
   const n = Number(opp.expected_revenue);
   return Number.isFinite(n) && n > 0 ? n : 0;
 }
@@ -267,7 +276,7 @@ function sectionQualifies(opp: any, section: DashboardSectionKey): boolean {
   return true;
 }
 
-function collectTagLabels(opps: any[]): string[] {
+export function collectCrmLeadTagOptions(opps: any[]): string[] {
   const set = new Set<string>();
   let untagged = false;
   for (const o of opps) {
@@ -280,11 +289,19 @@ function collectTagLabels(opps: any[]): string[] {
   return list;
 }
 
-function oppMatchesTag(opp: any, tag: string): boolean {
-  if (tag === ALL_TAG) return true;
+export function crmOpportunityMatchesTagFilter(opp: any, tag: string): boolean {
+  if (!tag || tag === CRM_TAG_FILTER_ALL || tag === ALL_TAG) return true;
   if (tag === UNTAGGED) return parseCrmLeadTags(opp.tags).length === 0;
   const want = tag.toLowerCase();
   return parseCrmLeadTags(opp.tags).some((t) => t.toLowerCase() === want);
+}
+
+function collectTagLabels(opps: any[]): string[] {
+  return collectCrmLeadTagOptions(opps);
+}
+
+function oppMatchesTag(opp: any, tag: string): boolean {
+  return crmOpportunityMatchesTagFilter(opp, tag);
 }
 
 function filterOpps(opps: any[], section: DashboardSectionKey, tag: string): any[] {
@@ -297,6 +314,7 @@ type BucketNums = {
   wins: number;
   transactions: number;
   revenue: number;
+  costing: number;
 };
 
 function computeBucketMetrics(
@@ -310,6 +328,7 @@ function computeBucketMetrics(
   let wins = 0;
   let transactions = 0;
   let revenue = 0;
+  let costing = 0;
 
   for (const o of opps) {
     const created = crmCreatedIso(o);
@@ -322,6 +341,7 @@ function computeBucketMetrics(
       wins += 1;
       transactions += 1;
       revenue += crmRevenueOf(o);
+      costing += crmOpportunityCostingTotal(o);
     }
   }
 
@@ -331,6 +351,7 @@ function computeBucketMetrics(
     wins,
     transactions,
     revenue,
+    costing,
   };
 }
 
@@ -348,8 +369,10 @@ function metricValue(
     case 'revenue':
       return m.revenue;
     case 'margin':
+      if (m.costing > 0) return m.revenue - m.costing;
       return (m.revenue * marginPct) / 100;
     case 'profit':
+      if (m.costing > 0) return m.revenue - m.costing;
       return (m.revenue * profitPct) / 100;
     case 'avg_sale':
       return m.transactions > 0 ? m.revenue / m.transactions : 0;

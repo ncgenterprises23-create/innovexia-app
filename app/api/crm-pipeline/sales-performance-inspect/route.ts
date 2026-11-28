@@ -34,6 +34,7 @@ export async function GET(request: NextRequest) {
     const statusRaw = String(searchParams.get('status') || 'all').toLowerCase();
     const statusFilter: SalesPerformanceStatusFilter =
       statusRaw === 'open' || statusRaw === 'won' || statusRaw === 'lost' ? statusRaw : 'all';
+    const tagFilter = String(searchParams.get('tag') || 'all').trim() || 'all';
 
     const clipFrom = String(searchParams.get('clipFrom') || '').trim();
     const clipTo = String(searchParams.get('clipTo') || '').trim();
@@ -78,6 +79,7 @@ export async function GET(request: NextRequest) {
       isTotalRow: isTotal,
       metric: metric as any,
       statusFilter,
+      tagFilter,
       clipRange,
     });
 

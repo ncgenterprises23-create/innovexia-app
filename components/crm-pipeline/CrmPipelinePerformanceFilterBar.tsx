@@ -1,6 +1,8 @@
 'use client';
 
-import { Filter, RotateCcw } from 'lucide-react';
+import { useMemo } from 'react';
+import CrmSearchableSelectFilter from '@/components/crm-pipeline/CrmSearchableSelectFilter';
+import { CRM_TAG_FILTER_ALL } from '@/lib/crmPipelineDashboard';
 import type { SalesPerformanceStatusFilter } from '@/lib/crmPipelineSalesPerformance';
 
 export type PerformanceFilterState = {
@@ -9,6 +11,7 @@ export type PerformanceFilterState = {
   weekKey: string;
   salesperson: string;
   status: SalesPerformanceStatusFilter;
+  tag: string;
 };
 
 type PipelineOption = { id: string; name: string };
@@ -18,148 +21,137 @@ type Props = {
   weekOptions: { key: string; label: string }[];
   salespeople: string[];
   monthOptions: { value: string; label: string }[];
+  tagOptions: string[];
   draft: PerformanceFilterState;
   onDraftChange: (next: PerformanceFilterState) => void;
-  onApply: () => void;
-  onReset?: () => void;
-  todayActive?: boolean;
-  onToggleToday?: () => void;
+  /** When true, no outer card border (nested inside parent filter panel). */
+  embedded?: boolean;
 };
+
+const STATUS_OPTIONS: { value: SalesPerformanceStatusFilter; label: string }[] = [
+  { value: 'open', label: 'Open' },
+  { value: 'won', label: 'Won' },
+  { value: 'lost', label: 'Lost' },
+];
+
+const FILTER_COL = 'min-w-[11rem] flex-1 basis-[11rem]';
+const fieldClass =
+  'rounded-lg border border-[var(--theme-primary)]/25 bg-white dark:bg-slate-900 px-2.5 py-2 text-sm min-w-0';
 
 export default function CrmPipelinePerformanceFilterBar({
   pipelines,
   weekOptions,
   salespeople,
   monthOptions,
+  tagOptions,
   draft,
   onDraftChange,
-  onApply,
-  onReset,
-  todayActive = false,
-  onToggleToday,
+  embedded = false,
 }: Props) {
-  const fieldClass =
-    'rounded-lg border border-[var(--theme-primary)]/25 bg-white dark:bg-slate-900 px-2.5 py-2 text-sm min-w-0';
+  const pipelineOpts = useMemo(
+    () => pipelines.map((p) => ({ value: p.id, label: p.name })),
+    [pipelines]
+  );
+  const weekOpts = useMemo(
+    () => weekOptions.map((w) => ({ value: w.key, label: w.label })),
+    [weekOptions]
+  );
+  const salespersonOpts = useMemo(
+    () => salespeople.map((sp) => ({ value: sp, label: sp })),
+    [salespeople]
+  );
+  const monthOpts = useMemo(
+    () => monthOptions.map((m) => ({ value: m.value, label: m.label })),
+    [monthOptions]
+  );
+  const tagOpts = useMemo(
+    () => tagOptions.map((t) => ({ value: t, label: t })),
+    [tagOptions]
+  );
+
+  const inputProps = { inputClassName: `${fieldClass} w-full`, placeholder: 'Search or pick…' as const };
+
+  const shell = embedded
+    ? 'flex flex-wrap items-end gap-3'
+    : 'shrink-0 rounded-xl border border-[var(--theme-primary)]/25 bg-[var(--theme-light)]/80 dark:bg-slate-900/60 px-3 py-3 flex flex-wrap items-end gap-3';
 
   return (
-    <div className="shrink-0 rounded-xl border border-[var(--theme-primary)]/25 bg-[var(--theme-light)]/80 dark:bg-slate-900/60 px-3 py-3 flex flex-wrap items-end gap-3">
-      <div className="min-w-[9rem] flex-1">
+    <div className={shell}>
+      <div className={FILTER_COL}>
         <label className="block text-[10px] font-bold uppercase tracking-wide text-slate-600 dark:text-slate-400 mb-1">
           Pipeline
         </label>
-        <select
-          className={`${fieldClass} w-full`}
+        <CrmSearchableSelectFilter
           value={draft.pipelineId}
-          onChange={(e) => onDraftChange({ ...draft, pipelineId: e.target.value })}
-        >
-          {pipelines.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
-        </select>
+          options={pipelineOpts}
+          onChange={(pipelineId) => onDraftChange({ ...draft, pipelineId })}
+          {...inputProps}
+        />
       </div>
-      <div className="min-w-[9rem] flex-1">
+      <div className={FILTER_COL}>
         <label className="block text-[10px] font-bold uppercase tracking-wide text-slate-600 dark:text-slate-400 mb-1">
           Week
         </label>
-        <select
-          className={`${fieldClass} w-full`}
+        <CrmSearchableSelectFilter
           value={draft.weekKey}
-          onChange={(e) => onDraftChange({ ...draft, weekKey: e.target.value })}
-        >
-          <option value="all">All weeks</option>
-          {weekOptions.map((w) => (
-            <option key={w.key} value={w.key}>
-              {w.label}
-            </option>
-          ))}
-        </select>
+          options={weekOpts}
+          allValue="all"
+          allLabel="All weeks"
+          onChange={(weekKey) => onDraftChange({ ...draft, weekKey })}
+          {...inputProps}
+        />
       </div>
-      <div className="min-w-[10rem] flex-1">
+      <div className={FILTER_COL}>
         <label className="block text-[10px] font-bold uppercase tracking-wide text-slate-600 dark:text-slate-400 mb-1">
           Salesperson
         </label>
-        <select
-          className={`${fieldClass} w-full`}
+        <CrmSearchableSelectFilter
           value={draft.salesperson}
-          onChange={(e) => onDraftChange({ ...draft, salesperson: e.target.value })}
-        >
-          <option value="all">All salespersons</option>
-          {salespeople.map((sp) => (
-            <option key={sp} value={sp}>
-              {sp}
-            </option>
-          ))}
-        </select>
+          options={salespersonOpts}
+          allValue="all"
+          allLabel="All salespersons"
+          onChange={(salesperson) => onDraftChange({ ...draft, salesperson })}
+          {...inputProps}
+        />
       </div>
-      <div className="min-w-[11rem] flex-1">
+      <div className={FILTER_COL}>
         <label className="block text-[10px] font-bold uppercase tracking-wide text-slate-600 dark:text-slate-400 mb-1">
           Month
         </label>
-        <select
-          className={`${fieldClass} w-full`}
+        <CrmSearchableSelectFilter
           value={draft.monthKey}
-          onChange={(e) => onDraftChange({ ...draft, monthKey: e.target.value })}
-        >
-          {monthOptions.map((m) => (
-            <option key={m.value} value={m.value}>
-              {m.label}
-            </option>
-          ))}
-        </select>
+          options={monthOpts}
+          onChange={(monthKey) => onDraftChange({ ...draft, monthKey })}
+          {...inputProps}
+        />
       </div>
-      <div className="min-w-[9rem] flex-1">
+      <div className={FILTER_COL}>
+        <label className="block text-[10px] font-bold uppercase tracking-wide text-slate-600 dark:text-slate-400 mb-1">
+          Tags
+        </label>
+        <CrmSearchableSelectFilter
+          value={draft.tag}
+          options={tagOpts}
+          allValue={CRM_TAG_FILTER_ALL}
+          allLabel="All tags"
+          onChange={(tag) => onDraftChange({ ...draft, tag })}
+          {...inputProps}
+        />
+      </div>
+      <div className={FILTER_COL}>
         <label className="block text-[10px] font-bold uppercase tracking-wide text-slate-600 dark:text-slate-400 mb-1">
           Status
         </label>
-        <select
-          className={`${fieldClass} w-full`}
+        <CrmSearchableSelectFilter
           value={draft.status}
-          onChange={(e) =>
-            onDraftChange({ ...draft, status: e.target.value as SalesPerformanceStatusFilter })
+          options={STATUS_OPTIONS}
+          allValue="all"
+          allLabel="All status"
+          onChange={(status) =>
+            onDraftChange({ ...draft, status: status as SalesPerformanceStatusFilter })
           }
-        >
-          <option value="all">All status</option>
-          <option value="open">Open</option>
-          <option value="won">Won</option>
-          <option value="lost">Lost</option>
-        </select>
-      </div>
-      <div className="flex flex-wrap items-center gap-2 shrink-0">
-        {onToggleToday ? (
-          <button
-            type="button"
-            onClick={onToggleToday}
-            className={`inline-flex items-center justify-center px-4 py-2 rounded-lg text-sm font-bold border shadow-sm transition-colors ${
-              todayActive
-                ? 'bg-[var(--theme-primary)] text-gray-900 border-[var(--theme-primary)]'
-                : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 border-[var(--theme-primary)]/30 hover:bg-amber-50/80'
-            }`}
-            title={todayActive ? 'Showing today only — click to use full month' : 'Filter actuals to today only'}
-          >
-            Today
-          </button>
-        ) : null}
-        {onReset ? (
-          <button
-            type="button"
-            onClick={onReset}
-            className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 text-sm font-semibold hover:bg-slate-50 dark:hover:bg-slate-800"
-            title="Reset filters to defaults"
-          >
-            <RotateCcw size={16} />
-            Reset
-          </button>
-        ) : null}
-        <button
-          type="button"
-          onClick={onApply}
-          className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[var(--theme-primary)] text-gray-900 text-sm font-bold shadow-md hover:brightness-105"
-        >
-          <Filter size={16} />
-          Apply filters
-        </button>
+          {...inputProps}
+        />
       </div>
     </div>
   );

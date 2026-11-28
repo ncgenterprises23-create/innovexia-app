@@ -1,9 +1,11 @@
 import { parseSheetDate } from '@/lib/dateUtils';
 import {
+  CRM_TAG_FILTER_ALL,
   DASHBOARD_SECTION_TOTAL_LABEL,
   crmClientKey,
   crmCreatedIso,
   crmInRange,
+  crmOpportunityMatchesTagFilter,
   crmRevenueOf,
   crmWonIso,
 } from '@/lib/crmPipelineDashboard';
@@ -12,6 +14,7 @@ import {
   salespersonLabel,
   type PlannedActual,
 } from '@/lib/crmPipelineFiveForThree';
+import { crmOpportunityCostingTotal } from '@/lib/crmOpportunityCosting';
 
 export type SalesPerformanceStatusFilter = 'all' | 'open' | 'won' | 'lost';
 
@@ -85,6 +88,7 @@ export type SalesPerformanceBuildResult = {
   flatRows: SalesPerformanceRow[];
   salespeople: string[];
   weekOptions: { key: string; label: string }[];
+  tagOptions: string[];
   kpiSummary: SalesPerformanceKpiSummary;
   chartSeries: SalesPerformanceChartPoint[];
 };
@@ -103,8 +107,7 @@ function isCompletedFollowUp(act: any): boolean {
 }
 
 export function crmCostingOf(opp: any): number {
-  const n = Number(opp.costing);
-  return Number.isFinite(n) && n > 0 ? n : 0;
+  return crmOpportunityCostingTotal(opp);
 }
 
 function monthLabel(year: number, monthIndex: number): string {
@@ -128,6 +131,17 @@ export function filterOpportunitiesByStatus(
 ): any[] {
   if (status === 'all') return opps;
   return opps.filter((o) => oppMatchesStatus(o, status));
+}
+
+export function filterSalesPerformanceOpportunities(
+  opps: any[],
+  status: SalesPerformanceStatusFilter,
+  tag: string
+): any[] {
+  const byStatus = filterOpportunitiesByStatus(opps, status);
+  const want = String(tag || CRM_TAG_FILTER_ALL).trim();
+  if (!want || want === CRM_TAG_FILTER_ALL) return byStatus;
+  return byStatus.filter((o) => crmOpportunityMatchesTagFilter(o, want));
 }
 
 type WeekAccum = {
@@ -297,6 +311,7 @@ export type BuildSalesPerformanceParams = {
   wonDatesByOppId: Record<string, string>;
   to: Date;
   statusFilter?: SalesPerformanceStatusFilter;
+  tagFilter?: string;
   clipRange?: SalesPerformanceClipRange;
 };
 
@@ -320,7 +335,8 @@ export function buildCrmPipelineSalesPerformance(
   params: BuildSalesPerformanceParams
 ): SalesPerformanceBuildResult {
   const statusFilter = params.statusFilter ?? 'all';
-  const opportunities = filterOpportunitiesByStatus(params.opportunities, statusFilter);
+  const tagFilter = params.tagFilter ?? CRM_TAG_FILTER_ALL;
+  const opportunities = filterSalesPerformanceOpportunities(params.opportunities, statusFilter, tagFilter);
   const { activities, wonDatesByOppId, to, clipRange } = params;
 
   const oppById = new Map<string, any>();
@@ -386,6 +402,7 @@ export function buildCrmPipelineSalesPerformance(
       const opp = oppById.get(String(act.opportunity_id));
       if (!opp) continue;
       if (!oppMatchesStatus(opp, statusFilter)) continue;
+      if (!crmOpportunityMatchesTagFilter(opp, tagFilter)) continue;
       const sp = salespersonLabel(opp.salesperson);
       const partyKey = `${sp}|${crmClientKey(opp)}`;
       const acc = perSp.get(sp) || newWeekAccum();
@@ -429,6 +446,7 @@ export function buildCrmPipelineSalesPerformance(
     flatRows,
     salespeople,
     weekOptions,
+    tagOptions: [],
     kpiSummary,
     chartSeries,
   };
